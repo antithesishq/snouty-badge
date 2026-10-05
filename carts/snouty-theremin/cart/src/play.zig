@@ -24,7 +24,7 @@ const Cents = pitch.Cents;
 
 pub const Settings = struct {
     layout: hands.Layout = .one_hand,
-    scale: pitch.Scale = .off,
+    scale: pitch.Scale = .pentatonic,
     snap: pitch.Snap = .soft,
     /// Key (and the bottom of the range): 0 = C .. 11 = B.
     root: u4 = 0,

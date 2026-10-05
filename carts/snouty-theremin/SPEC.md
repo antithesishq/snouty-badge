@@ -43,7 +43,7 @@ The bottom line rotates hints for the current source every 2.5 s.
 Settings menu rows: LAYOUT (1 HAND, 2 HAND), WAVE (SINE, TRI, SAW, SQR),
 SCALE (FREE, CHROM, MAJOR, PENTA), SNAP (SOFT, HARD), KEY (C..B), OCTAVE
 (the range's bottom note: the key in octave 2..5), PITCH HAND (RIGHT,
-LEFT). Defaults: 1 HAND, SINE, FREE, SOFT, C, octave 3 (C3..C6), RIGHT.
+LEFT). Defaults: 1 HAND, SINE, PENTA (friendly for passers-by at the show; FREE is the true theremin), SOFT, C, octave 3 (C3..C6), RIGHT.
 
 Sound boots ON: the cart is an instrument (docs/TOF.md deferred
 question 1; one line in main.zig flips it). Select mutes; the status bar
