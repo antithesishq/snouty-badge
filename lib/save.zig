@@ -51,7 +51,10 @@
 //!
 //! Keys: 1..32 printable ASCII bytes (0x20..0x7E); by convention
 //! `<cart>/<slot>`, e.g. `boy/<title>/<checksum>` or `paperclips/game`.
-//! Blobs: 1..64 KB. At most 63 keys, 248 KB of 4 KB blocks in all.
+//! Blobs: 1..64 KB. Every commit leaves 16 of the 62 data blocks free, so
+//! an overwrite of any key always has room for its new copy: 46 blocks
+//! (184 KB) and at most 46 keys for data, and an overwrite that does not
+//! grow a key never fails with `error.NoSpace`.
 const builtin = @import("builtin");
 const std = @import("std");
 
@@ -60,8 +63,11 @@ pub const Error = error{ Unsupported, NotFound, NoSpace, BadRequest, BadBuffer, 
 pub const max_key = 32;
 pub const max_blob = 64 * 1024;
 
-/// What `stat()` returns (ABI v1 `SaveStat`): `region_bytes` is the whole
-/// save region (64 x 4 KB), `free_bytes` the bytes of free data blocks
+/// What `stat()` returns (ABI v1 `SaveStat`): `region_bytes` is the data
+/// capacity (62 x 4 KB), `free_bytes` what a NEW key could take,
+/// max(0, free blocks - 16) x 4 KB (184 KB on an empty store, 0 once 46
+/// keys exist; overwrites that do not grow still work then), `entries`
+/// the keys stored, `max_entries` 46,
 /// (what a new blob may use), `writes_left_now` the rate limiter's tokens.
 pub const Stat = extern struct { version: u32, region_bytes: u32, free_bytes: u32, max_blob: u32, entries: u32, max_entries: u32, writes_left_now: u32, _r: u32 = 0 };
 
@@ -204,8 +210,9 @@ pub fn stat() Error!Stat {
 }
 
 /// Fill `out` with up to `out.len` stored keys (directory order). Returns
-/// the number of keys stored, which may exceed `out.len`. (Additive to the
-/// frozen interface; ABI v1 op `list`.)
+/// the number of rows written (at most `out.len`); the total number of
+/// keys is `stat().entries`. (Additive to the frozen interface; ABI v1 op
+/// `list`.)
 pub fn list(out: []ListEntry) Error!usize {
     if (!supported()) return error.Unsupported;
     return switch (backend) {
@@ -219,7 +226,8 @@ pub fn list(out: []ListEntry) Error!usize {
 /// it then writes 1 to an exit word in cart RAM (`exitRequested()`), shows
 /// "Saving..." and keeps serving requests until `exitReady()` or 3 s.
 /// Check `exitRequested()` once a frame. The OS forgets the word when the
-/// cart stops.
+/// cart stops. Calling it again resets the word to 0 first, so an earlier
+/// request is forgotten.
 pub fn watchExit() Error!void {
     if (!supported()) return error.Unsupported;
     return switch (backend) {
@@ -429,9 +437,12 @@ const badge = struct {
 // ---- Host fake: the OS store's semantics in memory ----
 
 /// The host backend and its test hooks. Semantics follow SAVES_PLAN.md
-/// (and badge-bench's store): 62 data blocks of 4 KB, at most 63 keys, a
-/// write needs ceil(len/4096) free blocks while the old copy still exists,
-/// an unchanged write is a no-op that costs no token, commits (writes and
+/// and the OS store (sycl-badge cart-saves src/os/system/save_store.zig),
+/// as badge-bench's store does: 62 data blocks of 4 KB of which every
+/// commit leaves 16 free (a new key or a growing overwrite that would
+/// leave fewer gets NoSpace), at most 46 keys, a write needs ceil(len/4096)
+/// free blocks while the old copy still exists, an unchanged write is a
+/// no-op that costs no token, commits (writes and
 /// deletes that touch flash) take a token from a bucket of 8 refilled one
 /// per 10 s of `advanceMs` time. State is global: call `reset()` at the
 /// start of each test.
@@ -439,7 +450,11 @@ pub const fake = struct {
     pub const block_size = 4096;
     pub const region_blocks = 64;
     pub const data_blocks = 62;
-    pub const max_entries = 63;
+    pub const max_entries = 46;
+    /// Data blocks every commit leaves free (one maximal blob's worth).
+    pub const reserve_blocks = 16;
+    /// Directory slots (the OS's on-flash format; more than max_entries).
+    pub const dir_slots = 63;
     pub const max_blocks_per_blob = max_blob / block_size;
     pub const burst = 8;
     pub const refill_ms = 10_000;
@@ -459,7 +474,7 @@ pub const fake = struct {
         }
     };
 
-    var entries: [max_entries]Entry = @splat(.{});
+    var entries: [dir_slots]Entry = @splat(.{});
     var pool: [data_blocks][block_size]u8 = undefined;
     var next_fit: u8 = 0;
     var supported_flag: bool = true;
@@ -643,7 +658,12 @@ pub const fake = struct {
         if (old) |e| if (same(e, src)) return;
         const need: u32 = @intCast((src.len + block_size - 1) / block_size);
         if (old == null and used_entries() >= max_entries) return error.NoSpace;
-        if (free_blocks() < need) return error.NoSpace;
+        const free = free_blocks();
+        const old_blocks: u32 = if (old) |e| e.nblocks else 0;
+        // The new copy is written while the old one exists.
+        if (free < need) return error.NoSpace;
+        // Reserve: a growing commit must leave 16 blocks free afterwards.
+        if (need > old_blocks and free + old_blocks - need < reserve_blocks) return error.NoSpace;
         try take_token();
         var nb: [max_blocks_per_blob]u8 = undefined;
         var got: u32 = 0;
@@ -684,8 +704,8 @@ pub const fake = struct {
         if (rate_limit_on) refill();
         return .{
             .version = abi.version,
-            .region_bytes = region_blocks * block_size,
-            .free_bytes = free_blocks() * block_size,
+            .region_bytes = data_blocks * block_size,
+            .free_bytes = if (used_entries() >= max_entries) 0 else (free_blocks() -| reserve_blocks) * block_size,
             .max_blob = max_blob,
             .entries = used_entries(),
             .max_entries = max_entries,
@@ -698,10 +718,9 @@ pub const fake = struct {
         var n: usize = 0;
         for (&entries) |*e| {
             if (!e.used) continue;
-            if (n < out.len) {
-                out[n] = .{ .key_len = e.key_len, .key = @splat(0), .size = e.size };
-                @memcpy(out[n].key[0..e.key_len], e.name());
-            }
+            if (n >= out.len) break;
+            out[n] = .{ .key_len = e.key_len, .key = @splat(0), .size = e.size };
+            @memcpy(out[n].key[0..e.key_len], e.name());
             n += 1;
         }
         return n;

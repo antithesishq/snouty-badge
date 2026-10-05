@@ -8,7 +8,10 @@ Two parts, so the store can be swapped (for Track A's save_store.zig
 behind a host binary, say) without touching the request side:
 
   Store         what is stored and the store's rules: limits, copy-on-write
-                block accounting, unchanged write = no-op, rate limit.
+                block accounting with the 16-block reserve, unchanged
+                write = no-op, rate limit. MemoryStore mirrors the OS's
+                store (sycl-badge cart-saves src/os/system/save_store.zig:
+                beginWrite/beginDelete check order, stat, list).
                 MemoryStore keeps it in memory, FileStore also in a JSON
                 file (--saves FILE) so state survives between runs.
   SaveService   the OS glue: reads the request from emulated memory,
@@ -17,8 +20,8 @@ behind a host binary, say) without touching the request side:
                 cart (it is parked in its wait loop meanwhile).
 
 Flash time: a write that changes the blob costs (ceil(len / 4096) + 1) x
-55 ms (each 4 KB data block erased and programmed, plus one directory
-block), a delete 55 ms, anything else (probe, read, stat, list, exit_watch,
+55 ms (each 4 KB data block erased, programmed and verified, plus one
+directory block), a delete 55 ms (the directory block), anything else (probe, read, stat, list, exit_watch,
 an unchanged write, a refused request) 0. SAVES_PLAN.md: ~45 ms erase +
 ~10 ms program per 4 KB, datasheet typical, to measure on hardware.
 """
@@ -50,12 +53,17 @@ LIST_SIZE = struct.calcsize(LIST_FMT)
 # Process RAM the OS accepts for the struct and for buf..buf+len.
 RAM_LO, RAM_HI = 0x20020000, 0x20080000
 
-# Store format (SAVES_PLAN.md "Store format"): 64 blocks of 4 KB, two of them
-# directory copies.
+# Store format (SAVES_PLAN.md "Store format", save_store.zig): 64 blocks of
+# 4 KB, two of them directory copies. Every commit leaves RESERVE_BLOCKS data
+# blocks free so any overwrite finds room for its new copy: 46 usable blocks
+# (184 KB) and, a key taking at least one block, 46 keys. The directory has
+# 63 slots (format constant).
 BLOCK = 4096
 REGION_BLOCKS = 64
 DATA_BLOCKS = 62
-MAX_ENTRIES = 63
+RESERVE_BLOCKS = 16
+MAX_ENTRIES = 46
+DIR_SLOTS = 63
 MAX_KEY = 32
 MAX_BLOB = 64 * 1024
 BURST, REFILL_MS = 8, 10_000
@@ -92,16 +100,19 @@ class Store:
 
 
 class MemoryStore(Store):
-    """SAVES_PLAN.md's rules over a dict. Directory slots are reused first
-    free (so list order is the order the OS would give, slot by slot); data
-    blocks are only counted: a write needs ceil(len/4096) free blocks while
-    the old copy still exists. Check order for a write: unchanged -> ok
-    (free); new key with all 63 slots used -> no_space; not enough free
-    blocks -> no_space; no token -> rate_limited; commit. The rate bucket
-    starts full (a fresh boot)."""
+    """save_store.zig's rules over a list of directory slots. Slots are
+    reused first free (so list order is the order the OS gives); data
+    blocks are only counted. Write check order (beginWrite, after the
+    service's bad_request / too_big): unchanged blob -> ok (no flash, no
+    token); new key with 46 keys stored -> no_space; fewer free blocks than
+    ceil(len/4096) (the old copy still exists) -> no_space; a growing commit
+    that would leave fewer than 16 free (old copy counted as freed) ->
+    no_space; no token -> rate_limited; commit. Delete: not_found (no
+    token), rate_limited, commit. The rate bucket starts full (a fresh
+    boot)."""
 
     def __init__(self, rate_limit=True):
-        self.slots = [None] * MAX_ENTRIES   # [key, data] or None
+        self.slots = [None] * DIR_SLOTS     # [key, data] or None
         self.rate_limit = rate_limit
         self.tokens = BURST
         self.refill_from = 0.0
@@ -119,6 +130,9 @@ class MemoryStore(Store):
 
     def free_blocks(self):
         return DATA_BLOCKS - self.used_blocks()
+
+    def count(self):
+        return sum(s is not None for s in self.slots)
 
     def _refill(self, now_ms):
         if self.tokens >= BURST:
@@ -152,9 +166,13 @@ class MemoryStore(Store):
         if i is not None and self.slots[i][1] == data:
             return OK, 0.0
         need = blocks_of(len(data))
-        if i is None and all(s is not None for s in self.slots):
+        if i is None and self.count() >= MAX_ENTRIES:
             return NO_SPACE, 0.0
-        if self.free_blocks() < need:
+        free = self.free_blocks()
+        old = blocks_of(len(self.slots[i][1])) if i is not None else 0
+        if free < need:
+            return NO_SPACE, 0.0
+        if need > old and free + old - need < RESERVE_BLOCKS:
             return NO_SPACE, 0.0
         if not self._take_token(now_ms):
             return RATE_LIMITED, 0.0
@@ -177,9 +195,11 @@ class MemoryStore(Store):
     def stat(self, now_ms):
         if self.rate_limit:
             self._refill(now_ms)
-        return dict(version=ABI_VERSION, region_bytes=REGION_BLOCKS * BLOCK,
-                    free_bytes=self.free_blocks() * BLOCK, max_blob=MAX_BLOB,
-                    entries=sum(s is not None for s in self.slots), max_entries=MAX_ENTRIES,
+        n = self.count()
+        spare = max(0, self.free_blocks() - RESERVE_BLOCKS)
+        return dict(version=ABI_VERSION, region_bytes=DATA_BLOCKS * BLOCK,
+                    free_bytes=0 if n >= MAX_ENTRIES else spare * BLOCK, max_blob=MAX_BLOB,
+                    entries=n, max_entries=MAX_ENTRIES,
                     writes_left_now=self.tokens if self.rate_limit else BURST)
 
     def keys(self):
@@ -210,13 +230,14 @@ class FileStore(MemoryStore):
         if d.get('format') != self.FORMAT or d.get('version') != 1:
             raise ValueError(f"--saves {self.path}: not a {self.FORMAT} v1 file")
         slots = d.get('slots', [])
-        if len(slots) > MAX_ENTRIES:
-            raise ValueError(f"--saves {self.path}: {len(slots)} slots, at most {MAX_ENTRIES}")
+        if len(slots) > DIR_SLOTS:
+            raise ValueError(f"--saves {self.path}: {len(slots)} slots, at most {DIR_SLOTS}")
         for i, s in enumerate(slots):
             if s is not None:
                 self.slots[i] = [s['key'].encode('ascii'), base64.b64decode(s['data'])]
-        if self.free_blocks() < 0:
-            raise ValueError(f"--saves {self.path}: blobs need more than {DATA_BLOCKS} blocks")
+        if self.count() > MAX_ENTRIES or self.free_blocks() < RESERVE_BLOCKS:
+            raise ValueError(f"--saves {self.path}: more than {MAX_ENTRIES} keys or "
+                             f"{DATA_BLOCKS - RESERVE_BLOCKS} blocks stored")
 
     def _committed(self):
         super()._committed()
@@ -320,9 +341,9 @@ class SaveService:
                                   s['writes_left_now'], 0)
                 self.mem.mem_write(buf, raw[:min(n, len(raw))])
             return OK, s['free_bytes'], 0.0, op, k, n
-        # OP_LIST
-        rows = self.store.keys()
-        out = b''.join(struct.pack(LIST_FMT, len(kk), kk, size) for kk, size in rows[:n // LIST_SIZE])
+        # OP_LIST: result = rows written (save_store.zig list); totals via stat
+        rows = self.store.keys()[:n // LIST_SIZE]
+        out = b''.join(struct.pack(LIST_FMT, len(kk), kk, size) for kk, size in rows)
         if out:
             self.mem.mem_write(buf, out)
         return OK, len(rows), 0.0, op, k, n

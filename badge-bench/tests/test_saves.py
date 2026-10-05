@@ -205,11 +205,26 @@ def test_store_unit():
           ((SV.OK, 110.0), (SV.RATE_LIMITED, 0.0)))
     s = SV.MemoryStore(rate_limit=False)
     big = bytes(SV.MAX_BLOB)
-    for i in range(3):
-        s.write(b'b%d' % i, big, 0)
-    check("store: copy-on-write needs room for the new copy", s.write(b'b0', b'\1' + big[1:], 0),
-          (SV.NO_SPACE, 0.0))
-    check("store: 14 free blocks", s.stat(0)['free_bytes'], 14 * 4096)
+    check("store: empty stat", {k: s.stat(0)[k] for k in ('region_bytes', 'free_bytes', 'max_entries')},
+          dict(region_bytes=62 * 4096, free_bytes=46 * 4096, max_entries=46))
+    s.write(b'b0', big, 0)
+    s.write(b'b1', big, 0)
+    check("store: 2 x 64 KB leaves 14 blocks for a new key", s.stat(0)['free_bytes'], 14 * 4096)
+    check("store: a new 15-block key would break the reserve", s.write(b'b2', bytes(15 * 4096), 0)[0],
+          SV.NO_SPACE)
+    check("store: 14 blocks fit", s.write(b'b2', bytes(14 * 4096), 0)[0], SV.OK)
+    check("store: at the reserve, free_bytes 0", s.stat(0)['free_bytes'], 0)
+    check("store: changed same-size overwrite at the reserve", s.write(b'b0', b'\1' + big[1:], 0),
+          (SV.OK, 17 * 55.0))
+    check("store: growing overwrite at the reserve", s.write(b'b2', bytes(15 * 4096), 0)[0], SV.NO_SPACE)
+    check("store: shrinking overwrite", (s.write(b'b2', b'x', 0)[0], s.stat(0)['free_bytes']),
+          (SV.OK, 13 * 4096))
+    s = SV.MemoryStore(rate_limit=False)
+    for i in range(46):
+        s.write(b'k%d' % i, b'x', 0)
+    check("store: 46 keys, then no_space", (s.stat(0)['entries'], s.stat(0)['free_bytes'],
+                                           s.write(b'new', b'y', 0)[0]), (46, 0, SV.NO_SPACE))
+    check("store: overwrite with 46 keys", s.write(b'k0', b'changed', 0)[0], SV.OK)
 
 
 def main():
@@ -256,9 +271,11 @@ def badge_tests(elf, tmp):
     st, s = b.stat()
     check("stat", (st, s['version'], s['region_bytes'], s['free_bytes'], s['entries'], s['max_entries'],
                    s['max_blob'], s['writes_left_now']),
-          ('ok', 1, 262144, (62 - 1 - 16) * 4096, 2, 63, 65536, 6))
+          ('ok', 1, 62 * 4096, (62 - 1 - 16 - 16) * 4096, 2, 46, 65536, 6))
     st, count, rows = b.list(1)
-    check("list into 1 row: total 2, first key", (st, count, rows), ('ok', 2, [('boy/TETRIS/1234', 1024)]))
+    check("list into 1 row: 1 written, first key", (st, count, rows), ('ok', 1, [('boy/TETRIS/1234', 1024)]))
+    st, count, rows = b.list(4)
+    check("list into 4 rows: 2 written", (st, count, rows[1]), ('ok', 2, ('big', 65536)))
     check("delete", (b.delete(b'big'), b.stalls[-1]), ('ok', (55.0, 1)))
     check("delete again", b.delete(b'big'), 'NotFound')
     # 3 commits so far (1 KB, 64 KB, delete): 5 more empty the bucket

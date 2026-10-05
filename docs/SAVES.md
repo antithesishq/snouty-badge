@@ -41,7 +41,7 @@ pub fn read(key: []const u8, dst: []u8) Error!usize;     // stored size (may exc
 pub fn write(key: []const u8, src: []const u8) Error!void; // blocking, atomic
 pub fn delete(key: []const u8) Error!void;
 pub fn stat() Error!Stat;
-pub fn list(out: []ListEntry) Error!usize;               // keys stored (may exceed out.len)
+pub fn list(out: []ListEntry) Error!usize;               // rows written (<= out.len); total = stat().entries
 pub fn watchExit() Error!void;                           // ask for a warning before "Exit cart"
 pub fn exitRequested() bool;                             // the OS wrote 1 to our exit word
 pub fn exitReady() void;                                 // saved: the OS may stop us now (writes 2)
@@ -51,7 +51,7 @@ pub fn exitReady() void;                                 // saved: the OS may st
 |---|---|
 | `Unsupported` | stock firmware, simulator or wasm: no saves |
 | `NotFound` | no such key (read, delete) |
-| `NoSpace` | not enough free 4 KB blocks for the new copy, or all 63 keys used |
+| `NoSpace` | a new key, or an overwrite that grows a key, would eat into the 16-block reserve; or 46 keys are already stored |
 | `BadRequest` | key not 1..32 bytes of printable ASCII (0x20..0x7E), or an empty blob |
 | `BadBuffer` | the buffer is not in cart RAM (for example a pointer into a drive ROM: copy the data to RAM first) |
 | `RateLimited` | too many commits: 8 in a burst, then one more per 10 s. Nothing was written, so try again later |
@@ -59,8 +59,13 @@ pub fn exitReady() void;                                 // saved: the OS may st
 | `IoError` | a stored blob failed its CRC on read (the key stays, so you can rewrite it), or a status this client does not know |
 | `Busy` | the OS was serving another request, or left this one pending for 2 s |
 
-Limits: 1..64 KB per blob, at most 63 keys, 248 KB in 4 KB blocks in all.
-Every blob takes whole blocks, so a 100-byte save uses 4 KB.
+Limits: 1..64 KB per blob, at most 46 keys, 184 KB (46 blocks of 4 KB)
+in all. Every blob takes whole blocks, so a 100-byte save uses 4 KB. The
+store has 62 data blocks, but every commit leaves 16 of them free (one
+64 KB blob's worth), so an overwrite that doesn't grow a key always has
+room for its new copy and never fails with `NoSpace`. `stat().free_bytes`
+is what a new key could take now (0 at 46 keys).
+`stat().region_bytes` is the 62-block data capacity (248 KB).
 
 Backends are chosen from the build target. The badge backend runs on the
 cart core and speaks ABI v1 over the mailbox itself, because the pinned
@@ -141,7 +146,8 @@ pub fn update() void {
 }
 ```
 
-After `watchExit()` the OS writes 1 to an exit word in cart RAM when the
+Calling `watchExit()` again resets the word to 0, so an earlier request is
+forgotten. After `watchExit()` the OS writes 1 to an exit word in cart RAM when the
 player picks "Exit cart". It shows "Saving...", keeps serving save
 requests, and stops the cart once the cart calls `exitReady()` (which
 writes 2) or after 3 s. Check `exitRequested()` once a frame. The OS
