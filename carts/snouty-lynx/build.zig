@@ -211,6 +211,33 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     run_link_run.addPassthruArgs();
     run_link_run.has_side_effects = true;
     b.step("run-lynx-link", "Run Lynx consoles on a virtual ComLynx bus (snouty-lynx tools/run_link.zig)").dependOn(&run_link_run.step);
+
+    // Warbirds over the real `badge lobby` (tools/lynx_e2e.sh,
+    // docs/COMLYNX.md section 10): a host program, not in the default
+    // install.
+    const lynx_e2e = b.addExecutable(.{
+        .name = "lynx_e2e",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tools/lynx_e2e.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "core", .module = core_fast },
+                .{ .name = "party", .module = b.createModule(.{ .root_source_file = b.path("lib/party.zig") }) },
+                .{ .name = "lynxnet", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "cart/src/frontend/lynxnet.zig"),
+                    .imports = &.{.{ .name = "core", .module = core_fast }},
+                }) },
+                .{ .name = "runner", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "tests/runner.zig"),
+                    .imports = &.{.{ .name = "core", .module = core_fast }},
+                }) },
+            },
+        }),
+    });
+    b.step("lynx-e2e", "Build zig-out/bin/lynx_e2e (Warbirds over the real badge lobby; run carts/snouty-lynx/tools/lynx_e2e.sh)")
+        .dependOn(&b.addInstallArtifact(lynx_e2e, .{}).step);
 }
 
 /// `-Dlynx-rom` as given: `~/x.lnx` (expanded here, the shell leaves `=~`

@@ -80,6 +80,10 @@ pub const max_entries = (party.max_data - header_len) / entry_len;
 /// it: the CPU sleeps through Suzy's whole list): the stall test's margin.
 pub const overrun_ticks: u64 = 4 * 1000 * tick_per_us;
 
+/// HELLO again after this many badge frames without WELCOME (2 s, as
+/// party.zig's `hello_retry_us`).
+pub const retry_frames = 120;
+
 /// Badge frames between the restarts of consecutive player ids after GO.
 pub const stagger_frames = 7;
 
@@ -133,6 +137,13 @@ pub fn Net(comptime Client: type) type {
         peer_time: [party.max_players]?u64 = @splat(null),
         seq: u8 = 0,
         ready_left: u8 = 0,
+        /// Badge frames spent joining (HELLO again every 2 s: party.zig's
+        /// `retry_hello`, `hello_retry_us`).
+        joining_frames: u32 = 0,
+        /// Called with each peer message's lag (this console's link time
+        /// minus the sender's heartbeat, microseconds): the e2e tool's
+        /// latency histogram. Null on the badge.
+        lag_sink: ?*const fn (us: u64) void = null,
         stats: Stats = .{},
 
         pub fn init(client: *Client, port: *comlynx.Port, crc: u32) Self {
@@ -197,6 +208,10 @@ pub fn Net(comptime Client: type) type {
                 .lost => self.on_roster(l),
                 .pong, .err => {},
             };
+            if (self.client.state() == .joining) {
+                self.joining_frames += 1;
+                if (self.joining_frames % retry_frames == 0) self.client.retry_hello();
+            } else self.joining_frames = 0;
             // The lobby's own present set (the client's) after the events.
             if (!self.linked and self.client.state() == .joined) {
                 if (self.ready_left == 0) {
@@ -364,6 +379,7 @@ pub fn Net(comptime Client: type) type {
             const bit_ticks: u32 = @as(u32, std.mem.readInt(u16, b[6..8], .little)) * 16;
             const t_end = @as(u64, te_us) * tick_per_us;
             self.peer_time[from] = t_end;
+            if (self.lag_sink) |sink| sink((self.link_now(l) -| t_end) / tick_per_us);
             // Not switched on yet: not on the wire.
             if (!self.attached) return;
             const n = (b.len - header_len) / entry_len;
