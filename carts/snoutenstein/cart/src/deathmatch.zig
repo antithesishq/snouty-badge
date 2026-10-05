@@ -163,6 +163,11 @@ fn lobby_frame(pad: Buttons, t0: u64) bool {
         }
     }
     draw_lobby(fake_lobby orelse lobby_view());
+    // The handshake's HELLO overflows the receive FIFO: keep pumping
+    // while it runs (`wants_pump`; false while searching and in the lobby).
+    if (net_up and fake_lobby == null) {
+        while (net.wants_pump() and cart.micros_since_boot() -% t0 < pump_until_us) net.pump(cart.micros_since_boot());
+    }
     return true;
 }
 
@@ -293,7 +298,7 @@ fn match_frame(pad: Buttons, t0: u64) bool {
     if (ticked) on_tick();
     draw_match(pad);
     if (local == null) {
-        while (net.busy()) {
+        while (net.wants_pump()) {
             const now = cart.micros_since_boot();
             if (now -% t0 >= pump_until_us) break;
             net.pump(now);

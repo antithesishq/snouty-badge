@@ -980,6 +980,42 @@ test "lockstep: no-cable pump is one link poll; offline in the simulator" {
     o.pump(1000);
     try std.testing.expectEqual(lockstep.State.offline, o.state());
     try std.testing.expect(!o.busy());
+    try std.testing.expect(!o.wants_pump());
+}
+
+test "lockstep: wants_pump covers the handshake, not the search or the lobby" {
+    const V = lockstep.Lockstep(L, Game(configs[0]));
+    var p: VersionPair(V, V) = .{};
+    // One badge alone: searching, never wants the pump loop.
+    p.a = V.init(L.init(.{ .inner = p.cable.port(0), .wire = &p.wire }, app_id, 1234));
+    var now: u64 = 1_000_000;
+    while (now < 2_000_000) : (now += 16_667) {
+        p.a.pump(now);
+        try std.testing.expect(!p.a.wants_pump());
+    }
+    // Both: some frames handshake (wants it, not busy), then the lobby
+    // (neither), then the race (both).
+    p.init();
+    var saw_handshake = false;
+    var saw_lobby = false;
+    now = 1_000_000;
+    while (now < 4_000_000) : (now += 16_667) {
+        VersionPair(V, V).lobby(&p.a, now, 1);
+        VersionPair(V, V).lobby(&p.b, now + 7_000, 2);
+        for ([_]*V{ &p.a, &p.b }) |ls| {
+            if (ls.link.state == .handshake) {
+                saw_handshake = true;
+                try std.testing.expect(ls.wants_pump() and !ls.busy());
+            }
+            if (ls.state() == .lobby) {
+                saw_lobby = true;
+                try std.testing.expect(!ls.wants_pump());
+            }
+            if (ls.busy()) try std.testing.expect(ls.wants_pump());
+        }
+    }
+    try std.testing.expect(saw_handshake and saw_lobby);
+    try std.testing.expect(p.a.busy() and p.b.busy());
 }
 
 test "lockstep: over the badge's link it compiles; size" {

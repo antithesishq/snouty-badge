@@ -64,7 +64,8 @@ ls = Ls.init(link.Badge.init(.{}, lockstep.apps.cycles, cart.rand()));
 | `init(l) Self` | owns the link by value as `.link`; sets the link's `app_version` from `G.version` |
 | `pump(now)` | poll the link, read packets, send what is due; callable from anywhere |
 | `state() State` | `offline`, `searching`, `wrong_cart`, `wrong_version`, `lobby`, `racing`, `waiting`, `peer_left`, `desync` |
-| `busy() bool` | a race runs (`racing`, `waiting`, `peer_left`): pump in a loop to 14 ms |
+| `busy() bool` | a race runs (`racing`, `waiting`, `peer_left`) |
+| `wants_pump() bool` | `busy()`, or the link is handshaking (a 10-byte HELLO overflows the 8-byte FIFO): pump in a loop to 14 ms |
 | `role`, `left`, `paused`, `stats` | fields: host / guest / none; why the partner left; the agreed pause; counters |
 | `local_slot() u1` | 0 on the host, 1 on the guest |
 | `partner_name() []const u8` | `app_name(link.partner_app)` |
@@ -102,11 +103,12 @@ first is lost. Pump in three places:
    these points: it touches only the link and the lockstep, never the
    World.
 3. **After drawing, in a loop until about 14 ms into the frame, only
-   while `busy()`**, retrying a stalled `step`. The vsync wait is the one
+   while `wants_pump()`** (a race, or the link handshaking: a HELLO is 10
+   wire bytes, more than the FIFO), retrying a stalled `step` in a race. The vsync wait is the one
    stretch where nothing reads the FIFO; in the host tests the loop halves
    the stalls under loss (GC's NET.md section 5).
 
-When not `busy` (offline, searching, the lobby) one pump a frame is
+When not `wants_pump` (offline, searching, the lobby) one pump a frame is
 enough. With no cable a pump is one `link.poll` and a compare (the host
 test counts port calls against a bare link: equal), so solo frames that
 pump cost nothing measurable; Cycles' no-cable 12 ms bench gate holds.
@@ -142,7 +144,7 @@ if (ls.paused) byte &= pause_bit; // menu presses stay out of the race
 ls.submit(now, byte);
 var ticked = ls.step(&w);
 // draw (band hooks pump); then:
-while (ls.busy() and micros_into_frame() < 14_000) {
+while (ls.wants_pump() and micros_into_frame() < 14_000) {
     ls.pump(cart.micros_since_boot());
     if (!ticked) ticked = ls.step(&w);
 }
@@ -393,3 +395,16 @@ random buttons. Per configuration (delay 2 and 3, 1 and 4 rules bytes;
   runs once every `check_every` ticks.
 - **RAM.** `@sizeOf(Lockstep(link.Badge, G))` = 560 bytes for one rules
   byte (568 for 4), of which the link is 344. GC M4's Net was 568.
+
+## Ideas for a later version
+
+- **Clock drift at input delay 3** (Snouty Cycles, 2026-10-05): each badge
+  keeps its own 60 Hz vsync, so the faster one drifts to the edge of the
+  delay buffer and stalls now and then. A time-sync skip (the faster
+  badge skips a frame's step when it leads by the whole delay) cut
+  Cycles' clean-cable stalls to about 0.1% in its own stand-in. Not in
+  v1: it changes when ticks run, so it needs a `G.version` bump for
+  carts that adopt it.
+- **The DMA receive ring** (`link.rp2350.rx_dma`, root docs/LINK.md)
+  removes FIFO loss entirely once verified on hardware; carts stay
+  correct without it.
