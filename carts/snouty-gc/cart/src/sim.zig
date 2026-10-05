@@ -42,6 +42,8 @@ pub fn track_of(w: *const World) *const track.Track {
 /// `Setup.track` / `World.track` indexes `track.arenas` in battle,
 /// `track.tracks` otherwise.
 pub fn table_of(mode: world.Mode, i: u8) *const track.Track {
+    // M7: the loaded pack track or arena (pack.zig).
+    if (i >= track.pack_base) return &track.pack_track;
     if (mode == .battle) return track.arenas[i % track.arenas.len];
     return track.tracks[i % track.tracks.len];
 }
@@ -411,6 +413,7 @@ fn step_car(w: *World, i: usize, in: Input) void {
     // The touchdown tick reads the floor too in battle, so a landing in a
     // pit or on a wall is resolved on the tick the stunt is scored.
     const wall = if (!in_air or landing) resolve_tiles(w, i, old_x, old_y) else false;
+    if (track.prop_reach > 0 and !in_air and c.wreck == .none) prop_contact(w, i);
     if (landing) land(w, i, wall);
     if (c.wreck == .none and w.mode != .battle) update_progress(w, i);
 }
@@ -500,6 +503,10 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) bool {
             },
             .coolant => c.on_coolant = true,
             .bay => c.on_bay = true,
+            // M7: breakable crust is floor until its region breaks.
+            .crust => if (hazards.crust_broken(w, px, py)) {
+                off_count += 1;
+            },
             .ramp => if (c.hop == 0) {
                 c.hop = tuning.ramp_ticks;
                 c.air = tuning.ramp_ticks;
@@ -667,7 +674,7 @@ fn respawn(w: *World, i: usize) void {
     const c = &w.cars[i];
     const t = track_of(w);
     var k: u8 = 0;
-    while (k < 32 and t.attr_at(t.sample(c.progress).x, t.sample(c.progress).y) == .off) : (k += 1) c.progress -%= 1;
+    while (k < 32 and pit_at(w, t, t.sample(c.progress).x, t.sample(c.progress).y)) : (k += 1) c.progress -%= 1;
     const s = t.sample(c.progress);
     c.x = @as(i32, s.x) << fixed.Q;
     c.y = @as(i32, s.y) << fixed.Q;
@@ -680,6 +687,45 @@ fn respawn(w: *World, i: usize) void {
     // Full armor, kept ammo (SPEC 5.3).
     c.armor = c.armor_max;
     weapons.emit(w, .respawn, @intCast(i), 0, 0, c.x, c.y);
+}
+
+/// No floor at world px (x, y): off-track, or (M7) broken crust.
+pub fn pit_at(w: *const World, t: *const track.Track, x: i32, y: i32) bool {
+    return switch (t.attr_at(x, y)) {
+        .off => true,
+        .crust => hazards.crust_broken(w, x, y),
+        else => false,
+    };
+}
+
+/// M7, the solid props (SPEC 19.3): a car on the ground whose centre comes
+/// within a prop's radius plus `tuning.car_radius` is pushed out of it and
+/// loses its speed into it as at a wall (with the wall's damage).
+fn prop_contact(w: *World, i: usize) void {
+    const c = &w.cars[i];
+    for (track.props[0..track.prop_n]) |pr| {
+        if (pr.radius == 0) continue;
+        const reach: i32 = @as(i32, pr.radius) + tuning.car_radius;
+        const dx = wrap_px((c.x >> fixed.Q) - @as(i32, pr.x));
+        const dy = wrap_px((c.y >> fixed.Q) - @as(i32, pr.y));
+        if (@abs(dx) >= reach or @abs(dy) >= reach) continue;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= reach * reach) continue;
+        const d: i32 = @intCast(fixed.isqrt(@intCast(d2)));
+        // Unit normal from the prop to the car (Q16; straight back along
+        // the car's travel when it sits on the prop's centre).
+        const nx: i32 = if (d == 0) -fixed.cos(c.heading) else @divTrunc(dx << fixed.Q, d);
+        const ny: i32 = if (d == 0) -fixed.sin(c.heading) else @divTrunc(dy << fixed.Q, d);
+        nudge(w, c, nx * (reach - d), ny * (reach - d));
+        const vn = fixed.mul(c.vx, nx) + fixed.mul(c.vy, ny);
+        if (vn >= 0) continue;
+        const k = fixed.mul(vn, (256 + tuning.wall_restitution) << 8);
+        c.vx = fixed.mul(c.vx - fixed.mul(k, nx), tuning.wall_speed_keep);
+        c.vy = fixed.mul(c.vy - fixed.mul(k, ny), tuning.wall_speed_keep);
+        c.shake = 4;
+        const dmg = wall_damage(-vn);
+        damage(w, i, world.no_car, if (c.prefetch > 0) dmg >> 1 else dmg);
+    }
 }
 
 /// Squared distance from the car to sample i, in world px^2 (wrapping).

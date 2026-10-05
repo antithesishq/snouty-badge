@@ -106,6 +106,10 @@ pub fn in_lane(h: *const HazardSpec, c: *const Car) bool {
 pub fn update(w: *World) void {
     for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
         const hz = &w.hazards[k];
+        if (h.kind == .crust) {
+            crust_update(w, k, h);
+            continue;
+        }
         hz.timer = @intCast((@as(u32, hz.timer) + 1) % h.period);
         const p = at(h, hz.timer);
         if (p.state == .active and hz.state != .active) {
@@ -124,6 +128,63 @@ pub fn update(w: *World) void {
         }
     }
     service(w);
+}
+
+// --- Breakable crust (M7, SPEC 19.4) ---------------------------------------------
+//
+// A crust hazard's World slot: `state` idle (intact), warn (cracked: a car
+// on the ground touched one of its crust tiles; `timer` counts to the
+// spec's `warn`), active (broken: `timer` counts to `period`, then it is
+// intact again). `x`, `y` hold the region's centre (Q16) for the fx.
+
+/// Is (x, y) world px inside a broken crust region? (Its tiles' attribute
+/// is `crust`; the caller has read that.)
+pub fn crust_broken(w: *const World, x: i32, y: i32) bool {
+    const px = x & 1023;
+    const py = y & 1023;
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        if (h.kind != .crust or w.hazards[k].state != .active) continue;
+        if (px >= h.x0 and px < h.x1 and py >= h.y0 and py < h.y1) return true;
+    }
+    return false;
+}
+
+fn crust_update(w: *World, k: usize, h: *const HazardSpec) void {
+    const hz = &w.hazards[k];
+    hz.x = ((h.x0 + h.x1) >> 1) << fixed.Q;
+    hz.y = ((h.y0 + h.y1) >> 1) << fixed.Q;
+    switch (hz.state) {
+        .idle => {
+            // The first car on the ground with its centre on a crust tile
+            // of the region cracks it.
+            const t = sim.track_of(w);
+            for (&w.cars) |*c| {
+                if (!reachable(c)) continue;
+                const cx = c.x >> fixed.Q;
+                const cy = c.y >> fixed.Q;
+                if (cx < h.x0 or cx >= h.x1 or cy < h.y0 or cy >= h.y1) continue;
+                if (t.attr_at(cx, cy) != .crust) continue;
+                hz.state = .warn;
+                hz.timer = 0;
+                break;
+            }
+        },
+        .warn => {
+            hz.timer +|= 1;
+            if (hz.timer >= h.warn) {
+                hz.state = .active;
+                hz.timer = 0;
+                weapons.emit(w, .blast, @intCast(k), @backingInt(h.kind), 0, hz.x, hz.y);
+            }
+        },
+        .active => {
+            hz.timer +|= 1;
+            if (hz.timer >= h.period) {
+                hz.state = .idle;
+                hz.timer = 0;
+            }
+        },
+    }
 }
 
 /// A firing vent: every car in its lane takes the damage once a firing and

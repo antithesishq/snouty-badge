@@ -27,8 +27,9 @@ with Landfill Loop and The Sandbox, to prove the path.
 5. A bad file is listed with a reason and cannot be picked: `PACK
    DAMAGED` (CRC or a section fails its checks), `NOT A PACK` (no `GCPK`
    magic), `PACK TOO NEW` (a format version this cart does not know),
-   `PACK TOO BIG` (over the size cap or the RAM slot), `NEEDS NEWER CART`
-   (a hazard kind this cart does not run). Copy it again or rebuild it.
+   `PACK TOO BIG` (over the 128 KB cap), `NEEDS NEWER CART` (a hazard kind
+   this cart does not run), `RECOPY PACK` (the file is split over the
+   drive: see RAM below). Copy it again or rebuild it.
 
 Link play: both badges need the same pack (same name and CRC). The host
 cannot pick a pack track its partner lacks: its rules row reads `PARTNER
@@ -209,15 +210,16 @@ The **arena blob** is `track.zig` `parse_arena`'s (tools/build_arena.py).
 At the scan (menu open): the magic (`NOT A PACK`), the version (`PACK
 TOO NEW`), the header (counts, cell size, reserved bytes zero, the file
 size equal to the directory entry's) and every section's bounds and
-length (`PACK DAMAGED`), the size cap of 128 KB and the RAM budget of
-every track (`PACK TOO BIG`), the hazard mask (`NEEDS NEWER CART`); then
+length (`PACK DAMAGED`), the size cap of 128 KB (`PACK TOO BIG`), the
+hazard mask (`NEEDS NEWER CART`); then
 the CRC in the background, a few KB a frame (`PACK DAMAGED`). A pack is
 pickable once its CRC is in. At load: each packed stream must decode to
 exactly its size without reading past its section, tile indices under
 128, the centerline sane (sample 0 on a start tile, each sample on
 drivable floor except over a ramp gap, consecutive samples under 48 px
 apart, half widths 8..120), feat kinds in the mask, props cells under the
-count, the arena blob parses. A pack that fails any of these is refused
+count, the arena blob parses, the in-place sections each in one run of
+clusters (`RECOPY PACK`). A pack that fails any of these is refused
 with its message and the menu stays on the built-in tracks; nothing in a
 pack can crash the cart.
 
@@ -225,11 +227,12 @@ pack can crash the cart.
 
 A pack loads into the slots the built-in leagues use: the tiles into the
 8 KB tile slot, the horizon into the 12 KB horizon slot, the map into the
-16 KB map buffer. The rest goes into one 8 KB pack slot (`pack_format.slot_bytes`):
-palette 512, attributes 128, centerline 1,536, feat 80 and props records
-144 always (2,400), then the arena blob and the props cells the track
-places (only those). So **per track: arena blob + used cells x cell bytes
-<= 5,792 B**. With 32x48 cells (768 B): up to 7 different props on a race
-track; an arena with a Sandbox-sized blob (3.6 KB) has room for 2 (or 4
-cells of 32x32). `build_pack.py` checks it per track and prints the
-headroom.
+16 KB map buffer (the floor loop reads those per pixel, so they are always
+in RAM). Every other section (the palette, attributes, centerline, feat,
+props records, the arena blob, the props cells and their palette) is read
+in place from the drive's flash window, as the emulator carts read their
+ROMs: RAM is short (PLAN M7, L100). So each of those sections must lie in
+one run of drive clusters. A file copied onto a drive with gaps (files
+deleted earlier) can be split; the cart then refuses it with `RECOPY PACK`
+(delete it, empty the drive's trash, copy it again, or copy it onto a
+freshly emptied drive). There is no per-track RAM budget for props.

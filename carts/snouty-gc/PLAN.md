@@ -2055,9 +2055,10 @@ origin/main 894b1b76 (M0 to M6 merged, tag `snouty-gc/m6`).
 RAM is the constraint: 25,908 B free at M6, so SPEC 19.2's separate 32 KB
 slot does not fit. A pack loads into the slots the built-in leagues use
 (the 8 KB tile slot, the 12 KB horizon slot, the 16 KB map buffer: one
-floor-loop path) plus one 8 KB pack slot for the rest (palette,
-attributes, centerline, feat, props records, the arena blob and the props
-cells the track places). Packs are 128 tiles; 256-tile sets are refused.
+floor-loop path); every other section is read in place from the drive's
+flash window (L100). Packs are 128 tiles; 256-tile sets are refused. The
+lead's budget for the loader, picker, props and crust is 8 KB in all (the
+saves branch takes another 5,128 B).
 
 ### M7.0 Interface (Track A, committed before Track B's packs land)
 
@@ -2066,7 +2067,7 @@ cells the track places). Packs are 128 tiles; 256-tile sets are refused.
   the RAM budget, how to copy a pack onto a badge) and
   `cart/src/pack_format.zig` (`version` 1, the header, league block and
   track records as `Directory`, `parse`, `budget`, `Refusal` and its
-  menu lines, `slot_bytes`).
+  menu lines).
 - **`tools/build_pack.py DIR`**: packages a pack directory (`pack.toml`
   plus the built-in-format `.bin` files build_tracks.py / build_arena.py
   write, plus `props.png`) into `<file>.GCP`, checking every section as
@@ -2895,10 +2896,9 @@ L93. **Arena stress** (`--poke gc_battle=2`, `debug_battle_stress`): the
     SNOUTY in turn, a rival in SAFE MODE, the kill leader, moving lives,
     eliminations and refill, and the clock in its last 10 s.
 L94. **Pack RAM**: no separate 32 KB slot (25,908 B free at M6). A pack
-    loads into the built-in slots (tiles, horizon, map) plus one 8 KB pack
-    slot; per track the arena blob plus the props cells it places must fit
-    5,792 B (`pack_format.slot_free`). 128-tile packs only: a 256-tile set
-    would need another 8 KB and is refused.
+    loads into the built-in slots (tiles, horizon, map); 128-tile packs
+    only: a 256-tile set would need another 8 KB and is refused. (The
+    M7.0 commit's 8 KB pack slot is gone: L100.)
 L95. **Pack source** (the lead's call, 2026-10-05): a pack directory holds
     the built-in `.bin` set (build_tracks.py's rasterizer with a per-pack
     league) plus `props.png` and `pack.toml`; build_pack.py only packages
@@ -2919,3 +2919,12 @@ L99. **CRC** covers bytes 64 to the end (SPEC 19.1's "CRC32 of the rest");
     the header is checked field by field (reserved bytes zero, the size
     field equal to the directory entry's), and names show unknown bytes as
     `?`. Packs are capped at 128 KB and the picker lists at most 8.
+L100. **In-place sections**: with 8 KB for all of M7 (code included) there
+    is no room for a RAM copy of a pack's palette, attributes, centerline,
+    feat, props, arena blob and props cells, so they are read where they
+    lie in the drive's flash window (the emulators read their ROMs so; only
+    the props cells are read per pixel, a few small billboards a frame).
+    Each must be one run of clusters, else `RECOPY PACK`; there is no
+    per-track props budget any more (6 cells of 32x48 on a race track and
+    3 to 4 in an arena are fine, as are 16). Risk: a host writing to the
+    drive mid-race (as with the emulators).
