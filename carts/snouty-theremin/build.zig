@@ -13,6 +13,10 @@ const dir = "carts/snouty-theremin/";
 /// The theremin (docs/TOF.md M1): hand distance over the TMF8820, or the
 /// stick, to a continuous voice streamed into the newer firmware's ring.
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
+    const options = b.addOptions();
+    options.addOption(bool, "tof_fake", opts.tof_fake);
+    build_options = options;
+
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
         .name = "snouty-theremin",
@@ -36,13 +40,16 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
-/// lib/ modules the cart uses. The sensor driver (lib/tof.zig, M0) joins
-/// these when it lands; cart/src/input.zig `sensor_frame` is where it is
-/// called.
+/// lib/ modules the cart uses: the sensor driver (lib/tof.zig, which holds
+/// lib/tof_types.zig as `tof.types`), its `-Dtof-fake` switch, and the
+/// streaming audio ring.
 fn add_lib_imports(b: *Build, m: *Build.Module) void {
-    m.addImport("tof_types", b.createModule(.{ .root_source_file = b.path("lib/tof_types.zig") }));
+    m.addImport("tof", b.createModule(.{ .root_source_file = b.path("lib/tof.zig") }));
+    if (build_options) |o| m.addImport("build_options", o.createModule());
     m.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
 }
+
+var build_options: ?*Build.Step.Options = null;
 
 fn add_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;

@@ -2,7 +2,7 @@
 //! which play volume, in the two layouts, with the breakout's mounting
 //! (`tof_types.Orientation`) and the player's handedness applied. Pure
 //! data, host-tested.
-const tof_types = @import("tof_types");
+const tof_types = @import("tof").types;
 const Frame = tof_types.Frame;
 
 pub const Layout = enum(u1) {
