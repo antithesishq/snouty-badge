@@ -65,6 +65,7 @@ fn emit(w: *std.Io.Writer) !void {
         \\const DoorDef = levels.DoorDef;
         \\const PickupDef = levels.PickupDef;
         \\const EnemyDef = levels.EnemyDef;
+        \\const Spawn = levels.Spawn;
         \\
     );
     for (manifest, 0..) |e, i| {
@@ -82,6 +83,13 @@ fn emit(w: *std.Io.Writer) !void {
             try w.print("    .{{ .x = {d}, .y = {d}, .kind = .{s} }},\n", .{ d.x, d.y, @tagName(d.kind) });
         }
         try w.writeAll("};\n");
+        if (p.spawn_count > 0) {
+            try w.print("\nconst {s}_spawns = [_]Spawn{{\n", .{e.name});
+            for (p.spawns[0..p.spawn_count]) |d| {
+                try w.print("    .{{ .x = {d}, .y = {d}, .angle = {d} }},\n", .{ d.x, d.y, d.angle });
+            }
+            try w.writeAll("};\n");
+        }
     }
     try w.writeAll("\npub const all = [_]Level{\n");
     for (manifest, 0..) |e, i| {
@@ -99,6 +107,7 @@ fn emit(w: *std.Io.Writer) !void {
         try slice_field(w, "doors", e.name, p.door_count);
         try slice_field(w, "pickups", e.name, p.pickup_count);
         try slice_field(w, "enemies", e.name, p.enemy_count);
+        try slice_field(w, "spawns", e.name, p.spawn_count);
         try w.print("        .default_wall = {d},\n    }},\n", .{p.default_wall});
     }
     try w.writeAll("};\n");

@@ -20,6 +20,7 @@ zig test cart/src/levels.zig
 zig test cart/src/level_parse.zig
 zig test cart/src/rewind.zig
 zig test cart/src/demo.zig
+zig test cart/src/match.zig
 W="$repo/zig-out/bin/snoutenstein.wasm"
 # M1: walk the long corridor, doors, pause.
 node ../../tools/preview.mjs $W --frames 2160 --every 8 --out out/walk \

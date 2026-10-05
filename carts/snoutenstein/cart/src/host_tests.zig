@@ -9,4 +9,5 @@ test {
     std.testing.refAllDecls(@This());
     _ = @import("rewind.zig");
     _ = @import("demo.zig");
+    _ = @import("match.zig");
 }

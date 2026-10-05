@@ -72,6 +72,12 @@ fn ttl_for(kind: u8) u8 {
 /// Launch a projectile of `kind` from (x, y) along `angle`. Returns false
 /// when the pool is full. Takes the lowest free slot (deterministic).
 pub fn spawn(s: *GameState, x: Fixed, y: Fixed, angle: fixed.Angle, kind: u8) bool {
+    return spawn_tagged(s, x, y, angle, kind, 0);
+}
+
+/// `spawn` with `aux[0] = tag`: a deathmatch Debugger bolt's owner
+/// (slot + 1; the campaign's bolts are 0).
+pub fn spawn_tagged(s: *GameState, x: Fixed, y: Fixed, angle: fixed.Angle, kind: u8, tag: u8) bool {
     std.debug.assert(kind != kind_none);
     const c = fixed.cos(angle);
     const sn = fixed.sin(angle);
@@ -85,6 +91,7 @@ pub fn spawn(s: *GameState, x: Fixed, y: Fixed, angle: fixed.Angle, kind: u8) bo
             .vy = fixed.mul(sn, v),
             .kind = kind,
             .ttl = ttl_for(kind),
+            .aux = .{ tag, 0 },
         };
         return true;
     }
@@ -155,6 +162,11 @@ fn update_debug(s: *GameState, level: *const Level, p: *state.Projectile) bool {
 /// `burst_damage` to every living enemy within `burst_radius` of (x, y),
 /// a `burst_flash` on each, then the slot becomes a `kind_burst` there.
 fn burst(s: *GameState, p: *state.Projectile, x: Fixed, y: Fixed) void {
+    burst_enemies(s, x, y);
+    p.* = .{ .x = x, .y = y, .kind = kind_burst, .ttl = burst_ticks };
+}
+
+fn burst_enemies(s: *GameState, x: Fixed, y: Fixed) void {
     for (&s.enemies, 0..) |*e, i| {
         if (!sim.living(e)) continue;
         const dx: i64 = e.x - x;
@@ -162,6 +174,96 @@ fn burst(s: *GameState, p: *state.Projectile, x: Fixed, y: Fixed) void {
         if (dx * dx + dy * dy >= burst_radius_sq) continue;
         sim.damage_enemy(s, i, burst_damage);
         e.flash = burst_flash;
+    }
+}
+
+// ---------------------------------------------------------------- deathmatch
+
+/// Deathmatch (M7): `update` for a match (`match.step`), where the players
+/// live in `m`, not in `s.player`. Enemy shots hit either player (the
+/// first in slot order within `hit_radius`). A Debugger bolt (owner
+/// `aux[0] - 1`) also bursts on the other player, and its burst hurts every
+/// living player within `burst_radius`, the owner too (a self-frag counts),
+/// by `burst_damage * pvp_scale`, credited to the owner.
+pub fn update_match(s: *GameState, level: *const Level, m: *state.Match, pvp_scale: i16) void {
+    for (&s.projectiles) |*p| {
+        switch (p.kind) {
+            kind_none => continue,
+            kind_burst => {},
+            kind_debug => if (update_debug_match(s, level, m, p, pvp_scale)) continue,
+            else => if (update_enemy_shot_match(s, level, m, p)) continue,
+        }
+        p.ttl -= 1;
+        if (p.ttl == 0) p.* = .{};
+    }
+}
+
+fn player_alive(m: *const state.Match, slot: usize) bool {
+    return m.dead[slot] == 0 and m.players[slot].hp > 0;
+}
+
+fn near(x: Fixed, y: Fixed, px: Fixed, py: Fixed, r_sq: i64) bool {
+    const dx: i64 = x - px;
+    const dy: i64 = y - py;
+    return dx * dx + dy * dy < r_sq;
+}
+
+fn update_enemy_shot_match(s: *GameState, level: *const Level, m: *state.Match, p: *state.Projectile) bool {
+    p.x += p.vx;
+    p.y += p.vy;
+    if (sim.is_solid(s, level, fixed.to_int(p.x), fixed.to_int(p.y))) {
+        p.* = .{};
+        return true;
+    }
+    for (0..2) |slot| {
+        const pl = &m.players[slot];
+        if (!player_alive(m, slot) or !near(p.x, p.y, pl.x, pl.y, hit_radius_sq)) continue;
+        const sl: u1 = @intCast(slot);
+        if (p.kind == kind_web) {
+            _ = sim.damage_slot(m, sl, web_damage, state.by_bug);
+            if (pl.grace == 0) pl.frozen = web_freeze_ticks;
+        } else {
+            _ = sim.damage_slot(m, sl, spit_damage, state.by_bug);
+        }
+        p.* = .{};
+        return true;
+    }
+    return false;
+}
+
+fn update_debug_match(s: *GameState, level: *const Level, m: *state.Match, p: *state.Projectile, pvp_scale: i16) bool {
+    const ox = p.x;
+    const oy = p.y;
+    p.x += p.vx;
+    p.y += p.vy;
+    if (sim.is_solid(s, level, fixed.to_int(p.x), fixed.to_int(p.y))) {
+        burst_match(s, m, p, ox, oy, pvp_scale);
+        return true;
+    }
+    var trigger = false;
+    for (&s.enemies) |*e| {
+        if (sim.living(e) and near(e.x, e.y, p.x, p.y, debug_trigger_sq)) trigger = true;
+    }
+    const owner = p.aux[0] -% 1;
+    for (0..2) |slot| {
+        const pl = &m.players[slot];
+        if (slot != owner and player_alive(m, slot) and near(pl.x, pl.y, p.x, p.y, debug_trigger_sq)) trigger = true;
+    }
+    if (!trigger) return false;
+    burst_match(s, m, p, p.x, p.y, pvp_scale);
+    return true;
+}
+
+fn burst_match(s: *GameState, m: *state.Match, p: *state.Projectile, x: Fixed, y: Fixed, pvp_scale: i16) void {
+    burst_enemies(s, x, y);
+    const owner = p.aux[0] -% 1;
+    const by: u8 = if (owner < 2) owner else state.by_bug;
+    for (0..2) |slot| {
+        const pl = &m.players[slot];
+        if (!player_alive(m, slot) or !near(pl.x, pl.y, x, y, burst_radius_sq)) continue;
+        if (sim.damage_slot(m, @intCast(slot), burst_damage * pvp_scale, by) and owner < 2 and slot != owner) {
+            m.hits[owner] +%= 1;
+        }
     }
     p.* = .{ .x = x, .y = y, .kind = kind_burst, .ttl = burst_ticks };
 }

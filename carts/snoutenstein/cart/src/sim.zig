@@ -185,13 +185,13 @@ pub fn step(s: *GameState, level: *const Level, b: state.Buttons) void {
     if (move != 0) {
         _ = move_circle(s, level, &p.x, &p.y, fixed.mul(fixed.cos(p.angle), move), fixed.mul(fixed.sin(p.angle), move), radius, .player);
     }
-    update_doors(s, level);
+    update_doors(s, level, null);
     enter_cell(s, level);
     // Enemies first: a hit this tick shows its flash/pain/dying frame at
     // full length (dying lasts exactly `dying_ticks` steps after the hit).
     ai.update(s, level);
     projectiles.update(s, level);
-    update_weapon(s, level, b);
+    update_weapon(s, level, b, null);
     regen_rewind(s);
     p.prev = b;
     s.tick +%= 1;
@@ -286,15 +286,20 @@ fn box_overlaps(x: Fixed, y: Fixed, cx: i32, cy: i32) bool {
         y - radius < top + fixed.one and y + radius > top;
 }
 
-fn door_occupied(s: *const GameState, cx: i32, cy: i32) bool {
+/// `other`: a second player standing in doorways too (deathmatch; the
+/// campaign passes null).
+fn door_occupied(s: *const GameState, cx: i32, cy: i32, other: ?*const state.Player) bool {
     if (box_overlaps(s.player.x, s.player.y, cx, cy)) return true;
+    if (other) |o| {
+        if (box_overlaps(o.x, o.y, cx, cy)) return true;
+    }
     for (s.enemies) |e| {
         if (e.state != .dead and box_overlaps(e.x, e.y, cx, cy)) return true;
     }
     return false;
 }
 
-fn update_doors(s: *GameState, level: *const Level) void {
+pub fn update_doors(s: *GameState, level: *const Level, other: ?*const state.Player) void {
     for (level.doors, 0..) |def, i| {
         const d = &s.doors[i];
         switch (d.phase) {
@@ -309,10 +314,10 @@ fn update_doors(s: *GameState, level: *const Level) void {
                 // Secret doors stay open for good once found.
                 if (def.kind == .secret) continue;
                 if (d.timer > 0) d.timer -= 1;
-                if (d.timer == 0 and !door_occupied(s, def.x, def.y)) d.phase = door_closing;
+                if (d.timer == 0 and !door_occupied(s, def.x, def.y, other)) d.phase = door_closing;
             },
             door_closing => {
-                if (door_occupied(s, def.x, def.y)) {
+                if (door_occupied(s, def.x, def.y, other)) {
                     // Something stepped in while it was still passable: back open.
                     d.phase = door_opening;
                 } else {
@@ -334,29 +339,34 @@ fn enter_cell(s: *GameState, level: *const Level) void {
     if (Level.is_door(c) and level.doors[Level.door_index(c)].kind == .exit) s.finished = true;
     for (level.pickups, 0..) |pk, i| {
         if (pk.x != cx or pk.y != cy or !state.pickup_present(s, i)) continue;
-        switch (pk.kind) {
-            .key_coral => p.keys |= 1,
-            .key_iris => p.keys |= 2,
-            .key_gold => p.keys |= 4,
-            .hotfix => p.hp = @min(max_hp, p.hp + 25),
-            .charge => p.ammo_zapper = @min(max_zapper, @as(u16, p.ammo_zapper) + 8),
-            .spray_can => {
-                p.ammo_spray = @min(max_spray, @as(u16, p.ammo_spray) + 5);
-                if (!p.has_spray) {
-                    p.has_spray = true;
-                    p.weapon = .spray;
-                }
-            },
-            .battery => p.rewind_meter = @min(max_rewind, p.rewind_meter + 180),
-            .debugger => {
-                p.ammo_debugger = @min(max_debugger, @as(u16, p.ammo_debugger) + 3);
-                if (!p.has_debugger) {
-                    p.has_debugger = true;
-                    p.weapon = .debugger;
-                }
-            },
-        }
+        apply_pickup(p, pk.kind);
         state.take_pickup(s, i);
+    }
+}
+
+/// What picking up `kind` does to the player (campaign and deathmatch).
+pub fn apply_pickup(p: *state.Player, kind: levels.PickupKind) void {
+    switch (kind) {
+        .key_coral => p.keys |= 1,
+        .key_iris => p.keys |= 2,
+        .key_gold => p.keys |= 4,
+        .hotfix => p.hp = @min(max_hp, p.hp + 25),
+        .charge => p.ammo_zapper = @min(max_zapper, @as(u16, p.ammo_zapper) + 8),
+        .spray_can => {
+            p.ammo_spray = @min(max_spray, @as(u16, p.ammo_spray) + 5);
+            if (!p.has_spray) {
+                p.has_spray = true;
+                p.weapon = .spray;
+            }
+        },
+        .battery => p.rewind_meter = @min(max_rewind, p.rewind_meter + 180),
+        .debugger => {
+            p.ammo_debugger = @min(max_debugger, @as(u16, p.ammo_debugger) + 3);
+            if (!p.has_debugger) {
+                p.has_debugger = true;
+                p.weapon = .debugger;
+            }
+        },
     }
 }
 
@@ -410,6 +420,19 @@ pub fn damage_player(s: *GameState, amount: i16) void {
     s.hurt = hurt_ticks;
 }
 
+/// Deathmatch (M7): hurt player `slot` of a match by `amount`, credited
+/// to `by` (0 or 1 a player, `state.by_bug`). The same rules as
+/// `damage_player`: nothing at 0 HP, in the death view or during the
+/// spawn grace. Returns whether it landed.
+pub fn damage_slot(m: *state.Match, slot: u1, amount: i16, by: u8) bool {
+    const p = &m.players[slot];
+    if (p.hp <= 0 or p.grace > 0 or m.dead[slot] > 0) return false;
+    p.hp = @max(0, p.hp - amount);
+    m.hurt[slot] = hurt_ticks;
+    m.last_hit[slot] = by;
+    return true;
+}
+
 /// Straight-line visibility between two points: no wall or shut door on
 /// the segment and the segment shorter than `max_ray`.
 pub fn line_of_sight(s: *const GameState, level: *const Level, x0: Fixed, y0: Fixed, x1: Fixed, y1: Fixed) bool {
@@ -456,19 +479,46 @@ fn next_weapon(p: *const state.Player) state.Weapon {
     return p.weapon;
 }
 
-fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons) void {
+/// Deathmatch (M7): the other player as a target of the shooter's weapons
+/// (`match.zig` fills it in; the campaign passes null). The swatter,
+/// zapper and spray test it like an enemy whose hit radius is the player
+/// `radius`; Debugger bolts carry `tag` and projectiles.zig resolves them.
+pub const Rival = struct {
+    x: Fixed,
+    y: Fixed,
+    /// False while the rival is in its death view: not a target.
+    alive: bool,
+    /// Owner tag for Debugger bolts (projectile `aux[0]`, slot + 1).
+    tag: u8,
+    /// Out: weapon damage (bug-damage units) dealt to the rival this tick.
+    damage: i16 = 0,
+    /// Out: the shooter fired (any weapon, a swing too) this tick.
+    fired: bool = false,
+};
+
+/// What a swing or ray hit first.
+const Target = union(enum) { none, enemy: usize, rival };
+
+fn apply_hit(s: *GameState, t: Target, d: i16, rival: ?*Rival) void {
+    switch (t) {
+        .none => {},
+        .enemy => |i| damage_enemy(s, i, d),
+        .rival => rival.?.damage += d,
+    }
+}
+
+pub fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons, rival: ?*Rival) void {
     const p = &s.player;
     if (b.select and !p.prev.select) p.weapon = next_weapon(p);
     if (p.fire_cooldown > 0) p.fire_cooldown -= 1;
     if (!b.a or p.fire_cooldown != 0) return;
     switch (p.weapon) {
-        .swatter => swat(s, level),
+        .swatter => swat(s, level, rival),
         .zapper => {
             if (p.ammo_zapper == 0) return;
             p.ammo_zapper -= 1;
             s.last_shot = s.tick;
-            const ray = cast(s, level, p.angle, max_ray);
-            if (ray) |i| damage_enemy(s, i, zapper_damage);
+            apply_hit(s, cast(s, level, p.angle, max_ray, rival), zapper_damage, rival);
         },
         .spray => {
             if (p.ammo_spray == 0) return;
@@ -478,7 +528,7 @@ fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons) void {
             for (0..spray_pellets) |_| {
                 const j: i32 = @as(i32, @intCast(next_rand(s) % span)) - spray_jitter;
                 const a: fixed.Angle = p.angle +% @as(u16, @bitCast(@as(i16, @intCast(j))));
-                if (cast(s, level, a, spray_reach)) |i| damage_enemy(s, i, spray_damage);
+                apply_hit(s, cast(s, level, a, spray_reach, rival), spray_damage, rival);
             }
         },
         .debugger => {
@@ -486,21 +536,23 @@ fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons) void {
             if (p.ammo_debugger == 0) return;
             p.ammo_debugger -= 1;
             s.last_shot = s.tick;
-            _ = projectiles.spawn(s, p.x, p.y, p.angle, projectiles.kind_debug);
+            _ = projectiles.spawn_tagged(s, p.x, p.y, p.angle, projectiles.kind_debug, if (rival) |r| r.tag else 0);
         },
     }
+    if (rival) |r| r.fired = true;
     p.fire_cooldown = fire_rate(p.weapon);
 }
 
-/// Hitscan from the player along `angle`: the living enemy with the
-/// smallest along-ray distance `t` such that `0 < t < reach`, `t` short of
-/// the first wall, and the enemy centre within its radius of the ray.
-fn cast(s: *const GameState, level: *const Level, angle: fixed.Angle, reach: Fixed) ?usize {
+/// Hitscan from the player along `angle`: the living enemy (or the living
+/// rival, radius `radius`) with the smallest along-ray distance `t` such
+/// that `0 < t < reach`, `t` short of the first wall, and the target
+/// centre within its radius of the ray. An enemy wins a tie.
+fn cast(s: *const GameState, level: *const Level, angle: fixed.Angle, reach: Fixed, rival: ?*const Rival) Target {
     const p = &s.player;
     const dx = fixed.cos(angle);
     const dy = fixed.sin(angle);
     const limit = @min(reach, wall_distance(s, level, p.x, p.y, angle));
-    var best: ?usize = null;
+    var best: Target = .none;
     var best_t: Fixed = limit;
     for (&s.enemies, 0..) |*e, i| {
         if (!living(e)) continue;
@@ -510,33 +562,54 @@ fn cast(s: *const GameState, level: *const Level, angle: fixed.Angle, reach: Fix
         if (t <= 0 or t >= best_t) continue;
         const lat = fixed.mul(rx, dy) - fixed.mul(ry, dx);
         if (fixed.abs(lat) >= stats(e.kind).radius) continue;
-        best = i;
+        best = .{ .enemy = i };
         best_t = t;
+    }
+    if (rival) |r| {
+        if (r.alive) {
+            const rx = r.x - p.x;
+            const ry = r.y - p.y;
+            const t = fixed.mul(rx, dx) + fixed.mul(ry, dy);
+            const lat = fixed.mul(rx, dy) - fixed.mul(ry, dx);
+            if (t > 0 and t < best_t and fixed.abs(lat) < radius) best = .rival;
+        }
     }
     return best;
 }
 
-/// Swatter: nearest living enemy within reach and the facing cone, in sight.
-fn swat(s: *GameState, level: *const Level) void {
-    const p = &s.player;
+/// Swatter: nearest living enemy (or rival) within reach and the facing
+/// cone, in sight.
+fn swat(s: *GameState, level: *const Level, rival: ?*Rival) void {
     const reach_sq = @as(i64, swatter_reach) * swatter_reach;
-    var best: ?usize = null;
+    var best: Target = .none;
     var best_d: i64 = reach_sq + 1;
     for (&s.enemies, 0..) |*e, i| {
         if (!living(e)) continue;
-        const rx = e.x - p.x;
-        const ry = e.y - p.y;
-        const d = @as(i64, rx) * rx + @as(i64, ry) * ry;
-        if (d >= best_d) continue;
-        const a = fixed.atan2(ry, rx);
-        const off = fixed.angle_diff(a, p.angle);
-        if (off > @as(i32, swatter_cone) or off < -@as(i32, swatter_cone)) continue;
-        const w = @as(i64, wall_distance(s, level, p.x, p.y, a));
-        if (d >= w * w) continue;
-        best = i;
-        best_d = d;
+        if (swat_reaches(s, level, e.x, e.y, best_d)) |d| {
+            best = .{ .enemy = i };
+            best_d = d;
+        }
     }
-    if (best) |i| damage_enemy(s, i, swatter_damage);
+    if (rival) |r| {
+        if (r.alive and swat_reaches(s, level, r.x, r.y, best_d) != null) best = .rival;
+    }
+    apply_hit(s, best, swatter_damage, rival);
+}
+
+/// Squared distance to (x, y) if it is nearer than `best_d`, inside the
+/// swatter cone and in front of the first wall; null otherwise.
+fn swat_reaches(s: *const GameState, level: *const Level, x: Fixed, y: Fixed, best_d: i64) ?i64 {
+    const p = &s.player;
+    const rx = x - p.x;
+    const ry = y - p.y;
+    const d = @as(i64, rx) * rx + @as(i64, ry) * ry;
+    if (d >= best_d) return null;
+    const a = fixed.atan2(ry, rx);
+    const off = fixed.angle_diff(a, p.angle);
+    if (off > @as(i32, swatter_cone) or off < -@as(i32, swatter_cone)) return null;
+    const w = @as(i64, wall_distance(s, level, p.x, p.y, a));
+    if (d >= w * w) return null;
+    return d;
 }
 
 /// Distance from (x, y) along `angle` to the first solid cell (walls, and

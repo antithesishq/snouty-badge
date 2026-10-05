@@ -4,6 +4,7 @@ const Level = levels.Level;
 const DoorDef = levels.DoorDef;
 const PickupDef = levels.PickupDef;
 const EnemyDef = levels.EnemyDef;
+const Spawn = levels.Spawn;
 
 const build_farm_doors = [_]DoorDef{
     .{ .x = 11, .y = 3, .kind = .plain, .vertical = true, .tex = 0 },
@@ -361,6 +362,7 @@ pub const all = [_]Level{
         .doors = &build_farm_doors,
         .pickups = &build_farm_pickups,
         .enemies = &build_farm_enemies,
+        .spawns = &.{},
         .default_wall = 0,
     },
     .{
@@ -439,6 +441,7 @@ pub const all = [_]Level{
         .doors = &staging_doors,
         .pickups = &staging_pickups,
         .enemies = &staging_enemies,
+        .spawns = &.{},
         .default_wall = 0,
     },
     .{
@@ -517,6 +520,7 @@ pub const all = [_]Level{
         .doors = &production_doors,
         .pickups = &production_pickups,
         .enemies = &production_enemies,
+        .spawns = &.{},
         .default_wall = 0,
     },
     .{
@@ -595,6 +599,7 @@ pub const all = [_]Level{
         .doors = &test_doors,
         .pickups = &test_pickups,
         .enemies = &test_enemies,
+        .spawns = &.{},
         .default_wall = 0,
     },
     .{
@@ -673,6 +678,7 @@ pub const all = [_]Level{
         .doors = &wolf_e1m1_doors,
         .pickups = &wolf_e1m1_pickups,
         .enemies = &wolf_e1m1_enemies,
+        .spawns = &.{},
         .default_wall = 0,
     },
 };

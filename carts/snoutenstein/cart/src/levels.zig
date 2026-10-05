@@ -35,6 +35,10 @@ pub const PickupKind = enum(u8) { key_coral, key_iris, key_gold, hotfix, charge,
 
 pub const PickupDef = struct { x: u8, y: u8, kind: PickupKind };
 pub const EnemyDef = struct { x: u8, y: u8, kind: state.EnemyKind };
+/// Deathmatch spawn point (legend `P`, M7); the parser faces it down the
+/// longest open run of floor from its cell.
+pub const Spawn = struct { x: u8, y: u8, angle: fixed.Angle };
+pub const max_spawns = 16;
 
 pub const Level = struct {
     name: []const u8,
@@ -47,6 +51,8 @@ pub const Level = struct {
     doors: []const DoorDef,
     pickups: []const PickupDef,
     enemies: []const EnemyDef,
+    /// Deathmatch spawn points; empty in the campaign levels.
+    spawns: []const Spawn = &.{},
     /// Texture (0-based) used for '#'.
     default_wall: u8,
 
@@ -69,6 +75,9 @@ pub const Level = struct {
 pub const campaign_len = 3;
 pub const test_index = 3;
 pub const e1m1_index = 4;
+/// Deathmatch arenas (M7), in the order of the lobby's ARENA row.
+pub const arena_indices = [_]u8{ 5, 6 };
+pub const arena_names = [_][]const u8{ "SERVER ROOM", "BUILD FARM" };
 
 /// Generated from `levels/*.txt`; order is the manifest in `gen_levels.zig`.
 pub const all = @import("levels/gen.zig").all;

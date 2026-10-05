@@ -120,30 +120,35 @@ const act_teleport: u8 = 3;
 // ---------------------------------------------------------------- update
 
 pub fn update(s: *GameState, level: *const Level) void {
-    for (&s.enemies, 0..) |*e, i| {
-        if (e.flash > 0) e.flash -= 1;
-        switch (e.state) {
-            .dead => {},
-            .dying => {
-                if (e.timer > 0) e.timer -= 1;
-                if (e.timer == 0) {
-                    e.state = .dead;
-                    e.frame = sim.frame_dead;
-                } else {
-                    e.frame = sim.frame_dying + (sim.dying_ticks - e.timer) / sim.dying_frame_ticks;
-                }
-            },
-            else => {
-                const asleep = e.aux[2] & awake_bit == 0;
-                if (asleep and (e.state == .dormant or e.state == .idle)) {
-                    sleep(s, level, e, i);
-                    continue;
-                }
-                // Any other state (pain, or a test placing a chaser) is awake.
-                e.aux[2] |= awake_bit;
-                awake(s, level, e, i);
-            },
-        }
+    for (0..s.enemies.len) |i| update_enemy(s, level, i);
+}
+
+/// One enemy's tick against `s.player`. Deathmatch (`match.zig`) calls it
+/// per enemy with the player it targets swapped into `s.player`.
+pub fn update_enemy(s: *GameState, level: *const Level, i: usize) void {
+    const e = &s.enemies[i];
+    if (e.flash > 0) e.flash -= 1;
+    switch (e.state) {
+        .dead => {},
+        .dying => {
+            if (e.timer > 0) e.timer -= 1;
+            if (e.timer == 0) {
+                e.state = .dead;
+                e.frame = sim.frame_dead;
+            } else {
+                e.frame = sim.frame_dying + (sim.dying_ticks - e.timer) / sim.dying_frame_ticks;
+            }
+        },
+        else => {
+            const asleep = e.aux[2] & awake_bit == 0;
+            if (asleep and (e.state == .dormant or e.state == .idle)) {
+                sleep(s, level, e, i);
+                return;
+            }
+            // Any other state (pain, or a test placing a chaser) is awake.
+            e.aux[2] |= awake_bit;
+            awake(s, level, e, i);
+        },
     }
 }
 

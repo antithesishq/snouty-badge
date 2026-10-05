@@ -18,8 +18,9 @@ const DoorKind = levels.DoorKind;
 const PickupDef = levels.PickupDef;
 const PickupKind = levels.PickupKind;
 const EnemyDef = levels.EnemyDef;
+const Spawn = levels.Spawn;
 
-pub const Error = error{ TooManyRows, RowTooWide, TooManyDoors, TooManyPickups, TooManyEnemies, TwoStarts, BadStartArrow, NoStart, UnknownChar };
+pub const Error = error{ TooManyRows, RowTooWide, TooManyDoors, TooManyPickups, TooManyEnemies, TooManySpawns, TwoStarts, BadStartArrow, NoStart, UnknownChar };
 
 pub const Parsed = struct {
     cells: [size][size]u8,
@@ -35,6 +36,8 @@ pub const Parsed = struct {
     pickup_count: u16,
     enemies: [state.max_enemies]EnemyDef,
     enemy_count: u8,
+    spawns: [levels.max_spawns]Spawn,
+    spawn_count: u8,
 };
 
 fn is_wall_char(ch: u8) bool {
@@ -68,6 +71,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
     out.door_count = 0;
     out.pickup_count = 0;
     out.enemy_count = 0;
+    out.spawn_count = 0;
     out.default_wall = default_wall;
     var start_x: ?u8 = null;
     var start_y: u8 = 0;
@@ -150,9 +154,22 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                     out.enemies[out.enemy_count] = .{ .x = xb, .y = yb, .kind = kind };
                     out.enemy_count += 1;
                 },
+                'P' => {
+                    // Deathmatch spawn (M7); facing is set below, once the
+                    // whole map is known.
+                    if (out.spawn_count >= levels.max_spawns) return error.TooManySpawns;
+                    out.spawns[out.spawn_count] = .{ .x = xb, .y = yb, .angle = 0 };
+                    out.spawn_count += 1;
+                },
                 else => return error.UnknownChar,
             }
         }
+    }
+    // A deathmatch arena may leave out `S`: its first spawn is the start.
+    const spawn_start = start_x == null and out.spawn_count > 0;
+    if (spawn_start) {
+        start_x = out.spawns[0].x;
+        start_y = out.spawns[0].y;
     }
     if (start_x == null) return error.NoStart;
     // Everything outside the drawn map is wall.
@@ -163,9 +180,34 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
     }
     out.width = @intCast(width);
     out.height = @intCast(height);
+    for (out.spawns[0..out.spawn_count]) |*sp| sp.angle = open_facing(&out.cells, sp.x, sp.y);
+    if (spawn_start) start_angle = out.spawns[0].angle;
     out.start_x = start_x.?;
     out.start_y = start_y;
     out.start_angle = start_angle;
+}
+
+/// The compass facing (east, south, west, north; first wins a tie) with the
+/// most floor cells before a wall or door: a spawn looks into the room.
+fn open_facing(cells: *const [size][size]u8, x: u8, y: u8) fixed.Angle {
+    const dirs = [4][2]i32{ .{ 1, 0 }, .{ 0, 1 }, .{ -1, 0 }, .{ 0, -1 } };
+    var best: usize = 0;
+    var best_run: i32 = -1;
+    for (dirs, 0..) |d, i| {
+        var run: i32 = 0;
+        var cx: i32 = @as(i32, x) + d[0];
+        var cy: i32 = @as(i32, y) + d[1];
+        while (cx >= 0 and cy >= 0 and cx < size and cy < size and cells[@intCast(cy)][@intCast(cx)] == 0) {
+            run += 1;
+            cx += d[0];
+            cy += d[1];
+        }
+        if (run > best_run) {
+            best_run = run;
+            best = i;
+        }
+    }
+    return @intCast(best * fixed.angle_quarter);
 }
 
 /// A Level whose slices point into `p` (p must outlive the Level).
@@ -181,6 +223,7 @@ pub fn level(p: *const Parsed, name: []const u8) levels.Level {
         .doors = p.doors[0..p.door_count],
         .pickups = p.pickups[0..p.pickup_count],
         .enemies = p.enemies[0..p.enemy_count],
+        .spawns = p.spawns[0..p.spawn_count],
         .default_wall = p.default_wall,
     };
 }
@@ -226,6 +269,7 @@ fn expect_same(want: *const levels.Level, got: *const levels.Level) !void {
     try testing.expectEqualSlices(levels.DoorDef, want.doors, got.doors);
     try testing.expectEqualSlices(levels.PickupDef, want.pickups, got.pickups);
     try testing.expectEqualSlices(levels.EnemyDef, want.enemies, got.enemies);
+    try testing.expectEqualSlices(levels.Spawn, want.spawns, got.spawns);
 }
 
 // If this fails, a .txt changed without rerunning tools/gen_levels.sh.
@@ -286,4 +330,26 @@ test "door orientation" {
     try testing.expectEqual(@as(u8, 0), s.cell(2, 1));
     try testing.expectEqual(@as(u8, 3), s.cell(4, 0));
     try testing.expectEqual(@as(u8, 3), s.cell(10, 10));
+}
+
+test "deathmatch spawns face the longest open run; an arena needs no S" {
+    var p: Parsed = undefined;
+    const l = try parse_level(&p, "arena",
+        \\1111111
+        \\1P...11
+        \\1.11.11
+        \\1.11..1
+        \\1....P1
+        \\1111111
+    , 0);
+    try testing.expectEqual(@as(usize, 2), l.spawns.len);
+    // (1, 1): 3 floor cells east, 3 south: east wins the tie.
+    try testing.expectEqual(levels.Spawn{ .x = 1, .y = 1, .angle = 0 }, l.spawns[0]);
+    // (5, 4): 4 cells west beat 1 north.
+    try testing.expectEqual(levels.Spawn{ .x = 5, .y = 4, .angle = fixed.deg(180) }, l.spawns[1]);
+    // No S: the first spawn is the start.
+    try testing.expectEqual(@as(u8, 1), l.start_x);
+    try testing.expectEqual(@as(u8, 1), l.start_y);
+    try testing.expectEqual(@as(fixed.Angle, 0), l.start_angle);
+    try testing.expectEqual(@as(u8, 0), l.cell(1, 1)); // a spawn cell is floor
 }
