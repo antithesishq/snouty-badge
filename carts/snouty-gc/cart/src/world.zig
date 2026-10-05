@@ -406,6 +406,11 @@ pub const Setup = struct {
     combat: bool = true,
     /// Race rules (M3): QUICK RACE, GARBAGE COLLECTION or the attract demo.
     mode: Mode = .race,
+    /// M4: the AI racers on the grid, at most (a link race's CREWS 4, 2 or
+    /// 0, SPEC 7.1). The AI cars past it in the seed's grid shuffle stay
+    /// off the grid (`active = false` from the reset, rank 0). The default
+    /// keeps every AI car (single player).
+    crews: u8 = car_count,
 };
 
 pub const World = struct {

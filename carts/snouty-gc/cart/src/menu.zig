@@ -99,23 +99,23 @@ pub fn draw_main(list: *const List, sound_on: bool, link_note: u32, frame: u32) 
         const y = y0 + @as(i32, @intCast(i)) * pitch;
         const sel = i == list.cursor;
         if (sel) hud.fill_rect(6, y - 2, 148, 11, panel_hi);
-        const greyed = i == @intFromEnum(Item.link);
+        const greyed = i == @backingInt(Item.link);
         const color = if (greyed) hud.dim else if (sel) hud.coral else hud.white;
         hud.text(item, x, y, color);
     }
     _ = frame;
     // What the row under the cursor does.
-    const about = switch (@as(Item, @enumFromInt(list.cursor))) {
+    const about = switch (@as(Item, @fromBackingInt(@intCast(list.cursor)))) {
         .quick => "3 LAPS, SIX RACERS",
         .gc => "LAST CAR LEFT WINS",
         .link => "NO LINK YET",
         .sound => "A TOGGLES THE SPEAKER",
     };
     const note_on = link_note > 0 and (link_note / 6) % 2 == 0;
-    const about_color = if (list.cursor == @intFromEnum(Item.link)) (if (note_on) hud.coral else hud.grey) else hud.grey;
+    const about_color = if (list.cursor == @backingInt(Item.link)) (if (note_on) hud.coral else hud.grey) else hud.grey;
     hud.fill_rect(4, 92, 152, 32, hud.anti_black);
     hud.centered(about, 96, about_color);
-    if (list.cursor == @intFromEnum(Item.gc)) hud.centered("MARK AND SWEEP", 106, hud.dim);
+    if (list.cursor == @backingInt(Item.gc)) hud.centered("MARK AND SWEEP", 106, hud.dim);
     hud.centered("A SELECT  B BACK", 116, hud.dim);
 }
 

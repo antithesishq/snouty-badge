@@ -282,7 +282,7 @@ fn draw_pickup_box(c: *const world.Car, follow: u8, frame: u32, look_back: bool)
         const pos = t * (100 - t) / 60;
         cell = (pos * 7 + @as(u32, follow) * 5) % 15;
     } else if (c.pickup != .none) {
-        cell = @intFromEnum(c.pickup);
+        cell = @backingInt(c.pickup);
     }
     sprites.blit_at(&sprites.pickups, cell, box_x + 1, top_y + 1, .{});
     if (look_back) return;

@@ -143,10 +143,10 @@ test "bios fit four lines of 19 characters, pop-up lines wrap in two" {
 test "pickup names fit the caption and match the icon order" {
     const std = @import("std");
     var n: usize = 0;
-    while (n <= @intFromEnum(world.Pickup.prompt_injection)) : (n += 1) {
-        const name = pickup_name(@enumFromInt(n));
+    while (n <= @backingInt(world.Pickup.prompt_injection)) : (n += 1) {
+        const name = pickup_name(@fromBackingInt(@intCast(n)));
         try std.testing.expect(name.len > 0 and name.len <= 16);
     }
     try std.testing.expectEqualStrings("KERNEL PANIC", pickup_name(.kernel_panic));
-    try std.testing.expectEqual(@as(u8, 11), @intFromEnum(world.Pickup.kernel_panic));
+    try std.testing.expectEqual(@as(u8, 11), @backingInt(world.Pickup.kernel_panic));
 }

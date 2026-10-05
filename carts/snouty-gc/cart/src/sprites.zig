@@ -96,12 +96,12 @@ fn portrait_sheet(comptime s: type) Sheet {
 
 /// The art track's sheets (ASSETS.md), per racer in SPEC 4.1 order.
 pub const portraits = [6]Sheet{
-    portrait_sheet(gfx.portrait_snouty),   portrait_sheet(gfx.portrait_legacy),
-    portrait_sheet(gfx.portrait_kiddie),   portrait_sheet(gfx.portrait_sysadmin),
-    portrait_sheet(gfx.portrait_rootkit),  portrait_sheet(gfx.portrait_botnet),
+    portrait_sheet(gfx.portrait_snouty),  portrait_sheet(gfx.portrait_legacy),
+    portrait_sheet(gfx.portrait_kiddie),  portrait_sheet(gfx.portrait_sysadmin),
+    portrait_sheet(gfx.portrait_rootkit), portrait_sheet(gfx.portrait_botnet),
 };
 pub const cars = [6]Sheet{
-    sheet(gfx.car_snouty, 32, 16),  sheet(gfx.car_legacy, 32, 16),  sheet(gfx.car_kiddie, 32, 16),
+    sheet(gfx.car_snouty, 32, 16),   sheet(gfx.car_legacy, 32, 16),  sheet(gfx.car_kiddie, 32, 16),
     sheet(gfx.car_sysadmin, 32, 16), sheet(gfx.car_rootkit, 32, 16), sheet(gfx.car_botnet, 32, 16),
 };
 pub const weapons = sheet(gfx.weapons, 8, 8);

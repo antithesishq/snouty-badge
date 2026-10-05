@@ -452,14 +452,14 @@ pub fn Net(comptime L: type) type {
             return s;
         }
 
-        /// The agreed setup for `sim.reset`. `race.rules.crews` is not in
-        /// `world.Setup` yet (PLAN deferred questions).
+        /// The agreed setup for `sim.reset`, CREWS included (L3).
         pub fn world_setup(self: *const Self) world.Setup {
             return .{
                 .track = self.race.rules.track,
                 .seed = self.race.seed,
                 .humans = self.race.racers,
                 .mode = self.race.rules.mode,
+                .crews = self.race.rules.crews,
             };
         }
 

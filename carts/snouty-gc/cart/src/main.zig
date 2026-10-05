@@ -245,7 +245,7 @@ fn menu_frame() void {
         return;
     }
     if (input.pressed(.a) or input.pressed(.start)) {
-        switch (@as(menu.Item, @enumFromInt(main_list.cursor))) {
+        switch (@as(menu.Item, @fromBackingInt(@intCast(main_list.cursor)))) {
             .quick, .gc => |it| {
                 sound.menu_confirm();
                 race_mode = if (it == .gc) .gc else .quick;
@@ -576,21 +576,21 @@ fn draw_overlay() void {
 comptime {
     if (cart.is_wasm) {
         for (.{
-            "debug_frame",      "debug_render_us",  "debug_pixel_checksum", "debug_px",
-            "debug_py",         "debug_heading",    "debug_speed",          "debug_lap",
-            "debug_progress",   "debug_phase",      "debug_tick",           "debug_rank",
-            "debug_screen",     "debug_mode",       "debug_follow",         "debug_best_lap",
-            "debug_wrecks",     "debug_burst",      "debug_sound",          "debug_world_size",
-            "debug_world_sum",  "debug_car_px",     "debug_car_py",         "debug_car_lap",
-            "debug_car_rank",   "debug_car_racer",  "debug_car_human",      "debug_set_autopilot",
-            "debug_start_race", "debug_tile_under", "debug_input",
-            "debug_stress",     "debug_drawn",      "debug_gathered",       "debug_select_racer",
-            "debug_event_seq",  "debug_car_armor",  "debug_results_card",   "debug_give_pickup",
-            "debug_roll_pickup", "debug_effect",    "debug_pickup",         "debug_frozen",
-            "debug_captcha",    "debug_captcha_cursor", "debug_captcha_lit", "debug_forks",
-            "debug_give_ahead", "debug_start_gc",   "debug_start_attract", "debug_gc_marked",
-            "debug_gc_sweeps",  "debug_gc_collected", "debug_gc_survivor", "debug_alive",
-            "debug_hazard_state", "debug_me",
+            "debug_frame",          "debug_render_us",     "debug_pixel_checksum", "debug_px",
+            "debug_py",             "debug_heading",       "debug_speed",          "debug_lap",
+            "debug_progress",       "debug_phase",         "debug_tick",           "debug_rank",
+            "debug_screen",         "debug_mode",          "debug_follow",         "debug_best_lap",
+            "debug_wrecks",         "debug_burst",         "debug_sound",          "debug_world_size",
+            "debug_world_sum",      "debug_car_px",        "debug_car_py",         "debug_car_lap",
+            "debug_car_rank",       "debug_car_racer",     "debug_car_human",      "debug_set_autopilot",
+            "debug_start_race",     "debug_tile_under",    "debug_input",          "debug_stress",
+            "debug_drawn",          "debug_gathered",      "debug_select_racer",   "debug_event_seq",
+            "debug_car_armor",      "debug_results_card",  "debug_give_pickup",    "debug_roll_pickup",
+            "debug_effect",         "debug_pickup",        "debug_frozen",         "debug_captcha",
+            "debug_captcha_cursor", "debug_captcha_lit",   "debug_forks",          "debug_give_ahead",
+            "debug_start_gc",       "debug_start_attract", "debug_gc_marked",      "debug_gc_sweeps",
+            "debug_gc_collected",   "debug_gc_survivor",   "debug_alive",          "debug_hazard_state",
+            "debug_me",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -738,7 +738,7 @@ fn debug_alive() callconv(.c) u32 {
 /// idle, 1 warn, 2 active) + 4 * kind (1 blast, 2 mover).
 fn debug_hazard_state() callconv(.c) u32 {
     var v: u32 = 0;
-    for (w.hazards, 0..) |hz, k| v |= (@as(u32, @intFromEnum(hz.state)) + 4 * @as(u32, @intFromEnum(hz.kind))) << @intCast(4 * k);
+    for (w.hazards, 0..) |hz, k| v |= (@as(u32, @backingInt(hz.state)) + 4 * @as(u32, @backingInt(hz.kind))) << @intCast(4 * k);
     return v;
 }
 /// The player's car.
@@ -778,9 +778,9 @@ fn debug_results_card() callconv(.c) u32 {
 /// order) in the followed car's slot.
 fn debug_give_pickup(p: u32) callconv(.c) u32 {
     const c = &w.cars[follow];
-    c.pickup = if (p <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(p) else .none;
+    c.pickup = if (p <= @backingInt(world.Pickup.prompt_injection)) @fromBackingInt(@intCast(p)) else .none;
     c.roll_ticks = 0;
-    return @intFromEnum(c.pickup);
+    return @backingInt(c.pickup);
 }
 /// The same with the 45-tick roulette in front of it.
 fn debug_roll_pickup(p: u32) callconv(.c) u32 {
@@ -795,9 +795,9 @@ fn debug_roll_pickup(p: u32) callconv(.c) u32 {
 /// 16 a crate pop, 17 a rival's FORK BOMB 8 samples ahead).
 fn debug_effect(k: u32) callconv(.c) u32 {
     const e = k & 0xFF;
-    if (e > @intFromEnum(stress.Effect.fork_ahead)) return 0;
+    if (e > @backingInt(stress.Effect.fork_ahead)) return 0;
     const car: usize = if (k >> 8 == 0) follow else ((k >> 8) - 1) % world.car_count;
-    stress.force_effect(&w, car, @enumFromInt(e));
+    stress.force_effect(&w, car, @fromBackingInt(@intCast(e)));
     return e;
 }
 /// Pickup P to the nearest car ahead of the followed one (its AI uses it
@@ -805,13 +805,13 @@ fn debug_effect(k: u32) callconv(.c) u32 {
 fn debug_give_ahead(p: u32) callconv(.c) u32 {
     const j = stress.car_ahead(&w, follow, 300) orelse return 0;
     const c = &w.cars[j];
-    c.pickup = if (p <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(p) else .none;
+    c.pickup = if (p <= @backingInt(world.Pickup.prompt_injection)) @fromBackingInt(@intCast(p)) else .none;
     c.roll_ticks = 0;
     return @as(u32, @intCast(j)) + 1;
 }
 /// Followed car: the held pickup (16 = none).
 fn debug_pickup() callconv(.c) u32 {
-    return @intFromEnum(w.cars[follow].pickup);
+    return @backingInt(w.cars[follow].pickup);
 }
 fn debug_frozen() callconv(.c) u32 {
     return w.cars[follow].frozen;

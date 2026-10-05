@@ -329,11 +329,11 @@ pub fn force_effect(w: *World, i_: usize, e: Effect) void {
             c.frozen_by = .panic;
             c.vx = 0;
             c.vy = 0;
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.kernel_panic), c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.kernel_panic), c.x, c.y);
         },
         .bit_flip => {
             c.bit_flip = 180;
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.bit_flip), c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.bit_flip), c.x, c.y);
         },
         .captcha => {
             c.captcha = 120;
@@ -354,21 +354,21 @@ pub fn force_effect(w: *World, i_: usize, e: Effect) void {
                 }
             }
             c.captcha_lit = lit;
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.captcha), c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.captcha), c.x, c.y);
         },
         .ddos => {
             for (&w.drones, 0..) |*d, k| {
                 const a: fixed.Turn = @intCast(k * 8192);
                 d.* = .{ .x = c.x +% fixed.cos(a) * 16, .y = c.y +% fixed.sin(a) * 16, .state = .orbit, .owner = src, .target = ci, .ttl = 180, .angle = @intCast(k * 32) };
             }
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.ddos), c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.ddos), c.x, c.y);
         },
         .deadlock => {
             c.chain = src;
             c.chain_ticks = 150;
             o.chain = ci;
             o.chain_ticks = 150;
-            weapons.emit(w, .effect, world.no_car, ci, @intFromEnum(world.Pickup.deadlock), c.x, c.y);
+            weapons.emit(w, .effect, world.no_car, ci, @backingInt(world.Pickup.deadlock), c.x, c.y);
         },
         .heisenbug => c.heisen = 240,
         .sudo => c.sudo = 300,
@@ -381,24 +381,24 @@ pub fn force_effect(w: *World, i_: usize, e: Effect) void {
         .spaghetti => {
             c.tangle = 60;
             c.strand = 180;
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.spaghetti), c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.spaghetti), c.x, c.y);
         },
         .duck => c.duck = 600,
         .prefetch => c.prefetch = 90,
         .honeypot => {
             c.spin = 30;
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.honeypot), c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.honeypot), c.x, c.y);
         },
         .zero_day => {
-            weapons.emit(w, .use, src, @intFromEnum(world.Pickup.zero_day), ci, c.x, c.y);
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.zero_day), c.x, c.y);
+            weapons.emit(w, .use, src, @backingInt(world.Pickup.zero_day), ci, c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.zero_day), c.x, c.y);
             c.last_hit_by = src;
             c.last_hit_ticks = 0;
             sim.wreck(w, i, .zero_day);
         },
         .duck_pop => {
             c.duck = 0;
-            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.duck), c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @backingInt(world.Pickup.duck), c.x, c.y);
         },
         .hot_patch => c.patch = 60,
         .fork_ahead => {
@@ -406,8 +406,8 @@ pub fn force_effect(w: *World, i_: usize, e: Effect) void {
             const smp = t.sample((@as(usize, c.progress) + 8) & 255);
             const d = weapons.drop_slot(w);
             d.* = .{ .x = @as(i32, smp.x) << fixed.Q, .y = @as(i32, smp.y) << fixed.Q, .kind = .fork, .owner = src, .dir = @intCast(@as(u16, smp.tangent) >> 8) };
-            weapons.emit(w, .use, src, @intFromEnum(world.Pickup.fork_bomb), world.no_car, d.x, d.y);
+            weapons.emit(w, .use, src, @backingInt(world.Pickup.fork_bomb), world.no_car, d.x, d.y);
         },
-        .crate_pop => weapons.emit(w, .roll, ci, @intFromEnum(world.Pickup.sudo), 0, c.x +% fixed.cos(c.heading) * 30, c.y +% fixed.sin(c.heading) * 30),
+        .crate_pop => weapons.emit(w, .roll, ci, @backingInt(world.Pickup.sudo), 0, c.x +% fixed.cos(c.heading) * 30, c.y +% fixed.sin(c.heading) * 30),
     }
 }

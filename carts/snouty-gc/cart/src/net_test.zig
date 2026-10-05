@@ -12,6 +12,7 @@ const sim = @import("sim.zig");
 const ai = @import("ai.zig");
 const net = @import("net.zig");
 const racers = @import("racers.zig");
+const gc_mode = @import("gc_mode.zig");
 
 const World = world.World;
 
@@ -382,17 +383,25 @@ fn synced_race(opts: Opts, tally: *Tally) !void {
     try d.run(20_000_000, {}, done_started);
     try std.testing.expectEqual(d.b[0].net.race.seed, d.b[1].net.race.seed);
     try std.testing.expect(std.meta.eql(d.b[0].net.world_setup(), d.b[1].net.world_setup()));
+    // CREWS: the two humans and that many AI cars on the grid (L3).
+    for (&d.b) |*b| try std.testing.expectEqual(2 + @min(opts.rules.crews, world.car_count - 2), gc_mode.active_count(&b.w));
     try d.run(400_000_000, {}, done_finished);
     try std.testing.expectEqual(d.b[0].net.tick, d.b[1].net.tick);
     try std.testing.expect(sim.worlds_equal(&d.b[0].w, &d.b[1].w));
     _ = try expect_logs_equal(&d);
     try std.testing.expectEqual(net.State.racing, d.b[0].net.state());
     try std.testing.expectEqual(net.State.racing, d.b[1].net.state());
-    // Both humans drove (their cars are human slots) and finished.
+    // Both humans drove (their cars are human slots) and finished: a lap
+    // race when both crossed the line; GARBAGE COLLECTION when one car is
+    // left (the survivor finished; a collected human is out, L4).
     for (&d.b) |*b| {
         const c = &b.w.cars[b.net.local_car()];
         try std.testing.expectEqual(@as(u8, b.net.local_slot()), c.human);
-        try std.testing.expect(c.finished);
+        if (b.w.mode == .gc) {
+            try std.testing.expect(b.w.gc.survivor < world.car_count);
+            const out = b.w.gc.collected & (@as(u8, 1) << @intCast(b.net.local_car())) != 0;
+            try std.testing.expect(c.finished != out);
+        } else try std.testing.expect(c.finished);
     }
     tally.add(&d);
 }
@@ -569,6 +578,14 @@ test "GC mode link race in sync to its end" {
     var tally: Tally = .{};
     try synced_race(.{ .seed = 55, .picks = .{ racers.rootkit, racers.sysadmin }, .rules = .{ .mode = .gc, .crews = 4 } }, &tally);
     tally.print("lockstep, GARBAGE COLLECTION");
+}
+
+test "CREWS 2 and 0: the cars left off the grid stay off, in sync to the end" {
+    var tally: Tally = .{};
+    try synced_race(.{ .seed = 61, .picks = .{ racers.legacy, racers.kiddie }, .rules = .{ .track = 3, .crews = 2 } }, &tally);
+    try synced_race(.{ .seed = 62, .kind = .straight, .picks = .{ racers.botnet, racers.snouty }, .rules = .{ .crews = 0 } }, &tally);
+    try synced_race(.{ .seed = 63, .picks = .{ racers.sysadmin, racers.rootkit }, .rules = .{ .mode = .gc, .track = 1, .crews = 2 } }, &tally);
+    tally.print("lockstep, CREWS 2 / 0 / GC with 2");
 }
 
 test "unplugging mid-race: both sides hand the other car to the AI and finish" {

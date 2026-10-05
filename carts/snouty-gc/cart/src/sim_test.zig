@@ -137,6 +137,43 @@ test "grid: six cars apart on the floor, humans at the back" {
     try std.testing.expect(differs);
 }
 
+test "CREWS: the AI cars past the count stay off the grid; the default keeps all (M4)" {
+    // The default is the old grid exactly (single player is unchanged).
+    var a: World = undefined;
+    var b: World = undefined;
+    sim.reset(&a, solo(7));
+    var s7 = solo(7);
+    s7.crews = 5;
+    sim.reset(&b, s7);
+    try std.testing.expect(sim.worlds_equal(&a, &b));
+    const duo = [2]u8{ racers.legacy, racers.kiddie };
+    for ([_]u8{ 4, 2, 0 }) |crews| {
+        sim.reset(&a, .{ .seed = 11, .humans = duo, .crews = crews });
+        var on: u8 = 0;
+        for (&a.cars) |*c| {
+            if (!c.active) {
+                try std.testing.expectEqual(world.no_human, c.human);
+                try std.testing.expectEqual(@as(u8, 0), c.rank);
+                continue;
+            }
+            on += 1;
+            try std.testing.expect(c.rank >= 1 and c.rank <= 2 + crews);
+        }
+        try std.testing.expectEqual(2 + crews, on);
+        // The humans start on the back row of the shorter grid.
+        try std.testing.expect(a.cars[racers.legacy].rank > crews and a.cars[racers.kiddie].rank > crews);
+        // And the race runs to its finish with the cars off the grid still out.
+        var guard: u32 = 0;
+        while (a.phase != .finished and guard < 20_000) : (guard += 1) {
+            sim.simulate(&a, .{ ai.drive(&a, racers.legacy).byte(), ai.drive(&a, racers.kiddie).byte() });
+        }
+        try std.testing.expectEqual(world.Phase.finished, a.phase);
+        var still: u8 = 0;
+        for (&a.cars) |*c| still += @intFromBool(c.active);
+        try std.testing.expectEqual(2 + crews, still);
+    }
+}
+
 test "auto-throttle: with no input the car drives to its top speed" {
     var w: World = undefined;
     sim.reset(&w, solo(1));
