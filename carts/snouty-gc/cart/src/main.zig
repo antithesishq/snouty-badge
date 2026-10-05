@@ -10,7 +10,9 @@
 //! every track, GARBAGE COLLECTION (a collected player watches the leader),
 //! and the attract demo's camera cuts on a rotating track. M4: LINK (the
 //! lobby, the shared racer select, LINK RACE and LINK GC over `net.zig`'s
-//! lockstep, docs/NET.md section 3). The World lives here; `sim.simulate(&w, inputs)`
+//! lockstep, docs/NET.md section 3). M5: the CIRCUIT (the SNOUTY GCP:
+//! `prix`, career.zig; the garage, standings and cards), A on the title
+//! for a Quick Race. The World lives here; `sim.simulate(&w, inputs)`
 //! advances it and everything else only reads it. `follow` (which car this
 //! badge draws and hears), the camera, the effects and the HUD notices
 //! (fx.zig, from the World's event ring) are render-side state, never in
@@ -1302,11 +1304,13 @@ fn debug_rank() callconv(.c) u32 {
     return w.cars[follow].rank;
 }
 /// 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 the
-/// main menu, 7 the LINK lobby.
+/// main menu, 7 the LINK lobby; M5: 8 the garage, 9 the standings, 10 a
+/// CIRCUIT card (`debug_card`).
 fn debug_screen() callconv(.c) u32 {
     return @backingInt(screen);
 }
-/// 0 quick race, 1 attract, 2 the render stress scene.
+/// 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE
+/// COLLECTION, 4 a CIRCUIT race.
 fn debug_mode() callconv(.c) u32 {
     return @backingInt(mode);
 }

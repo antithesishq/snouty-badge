@@ -493,10 +493,10 @@ pub const World = struct {
     gc: Gc = .{},
     hazards: [hazard_max]Hazard = @splat(.{}),
     /// M5: cycle chips (Setup.chips): bit k set while chip k
-    /// (`track.chip_spots[k]`) is taken; every chip comes back when the
-    /// race leader starts a new lap (`chip_lap`: the leader's lap the
-    /// chips were last laid for).
+    /// (`track.chip_spots[k]`) is taken; every taken chip comes back each
+    /// `tuning.chip_respawn` ticks (`chip_clock`), so the back of the field
+    /// finds some too.
     chips_on: bool = false,
-    chip_lap: u8 = 0,
+    chip_clock: u8 = 0,
     chips: u32 = 0,
 };

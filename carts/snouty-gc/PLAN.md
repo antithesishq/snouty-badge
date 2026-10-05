@@ -1523,8 +1523,9 @@ its 2,560 B cap (raised only with a comment if it must be).
   CIRCUIT sets it) turns them on; `track.chip_spots[0..chip_n]` (a cache
   `track.select` fills, like the crates) are 8 trails of 3 chips along the
   line, offset across the road in turn. **`World.chips: u32`** has bit k
-  set while chip k is taken; they all come back when the race leader
-  starts a new lap. A car on the ground whose centre comes within its
+  set while chip k is taken; every taken chip comes back each 240 ticks
+  (`chip_clock`; first planned as "on the leader's next lap", which left
+  none for the back of the field). A car on the ground whose centre comes within its
   radius + 3 px takes one: **`Car.chips`** counts them, and an **event
   `chip`** (car, chip index; x, y the chip) tells the presentation.
 - **CYCLES accounting is outside `simulate`** (`career.zig`, pure, host
@@ -2061,3 +2062,79 @@ L26. **A guest that gets GO on the LINK screen** (not in the select)
 L27. **zig fmt** in this Zig rewrote `@intFromEnum` / `@enumFromInt` to
     `@backingInt` / `@fromBackingInt` in the cart's files (the first M4
     Track B commit carries that churn).
+
+Taken during M5 (Circuit and polish):
+
+L28. **No saves** (SPEC 17.6): the SNOUTY GCP lives in RAM for the
+    session. B in the garage keeps it (CIRCUIT resumes it in the garage);
+    switching the badge off loses it. A new Prix starts only after the
+    end card (there is no "abandon"). A flash save would be a small blob
+    (`career.Career` is plain data) if Adrian wants one.
+L29. **Gun swaps** reset the gun to L1, and the old gun's levels are gone
+    (swapping back costs 800 again). AIs never swap; their plans level
+    their own guns.
+L30. **Weapon levels** are cumulative (L3 keeps L2's ammo) and round up:
+    front ammo 40/10/6/3 -> 50/13/8/4, damage PING 4 -> 5, BROADCAST 3 ->
+    4, LANCE 25 -> 32, SPEAR PHISH 30 -> 38; rear L3 "+25% effect" is the
+    LOGIC BOMB's 35 -> 44, the caltrop's 5 -> 7 and its slow 60 -> 75
+    ticks, the MEMORY LEAK's grown radius 18 -> 23, the FIREWALL's half
+    width 32 -> 40 (its 1 a tick stays, so ECC ignores it).
+L31. **ECC** ignores any hit of 4 or less from anything (shots, walls,
+    FIREWALL ticks, DDOS drones, small rams). An ignored hit is no hit: no
+    kill credit window, no GC tag, no hit event.
+L32. **TRACTION** adds 8/256 (0.03) to the chassis grip multiplier;
+    **CLOCK** scales `top_q8` by 1.04 a level, so thrust and terminal
+    speed both follow.
+L33. **WATCHDOG** L2 and L3 (60 and 40 ticks) are shorter than the hulk's
+    90: the hulk burns for the whole delay.
+L34. **Cycle chips** are CIRCUIT-only (`Setup.chips`), 8 trails of 3 at
+    samples 20 + 32k (+0, 2, 4), left / centre / right at 45% of the half
+    width (moved to the line if that is not road); every taken chip comes
+    back every 240 ticks. First built as "back on the leader's next lap",
+    which left none for the back of the field. AIs take chips too.
+L35. **AI budgets** are 75% of what the player has spent in the garage
+    (`tuning.ai_follow_pct`; `ai_own_pct` 0). The first try also counted
+    each AI's own winnings: race winners maxed their cars by the second
+    league and the autopilot never left the Dumps in 18 races. So the
+    field follows the player's spending a step behind it, deterministically.
+L36. **League rules**: points 9/6/4/3/2/1, ties go to the better place
+    in the league's last race; the league win (1500 CYCLES) is 1st in
+    points; the top 3 open the next league; a failed league is replayed
+    from race 1 with the points reset and the CYCLES and upgrades kept.
+L37. **Balance** (SPEC 17.12, dangerous): base tuning is unchanged, as
+    the M0-M4 replays must not move. The danger in the CIRCUIT comes from
+    the AIs' upgrades: the autopilot (SNOUTY's AI) wrecks about 4.8 times a
+    race in the circuit soak and is roughly a 4th-place driver against an
+    equal field; it needs 12 races (two failed leagues) as SNOUTY or KIDDIE,
+    24 as SYSADMIN, and never clears the Dumps in a MAINFRAME. A human
+    using BURST and pickups well should do better; `ai_follow_pct` is the
+    knob for Adrian's play test.
+L38. **Garage flow**: the cursor starts on FRONT; Start races from any row
+    (A on RACE too); B goes to the main menu. The AIs shop when the race
+    starts (after the player). Pause RESTART in a CIRCUIT race is the same
+    track with a new seed; QUIT goes back to the garage and books nothing.
+L39. **CYCLES on screen**: the standings card has the race's breakdown
+    (place, kills, chips, total, wallet) rather than the results table,
+    whose six rows fill the screen; the results cards are unchanged.
+L40. **Quick Race in two presses**: A on the title opens the Quick Race
+    select (Start still opens the menu). No title hint was added, as
+    `menu.zig`'s title belongs to the gc/menu-fix branch.
+L41. **Main menu**: CIRCUIT is the third row (SPEC 8.1 order); the rows'
+    pitch went from 13 to 11 px so five rows fit above the hint lines.
+    gc/menu-fix's PICKUPS row will need the same room at the merge.
+L42. **The Prix**: the new text uses the SNOUTY GCP name (Adrian's rename):
+    `THE SNOUTY GCP` under CIRCUIT, `A ENTER THE PRIX`, `THE DUMPS PRIX`,
+    `PRIX WON!`, `NEW PRIX UNLOCKED`, `SNOUTY GCP / PRIX COMPLETE` on the
+    end card, whose line SPEC 8.2 writes in sentence case and the cart
+    in capitals.
+L43. **Garage reactions**: ten per racer (swap, level, plating, ECC,
+    clock, traction, burst, watchdog, too poor, maxed), at most two rows
+    of 19, up for 3 s, in the racer's livery colour; the portrait bobs
+    while it talks.
+L44. **Debug paths**: `debug_prix_skip` (wasm) books made-up results so
+    the preview and check.sh reach the cards without six races; the
+    `gc_cards` poke (badge-bench) makes the garage's Start book a 1st place
+    instead of racing. Neither is reachable in play.
+L45. **HUD**: up to four BURST bolts, packed 6 px apart past two so they
+    stay left of the car; every floating tag (`TAGGED!`, `<honey>`, `+10`)
+    is clamped to x 2..158.

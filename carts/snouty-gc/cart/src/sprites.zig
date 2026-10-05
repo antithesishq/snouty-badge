@@ -812,7 +812,7 @@ fn draw_crate(k: usize, p: camera.Projected, frame: u32) void {
 /// bobbing, a trail's chips out of step.
 fn draw_chip(k: usize, p: camera.Projected, frame: u32) void {
     const bob: i32 = @intFromBool((frame / 12 + k) % 2 == 0);
-    blit(&icons, i_chip, p.sx, p.sy - lift_px(2, p) - bob, p.scale, .{});
+    blit(&icons, i_chip, p.sx, p.sy - lift_px(2, p) - bob, p.scale * 3 / 2, .{});
 }
 
 /// A DDOS drone: the 4x4 red quad at 2x, hovering and buzzing.

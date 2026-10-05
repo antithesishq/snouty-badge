@@ -286,7 +286,7 @@ test "chips: 20 or more on every track, on the road, off unless the CIRCUIT asks
     }
 }
 
-test "chips: the autopilot picks some up, each a chip event; they come back with the leader's lap" {
+test "chips: the autopilot picks some up, each a chip event; taken chips come back every 4 s" {
     var w: World = undefined;
     sim.reset(&w, .{ .seed = 9, .humans = .{ racers.snouty, world.no_human }, .chips = true });
     try expect(w.chips_on);

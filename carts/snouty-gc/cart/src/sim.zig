@@ -672,15 +672,12 @@ fn update_progress(w: *World, i: usize) void {
 
 /// Cycle chips (M5, SPEC 9.1): a car on the ground and in the race takes
 /// a chip its centre comes within `tuning.chip_touch` of (`Car.chips`, a
-/// `chip` event); every chip comes back when the race leader starts a new
-/// lap. Only with `World.chips_on` (the CIRCUIT).
+/// `chip` event); every taken chip comes back each `tuning.chip_respawn`
+/// ticks. Only with `World.chips_on` (the CIRCUIT).
 fn update_chips(w: *World) void {
-    var lead: u8 = 0;
-    for (&w.cars) |*c| {
-        if (c.active) lead = @max(lead, c.lap);
-    }
-    if (lead != w.chip_lap) {
-        w.chip_lap = lead;
+    w.chip_clock +%= 1;
+    if (w.chip_clock >= tuning.chip_respawn) {
+        w.chip_clock = 0;
         w.chips = 0;
     }
     const r2 = tuning.chip_touch * tuning.chip_touch;

@@ -478,6 +478,8 @@ pub const chip_first: u8 = 20;
 pub const chip_every: u8 = 32;
 pub const chip_lat_pct: i32 = 45;
 pub const chip_touch: i32 = car_radius + 3;
+/// Every taken chip comes back each this many ticks.
+pub const chip_respawn: u8 = 240;
 
 // --- CIRCUIT economy (SPEC 8.2, 9.1, 9.2), M5: career.zig ------------------------
 
