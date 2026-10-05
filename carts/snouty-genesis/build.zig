@@ -34,6 +34,7 @@ var rom_is_default = true;
 /// `debug_overlay`, `z80`, `scrub`, `synth`), set by `add` for the custom builders.
 var build_options: ?*Build.Step.Options = null;
 var build_options_xip: ?*Build.Step.Options = null;
+var build_options_party: ?*Build.Step.Options = null;
 
 /// What a variant carries (PLAN.md M5): the XIP cart (and the simulator
 /// wasm) the full set, the RAM cart neither the Z80 nor the scrubber.
@@ -54,6 +55,11 @@ const Variant = struct {
 };
 const full: Variant = .{ .z80 = true, .scrub = true, .synth = false };
 const ram_cart: Variant = .{ .z80 = false, .scrub = false, .synth = true };
+/// The party cart `snouty-genesis-party` (docs/MULTIPLAYER.md): the RAM
+/// cart with the lobby and the lockstep over the fork firmware's cart
+/// serial port instead of the sound synthesis (both do not fit the RAM
+/// window together).
+const party_cart: Variant = .{ .z80 = false, .scrub = false, .synth = false, .party = true };
 
 fn variant_options(b: *Build, sound: bool, debug_overlay: bool, v: Variant) *Build.Step.Options {
     const options = b.addOptions();
@@ -77,6 +83,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     cart_optimize = opts.cart_optimize;
     build_options = variant_options(b, opts.sound, opts.debug_overlay, ram_cart);
     build_options_xip = variant_options(b, opts.sound, opts.debug_overlay, full);
+    build_options_party = variant_options(b, opts.sound, opts.debug_overlay, party_cart);
 
     // Two variants (PLAN.md M5): the RAM cart `snouty-genesis` (no Z80, no
     // scrubber: code plus the ~150 KB console fit the 268 KB RAM window) and
@@ -95,9 +102,23 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .wasm_from = .xip,
     });
 
+    // The party cart (docs/MULTIPLAYER.md): a third binary, RAM mode, with
+    // the RAM cart's modules plus the party stack and no sound synthesis.
+    // Built with the RAM cart (not by -Dcart-mode=xip).
+    if (mode != .xip) {
+        os_cart.add(b, sycl_badge_dep, .{
+            .mode = .ram,
+            .name = "snouty-genesis-party",
+            .optimize = opts.cart_optimize,
+            .root_source_file = b.path(dir ++ "cart/src/main.zig"),
+            .custom_builder = &build_cart_modules_party,
+        });
+    }
+
     // `zig build check-float` (shared step): the core and the frontend are
     // all-integer; fail if an ELF links any soft-float or libm routine.
     common.add_float_check(b, opts, "snouty-genesis", mode);
+    if (mode != .xip) common.add_float_check(b, opts, "snouty-genesis-party", .ram);
 
     // Host tests: the core is badge-agnostic and runs natively. Test ROMs
     // come from tools/fetch_test_roms.sh (tests/roms/, gitignored).
@@ -375,6 +396,11 @@ fn build_cart_modules_ram(b: *Build, cart: *Build.Module, cart_api: *Build.Modul
     build_cart_modules(b, cart, cart_api, step, build_options.?, .{ .hot = cart_optimize, .cold = .ReleaseSmall, .trimmed_rom = true });
 }
 
+fn build_cart_modules_party(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    cart_api.optimize = .ReleaseSmall;
+    build_cart_modules(b, cart, cart_api, step, build_options_party.?, .{ .hot = cart_optimize, .cold = .ReleaseSmall, .trimmed_rom = true });
+}
+
 fn build_cart_modules_xip(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     build_cart_modules(b, cart, cart_api, step, build_options_xip.?, .{});
 }
@@ -435,13 +461,13 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "core", .module = core },
         },
     });
-    const party_cart = party_lib_module(b, modes.cold, null);
+    const party_mod = party_lib_module(b, modes.cold, null);
     const players = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/players.zig"),
         .optimize = modes.cold,
         .imports = &.{
             .{ .name = "core", .module = core },
-            .{ .name = "party_lib", .module = party_cart },
+            .{ .name = "party_lib", .module = party_mod },
         },
     });
     const app = b.createModule(.{
@@ -459,7 +485,7 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "hint", .module = hint },
             .{ .name = "audio_feed", .module = audio_feed },
             .{ .name = "players", .module = players },
-            .{ .name = "party_lib", .module = party_cart },
+            .{ .name = "party_lib", .module = party_mod },
         },
     });
     cart.addImport("core", core);

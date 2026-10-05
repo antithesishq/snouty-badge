@@ -6,6 +6,7 @@
 //! simulator shims and the `debug_*` exports, and calls `start`/`update`
 //! here; both are `noinline` so the cold code is not inlined back into the
 //! fast root module. See main.zig for the overview.
+const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("video");
@@ -22,6 +23,36 @@ pub const rewind = @import("rewind.zig");
 pub const players = @import("players");
 const tuning = @import("tuning.zig");
 const hint = @import("hint");
+const lobby = @import("lobby.zig");
+
+// ---- Party (docs/MULTIPLAYER.md; party builds only) ----
+
+/// The party lobby and lockstep exist in this build (`build_options.party`).
+const party_on = @import("build_options").party;
+const party_lib = @import("party_lib");
+/// The fork firmware's cart serial port: static rings, 2 KiB in (about 13
+/// frames of a 4-badge race's traffic, drained five times a Genesis frame)
+/// and 512 B out (a whole lobby frame).
+const Port = party_lib.cart_serial.Badge(.{ .rx_size = 2048, .tx_size = 512 });
+pub const Net = players.Session(Port);
+/// The session, a static (it holds LockstepN's input rings); created the
+/// first time the lobby opens.
+pub var net: Net = undefined;
+pub var net_on = false;
+/// The party race drives the console.
+inline fn networked() bool {
+    return party_on and net_on and net.racing;
+}
+/// "P3 LEFT" after a player left (updates to go) and which slot.
+var left_notice: u32 = 0;
+var left_slot: u4 = 0;
+var prev_gone: u16 = 0;
+
+/// `Md.setup.poll_hook`: drain the receive ring inside a long frame.
+fn poll_net(_: *anyopaque) void {
+    if (party_on and net_on) net.pump(cart.micros_since_boot());
+}
+var poll_ctx: u8 = 0;
 
 /// The console (~137 KB), a static initialised in place: never build it on
 /// the stack (32 KB on the badge, 14.7 KB in wasm).
@@ -33,7 +64,7 @@ const frames_per_update = core.tunables.render_every;
 /// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no ROM on
 /// the drive: frontend/help.zig, never left). `pick` and `help` only happen
 /// in drive builds.
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 };
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4, party = 5 };
 pub var state: State = .splash;
 /// Where the splash leads: `running` (the ROM was chosen in `start`),
 /// `pick` or `help`.
@@ -107,6 +138,9 @@ fn begin(src: core.RomSource) void {
 pub noinline fn update() void {
     controls_state.poll(read_controls());
     const t0 = cart.micros_since_boot();
+    // Drain the party port every update (the relay removes a badge that
+    // stops reading); the console's poll hook does it inside frames.
+    if (party_on and net_on) net.pump(t0);
     debug.frame_tick(t0);
     switch (state) {
         .splash => splash_update(t0),
@@ -116,7 +150,103 @@ pub noinline fn update() void {
         // help screen out of the wasm and embed builds.
         .pick => if (romsrc.use_drive) pick_update(t0),
         .help => if (romsrc.use_drive) help.draw(),
+        .party => if (party_on) party_update(t0),
     }
+}
+
+/// One lobby update (frontend/lobby.zig); B goes back to the game, GO
+/// starts the race on the console.
+fn party_update(t0: u64) void {
+    if (!party_on) return;
+    romsrc.crc_tick();
+    switch (lobby.update(&net, &md, live_edge(), t0)) {
+        .stay => {},
+        .back => resume_local(),
+        .started => {
+            // Game.start reset the console with the race's peripheral.
+            md.setup.poll_hook = .{ .ctx = &poll_ctx, .func = &poll_net };
+            video.apply(&md);
+            rewind.reset(&md);
+            menu.party_racing = true;
+            prev_gone = 0;
+            lobby.last_end = .none;
+            controls_state.suppress_held();
+            state = .running;
+        },
+    }
+}
+
+/// Back to the local game (from the lobby, or after a race ended).
+fn resume_local() void {
+    controls_state.suppress_held();
+    state = .running;
+}
+
+/// The race is over on this badge (a desync, a drop, or Leave): the console
+/// plays on locally; show the lobby when it ended badly.
+fn end_race(why: lobby.End) void {
+    if (!party_on) return;
+    net.leave(cart.micros_since_boot());
+    md.setup.poll_hook = null;
+    menu.party_racing = false;
+    lobby.last_end = why;
+    if (why == .desync or why == .dropped) {
+        controls_state.suppress_held();
+        state = .party;
+    }
+}
+
+/// A party update's ticks: submit this badge's byte for two ticks and step
+/// both (pumping up to 14 ms into the update while a peer's byte is
+/// missing), the second rendered; a missing rendered tick redraws the
+/// last frame again. Returns the ticks stepped.
+fn net_ticks(byte: u8, t1: u64, render: bool) u32 {
+    net.submit(t1, byte);
+    net.submit(t1, byte);
+    var done: u32 = 0;
+    while (done < frames_per_update) {
+        if (net.step(render and done == frames_per_update - 1)) {
+            done += 1;
+            continue;
+        }
+        const now = cart.micros_since_boot();
+        if (now -% t1 > 14_000 or cart.is_wasm) break;
+        net.pump(now);
+    }
+    // The rendered tick did not come: show the last frame again (a copy,
+    // not `render_still`, whose second call site would un-inline the
+    // renderer from the frame loop: 4 KB the party cart lacks).
+    if (render and done < frames_per_update) video.keep_last_frame();
+    return done;
+}
+
+/// After the race's ticks: its end, a leaver's notice, WAITING FOR PLAYERS.
+fn net_after() void {
+    switch (net.ls.state()) {
+        .desync => return end_race(.desync),
+        .dropped => return end_race(.dropped),
+        .waiting => draw_band("WAITING FOR PLAYERS"),
+        else => {},
+    }
+    const gone = net.world.gone;
+    if (gone & ~prev_gone != 0) {
+        left_slot = @intCast(@ctz(gone & ~prev_gone));
+        left_notice = 60;
+    }
+    prev_gone = gone;
+    if (left_notice > 0) {
+        left_notice -= 1;
+        var b: [12]u8 = undefined;
+        const msg = std.fmt.bufPrint(&b, "P{d} LEFT", .{@as(u32, left_slot) + 1}) catch "LEFT";
+        draw_band(msg);
+    }
+}
+
+/// A one-line band across the middle of the screen (Snoutenstein's).
+fn draw_band(msg: []const u8) void {
+    cart.rect(.{ .x = 0, .y = 58, .width = cart.screen_width, .height = 11, .fill_color = menu.band_color });
+    const n: i32 = @intCast(@min(msg.len, 20));
+    text.draw(msg[0..@intCast(n)], @divTrunc(@as(i32, cart.screen_width) - 8 * n, 2), 60, menu.title_color, menu.band_color);
 }
 
 /// One splash update (frontend/splash.zig); any button skips it. When it
@@ -170,8 +300,10 @@ fn start_running(t0: u64) void {
 
 fn run_update(t1: u64) void {
     const in = controls_state.game_frame();
-    const fast = in.fast;
-    const rewind_in = in.rewind;
+    // Fast forward and the chorded rewind would step or rewind this badge
+    // alone: off in a party race.
+    const fast = in.fast and !networked();
+    const rewind_in: @TypeOf(in.rewind) = if (networked()) .off else in.rewind;
     if (in.open_menu) {
         play_hint.stop();
         menu_opens += 1;
@@ -220,6 +352,20 @@ fn run_update(t1: u64) void {
     // `tuning.ff_max_frames`, or until the time so far plus the dearest
     // unrendered frame and the last rendered one would pass
     // `tuning.ff_budget_us`; never fewer than the 1x pair.
+    if (networked()) {
+        const t_net = cart.micros_since_boot();
+        frames_stepped = net_ticks(players.wire_byte(in.pad), t1, true);
+        romsrc.crc_tick();
+        const t_end = cart.micros_since_boot();
+        last_frame_us = t_end -% t_net;
+        audio.update(&md, false);
+        video.finish_frame();
+        debug.record(@truncate(t_end -% t1));
+        if (debug.enabled) romsrc.draw_report();
+        debug.draw();
+        net_after();
+        return;
+    }
     var n: u32 = 1;
     const max: u32 = if (fast) tuning.ff_max_frames else frames_per_update;
     // Every pad for the update's frames (players.zig: the badge is player
@@ -288,6 +434,13 @@ comptime {
 /// One menu update over the frozen frame; the core is not stepped.
 fn menu_update() void {
     audio.silence();
+    // A party race goes on under the menu (released pad, nothing drawn):
+    // stopping would stall every other badge.
+    if (networked()) {
+        _ = net_ticks(0, cart.micros_since_boot(), false);
+        if (net.ls.state() == .desync) end_race(.desync) else if (net.ls.state() == .dropped) end_race(.dropped);
+        if (state != .menu) return menu.close();
+    }
     switch (menu.update(&md, live_edge())) {
         .stay => {},
         .resume_game => {
@@ -303,6 +456,22 @@ fn menu_update() void {
             audio.silence();
             picker.reset();
             state = .pick;
+        },
+        .party => if (party_on) {
+            menu.close();
+            controls_state.suppress_held();
+            if (!net_on) {
+                net.init(.{}, if (core.tunables.z80_enabled) players.game_full else players.game_ram, party_lib.lockstep_n.party.pad(12, "GENESIS"), &md, cart.rand());
+                net_on = true;
+            } else net.ls.enter();
+            state = .party;
+        },
+        .leave_party => if (party_on) {
+            end_race(.left);
+            menu.close();
+            controls_state.suppress_held();
+            video.apply(&md);
+            state = .running;
         },
     }
 }

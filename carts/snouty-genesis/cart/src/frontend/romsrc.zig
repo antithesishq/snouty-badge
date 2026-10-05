@@ -81,7 +81,9 @@ pub fn report() []const u8 {
 /// The RAM cart's holds 768 KB (3 KB), the largest ROM that fits on the
 /// drive beside its own ~540 KB UF2, so its sound (core/sound.zig) fits; a
 /// larger file is listed as not playable (TooManyClusters).
-var clusters: [if (core.sound.enabled) 1536 else romfs.max_clusters]u16 = undefined;
+/// The party cart's holds 512 KB (2 KB): Genesis ROMs come in 512 KB and
+/// 1 MB, and 1 MB does not fit on the drive beside a cart anyway.
+var clusters: [if (@import("build_options").party) 1024 else if (core.tunables.tight_ram) 1536 else romfs.max_clusters]u16 = undefined;
 var mapped: romfs.Mapped = undefined;
 
 /// The drive: `romfs.size` bytes at `romfs.base_addr`.

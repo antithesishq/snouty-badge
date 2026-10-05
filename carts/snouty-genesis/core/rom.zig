@@ -191,8 +191,9 @@ pub fn trim(s: []const u8) []const u8 {
 /// Largest SRAM kept (in RAM, not saved). The RAM cart keeps 8 KB of
 /// address space (its streamed sound needed the other 8 KB, PLAN.md "Sound
 /// on the new firmware (2026-10-04)"): an odd-byte SRAM declared over 16 KB
-/// shows its first 4 KB there.
-pub const sram_max: u32 = if (@import("build_options").synth) 8 * 1024 else 16 * 1024;
+/// shows its first 4 KB there. The party cart keeps 4 KB (its lobby and
+/// lockstep need the rest; multiplayer games rarely have SRAM).
+pub const sram_max: u32 = if (@import("build_options").party) 4 * 1024 else if (@import("tunables.zig").tight_ram) 8 * 1024 else 16 * 1024;
 
 /// Where the 68000 sees the cartridge SRAM: `lo..hi` inclusive, bytes at
 /// `sram[addr - lo]` (odd- or even-byte SRAM leaves every other byte of

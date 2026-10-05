@@ -77,9 +77,20 @@ pub const Result = enum {
     resume_game,
     /// Close, suppress held buttons, `picker.reset()`, enter the picker.
     pick_rom,
+    /// Close and show the party lobby (party builds).
+    party,
+    /// Leave the running party race; the game goes on locally.
+    leave_party,
 };
 
-const Item = enum { resume_game, buttons, scale, smooth, sound, debug, reset, pick_rom, about };
+/// The Party row exists (`build_options.party`: the party cart). Party
+/// builds have no scrubber, so the tenth row takes the scrub line's place.
+pub const party_available = @import("build_options").party;
+/// A party race drives the console (app.zig sets it): Reset and Pick ROM
+/// hide, the Party row leaves the race.
+pub var party_racing: bool = false;
+
+const Item = enum { resume_game, party, buttons, scale, smooth, sound, debug, reset, pick_rom, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
 
 /// The Pick ROM row exists only for a drive build that found candidates;
@@ -90,7 +101,9 @@ fn pick_available() bool {
 
 fn visible(item: Item) bool {
     return switch (item) {
-        .pick_rom => pick_available(),
+        .pick_rom => pick_available() and !party_racing,
+        .reset => !party_racing,
+        .party => party_available,
         // The RAM cart has no sound (no Z80) and no scrubber (PLAN.md M5).
         .sound => audio.available,
         else => true,
@@ -199,6 +212,7 @@ pub fn update(md: *core.Md, e: input.Edge) Result {
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
+                .party => return if (party_racing) .leave_party else .party,
                 .about => showing_about = true,
                 else => adjust(1),
             }
@@ -222,7 +236,7 @@ fn move(d: i2) void {
 fn is_setting(item: Item) bool {
     return switch (item) {
         .buttons, .scale, .smooth, .sound, .debug => true,
-        .resume_game, .reset, .pick_rom, .about => false,
+        .resume_game, .party, .reset, .pick_rom, .about => false,
     };
 }
 
@@ -262,7 +276,7 @@ fn adjust(d: i2) void {
         .smooth => video.smooth = !video.smooth,
         .sound => audio.enabled = !audio.enabled,
         .debug => debug.enabled = !debug.enabled,
-        .resume_game, .reset, .pick_rom, .about => {},
+        .resume_game, .party, .reset, .pick_rom, .about => {},
     }
 }
 
@@ -288,7 +302,10 @@ const first_row_y = panel_y + 2;
 /// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
 /// the rows, or on Resume the rewind hint (`hint.resume_line`). Fixed
 /// below the ninth row even when Pick ROM is hidden.
-pub const scrub_line_y = first_row_y + item_count * row_h;
+pub const scrub_line_y = first_row_y + base_rows * row_h;
+/// Rows before the scrub line: every row but Party, which only party
+/// builds have (and they have no scrubber, so it takes the line's place).
+const base_rows = item_count - 1;
 /// The footer (y 119): how to leave the menu (`hint.back`), taking turns
 /// every 2 s with how to fast forward (`fast_hint`) and to rewind from it
 /// (`rewind_hint`, scrubber builds).
@@ -320,6 +337,11 @@ const tagline_1 = "verified by";
 const tagline_2 = "deterministic replay";
 const back_hint = "B: back";
 /// The Reset row per `core.ports.Kind`.
+/// The peripheral's short name (the lobby's PADS line).
+pub fn kind_name(k: core.ports.Kind) []const u8 {
+    return reset_labels[@backingInt(k)]["Reset: ".len..];
+}
+
 const reset_labels = [core.ports.Kind.count][]const u8{
     "Reset: 1 pad",
     "Reset: 2 pads",
@@ -333,6 +355,7 @@ const reset_labels = [core.ports.Kind.count][]const u8{
 fn label(item: Item) []const u8 {
     return switch (item) {
         .resume_game => "Resume",
+        .party => if (party_racing) "Party: leave" else "Party",
         .buttons => input.layout.label(),
         .scale => if (video.scale == .squeeze) "Scale: Squeeze" else "Scale: Crop",
         .smooth => if (video.smooth) "Smooth H40: On" else "Smooth H40: Off",
@@ -581,6 +604,8 @@ fn check_width(comptime s: []const u8, comptime cols: usize) void {
 
 comptime {
     if (panel_cols != 18) @compileError("panel_cols changed: recheck the layout");
+    // The Party row's tenth place is the scrub line's.
+    if (party_available and rewind.available) @compileError("a party build has no room for the scrub line");
     if (scrub_line_y + row_h > panel_y + panel_h) @compileError("scrub line outside the panel");
     if (footer_y + 8 > panel_y + panel_h - 1) @compileError("menu footer outside the panel");
     if (hint.panel_cols != panel_cols) @compileError("hint.panel_cols does not match this panel");

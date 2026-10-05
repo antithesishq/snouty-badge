@@ -32,3 +32,9 @@ pub const z80_enabled: bool = @import("build_options").z80;
 /// 3 = 14,700. The PSG and the output stay at 44.1 kHz. Measured per rate
 /// in PLAN.md "Sound on the new firmware (2026-10-04)".
 pub const fm_rate_div: u32 = 3;
+
+/// The RAM-window carts (the RAM cart with its sound, the party cart with
+/// its lobby and lockstep): 8 KB of cartridge SRAM (`rom.sram_max`) and a
+/// 768 KB drive cluster table (frontend/romsrc.zig), PLAN.md "Sound on the
+/// new firmware" and docs/MULTIPLAYER.md.
+pub const tight_ram: bool = @import("build_options").synth or @import("build_options").party;
