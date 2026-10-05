@@ -1,8 +1,8 @@
 //! LINK DUEL over the link cable (SPEC 10, PLAN M3 Track L): the thin
 //! adapter between the shared lockstep and the game.
 //!
-//! The lockstep (`Lockstep(L, Glue)`, lib/lockstep.zig's API; see
-//! `lockstep` below) owns the link, finds host and guest from the HELLO
+//! The lockstep (`Lockstep(L, Glue)`, lib/lockstep.zig, docs/LOCKSTEP.md)
+//! owns the link, finds host and guest from the HELLO
 //! nonces (host = slot 0 = the sim's cycle 0, so both Worlds are byte
 //! equal), runs the lobby (the host's 4 rule bytes, a ready flag from each
 //! badge, GO with a digest of the rules), then exchanges one input byte
@@ -29,20 +29,16 @@
 //! retry the step until 14 ms into the frame, only while racing).
 const std = @import("std");
 const game = @import("game.zig");
-/// The lockstep. STAND-IN: `lib/lockstep.zig` had not landed when Track L
-/// was built; `lockstep_standin.zig` is Snouty GC's lockstep made generic
-/// with the agreed API. Swap this import (and the build's module) for the
-/// shared one.
-pub const lockstep = @import("lockstep_standin.zig");
+/// lib/lockstep.zig (shared with Snouty GC and Snouty Zero).
+pub const lockstep = @import("lockstep");
 
 /// The HELLO app id: only another Snouty Cycles is a partner.
-pub const app_id: u8 = 'C';
+pub const app_id: u8 = lockstep.apps.cycles;
 
 /// The game side of the lockstep.
 pub const Glue = struct {
     pub const World = game.Game;
     pub const rules_len = game.link_rules_len;
-    pub const app_id: u8 = 'C';
     /// The byte sampled on frame f drives tick f + 3 (SPEC 10).
     pub const input_delay: u32 = 3;
     pub const pause_bit: ?u8 = game.link_pause_bit;
@@ -91,7 +87,7 @@ pub fn Net(comptime L: type) type {
                 inline else => |s| @field(game.LinkStatus, @tagName(s)),
             };
             lk.host = self.ls.role == .host;
-            lk.partner_app = self.ls.partner_app();
+            lk.partner_name = self.ls.partner_name();
             lk.paused = self.ls.paused;
             lk.can_go = self.ls.can_go();
             lk.heard = if (lk.host) null else self.ls.rules();
@@ -99,7 +95,7 @@ pub fn Net(comptime L: type) type {
         }
 
         fn take_started(self: *Self, g: *game.Game) void {
-            if (self.ls.take_started()) g.duel_begin(self.ls.seed, self.ls.race_rules, self.ls.local_slot());
+            if (self.ls.take_started()) g.duel_begin(self.ls.seed(), self.ls.rules().?, self.ls.local_slot());
         }
 
         /// After `g.update`: the game's requests (leave, rules, ready, go),
@@ -121,8 +117,7 @@ pub fn Net(comptime L: type) type {
             }
             if (g.duel_running() and !lk.demo) {
                 self.ls.submit(now, lk.byte);
-                // A frame the lockstep sat out (time sync) is not retried.
-                self.ticked = self.ls.step(g) or self.ls.skipped;
+                self.ticked = self.ls.step(g);
             }
         }
 
@@ -131,22 +126,18 @@ pub fn Net(comptime L: type) type {
         /// the frame (every `late_gap_us` in the host tests).
         pub fn retry(self: *Self, g: *game.Game, now: u64) void {
             self.ls.pump(now);
-            if (!self.ticked and g.duel_running() and !g.lk.demo) self.ticked = self.ls.step(g) or self.ls.skipped;
+            if (!self.ticked and g.duel_running() and !g.lk.demo) self.ticked = self.ls.step(g);
         }
 
-        /// Worth pumping in a loop until late in the frame: racing, or in
-        /// LINK DUEL's screens with a partner on the wire (a HELLO is 10
-        /// wire bytes, more than the 8-byte FIFO holds, so the handshake
-        /// needs the receiver draining it as it arrives; docs/LINK.md:
-        /// "poll in a loop while waiting for the partner"). False with no
-        /// cable (the bench), so the loop never runs there.
+        /// Worth pumping in a loop until late in the frame: a race runs
+        /// (`ls.busy()`), or LINK DUEL's cable screen is handshaking (a
+        /// HELLO is 10 wire bytes, more than the 8-byte FIFO holds: the
+        /// handshake polls in a loop, docs/LINK.md and docs/LOCKSTEP.md
+        /// section 7). False with no cable (the bench), so the loop never
+        /// runs there.
         pub fn busy(self: *const Self, g: *const game.Game) bool {
             if (self.ls.busy()) return true;
-            if (g.mode != .link) return false;
-            return switch (self.ls.link.state) {
-                .handshake, .connected => true,
-                else => false,
-            };
+            return g.mode == .link and g.state == .link_lobby and self.ls.link.state == .handshake;
         }
     };
 }

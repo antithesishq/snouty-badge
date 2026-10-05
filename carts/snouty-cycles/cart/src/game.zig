@@ -257,7 +257,7 @@ pub const link_rules_len = 4;
 pub const LinkRules = [link_rules_len]u8;
 
 /// What net.zig reports of the lockstep (its `state()`).
-pub const LinkStatus = enum(u8) { offline, searching, wrong_cart, lobby, racing, waiting, peer_left, desync };
+pub const LinkStatus = enum(u8) { offline, searching, wrong_cart, wrong_version, lobby, racing, waiting, peer_left, desync };
 
 /// The host's setup rows.
 pub const LinkRow = enum(u8) { arena, speed, trails, gaps, wrap, hardcore, first_to, start };
@@ -271,7 +271,8 @@ pub const Link = struct {
     // From the lockstep (net.zig `begin`), every frame.
     status: LinkStatus = .offline,
     host: bool = false,
-    partner_app: u8 = 0,
+    /// The partner's cart (WRONG CART), lockstep.app_name of its app id.
+    partner_name: []const u8 = "",
     /// This badge's input slot (0 host, 1 guest; the sim's cycle index).
     slot: u1 = 0,
     /// The lockstep's pause (a Start edge of either player, agreed).
@@ -308,6 +309,11 @@ pub const Link = struct {
     notice: LinkNotice = .none,
     /// Pause menu: 0 RESUME, 1 LEAVE DUEL.
     pause_sel: u1 = 0,
+    /// A pause or resume of ours on its way: the pause bit is held in our
+    /// bytes until the agreed `paused` reads this (a frame's byte is
+    /// dropped while the lockstep stalls, so a one-frame press could be
+    /// lost; holding it makes exactly one edge).
+    pause_want: ?bool = null,
     /// The last d-pad press, sent until a tick carries it back (a press
     /// on a stalled frame is not lost; pressing the planned heading again
     /// does nothing).
@@ -368,18 +374,6 @@ pub const link_tuning = struct {
     pub const ai_tier: ai.Tier = .territory;
     pub const ai_preset: u8 = 2;
 };
-
-/// The partner's cart by its link app id (WRONG CART).
-fn cart_name(app: u8) []const u8 {
-    return switch (app) {
-        'B' => "SNOUTY BOY",
-        'G' => "SNOUTY GC",
-        'L' => "SNOUTY LINK",
-        'Z' => "SNOUTY ZERO",
-        'S' => "SNOUTENSTEIN",
-        else => "ANOTHER CART",
-    };
-}
 
 pub const Game = struct {
     state: State,
@@ -1193,7 +1187,7 @@ pub const Game = struct {
         const lk = &g.lk;
         lk.ready = lk.status == .lobby;
         // A new partner (or none) starts a new match.
-        if (lk.status == .searching or lk.status == .wrong_cart) lk.resync = false;
+        if (lk.status == .searching or lk.status == .wrong_cart or lk.status == .wrong_version) lk.resync = false;
         if (p.b or p.select) return g.to_menu(.link);
         if (lk.status != .lobby or !lk.host) return;
         if (lk.resync) {
@@ -1244,14 +1238,18 @@ pub const Game = struct {
                 else => return g.link_notice(.peer_left),
             }
         }
+        if (lk.pause_want) |want| {
+            if (lk.paused == want) lk.pause_want = null;
+        }
         if (lk.paused) {
             if (p.up or p.down) lk.pause_sel ^= 1;
             if (p.a and lk.pause_sel == 1) {
                 lk.want_leave = true;
                 return g.to_menu(.link);
             }
-            // RESUME: a Start edge of ours (agreed when its tick runs).
-            if (p.start or p.b or p.a) lk.byte = link_pause_bit;
+            // RESUME: a pause-bit edge of ours (agreed when its tick runs).
+            if (p.start or p.b or p.a) lk.pause_want = false;
+            if (lk.pause_want != null) lk.byte = link_pause_bit;
             return;
         }
         if (g.state == .match_over and g.timer >= tuning.game_over_min_ticks and (p.b or p.select)) {
@@ -1271,10 +1269,11 @@ pub const Game = struct {
             in = ai.decide(&g.brains[0], &g.world, lk.slot);
         }
         lk.byte = @as(u8, @bitCast(in)) & link_input_mask;
-        if (p.start) {
+        if (p.start and lk.pause_want == null and !lk.demo) {
             lk.pause_sel = 0;
-            lk.byte |= link_pause_bit;
+            lk.pause_want = true;
         }
+        if (lk.pause_want != null) lk.byte |= link_pause_bit;
         if (lk.demo) g.duel_tick(if (lk.slot == 0) .{ lk.byte, 0 } else .{ 0, lk.byte });
     }
 
@@ -1305,6 +1304,7 @@ pub const Game = struct {
         lk.rematch = .{ false, false };
         lk.notice = .none;
         lk.press_frames = 0;
+        lk.pause_want = null;
         g.mode = .link;
         g.brains[0] = brain(.search, tuning.autopilot_preset, rng.mix(seed, 0xB07));
         g.duel_next_round();
@@ -1583,10 +1583,17 @@ pub const Game = struct {
             .wrong_cart => {
                 add_line(&b, "WRONG", 2, colors.lose);
                 add_line(&b, "CART", 2, colors.lose);
-                add_line(&b, cart_name(lk.partner_app), 1, colors.text);
+                add_line(&b, lk.partner_name, 1, colors.text);
                 add_line(&b, "", 1, colors.text);
                 add_line(&b, "START SNOUTY", 1, colors.dim);
                 add_line(&b, "CYCLES ON BOTH", 1, colors.dim);
+                add_line(&b, "B BACK", 1, colors.dim);
+            },
+            .wrong_version => {
+                add_line(&b, "WRONG", 2, colors.lose);
+                add_line(&b, "VERSION", 2, colors.lose);
+                add_line(&b, "", 1, colors.text);
+                add_line(&b, "UPDATE BOTH BADGES", 1, colors.text);
                 add_line(&b, "B BACK", 1, colors.dim);
             },
             .lobby => {
@@ -2775,8 +2782,8 @@ test "LINK DUEL: every screen's banner fits; the lobby, a demo duel to the match
             lk.resync = true;
             try check_view(g);
             lk.resync = false;
-            for ([_]u8{ 'B', 'G', 'X' }) |app| {
-                lk.partner_app = app;
+            for ([_][]const u8{ "SNOUTY BOY", "SNOUTENSTEIN", "ANOTHER CART" }) |name| {
+                lk.partner_name = name;
                 try check_view(g);
             }
         }

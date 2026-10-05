@@ -40,6 +40,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .imports = &.{
             .{ .name = "iris", .module = b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }) },
             .{ .name = "link_host", .module = link_host_module(b) },
+            .{ .name = "lockstep", .module = b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig") }) },
         },
     }) });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
@@ -61,12 +62,16 @@ fn link_host_module(b: *Build) *Build.Module {
     return b.createModule(.{ .root_source_file = root });
 }
 
-/// Adds `build_options`, `iris` (lib/iris_mark.zig, the title's mark) and
-/// `link` (lib/link.zig, the badge-to-badge link: LINK DUEL, docs/LINK.md).
+/// Adds `build_options`, `iris` (lib/iris_mark.zig, the title's mark),
+/// `link` (lib/link.zig, the badge-to-badge link, docs/LINK.md) and
+/// `lockstep` (lib/lockstep.zig, LINK DUEL's lockstep, docs/LOCKSTEP.md).
+/// Both are cold next to the game and built ReleaseSmall to save RAM, as
+/// Snouty Zero does.
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     _ = step;
     if (build_options) |o| cart.addImport("build_options", o.createModule());
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
-    cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
+    cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig"), .optimize = .ReleaseSmall }));
+    cart.addImport("lockstep", b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig"), .optimize = .ReleaseSmall }));
 }

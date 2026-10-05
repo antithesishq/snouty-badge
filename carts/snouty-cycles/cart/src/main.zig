@@ -442,7 +442,7 @@ fn fake_link_state() void {
     const lk = &g.lk;
     lk.status = @fromBackingInt(@intCast((link_view_fake & 0xFF) - 1));
     lk.host = link_view_fake & 0x100 != 0;
-    lk.partner_app = 'G';
+    lk.partner_name = "SNOUTY GC";
     lk.can_go = true;
     lk.heard = if (lk.host) null else lk.rules();
 }

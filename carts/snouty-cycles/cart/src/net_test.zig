@@ -4,9 +4,12 @@
 //!
 //! The rig adds what the virtual cable leaves out: wire time (10 us a
 //! byte at 1 Mbaud), a random delay per burst, random byte loss (a lost
-//! byte costs its packet the CRC), and the badge's 8-byte receive FIFO
-//! (a byte arriving at a full FIFO is lost: the pessimistic model, as the
-//! cart only empties it at its pump points). The two badges run 60 Hz
+//! byte costs its packet the CRC), and the badge's receive buffer (the
+//! 8-entry FIFO plus the receive program's shift register: a byte that
+//! arrives with 9 unread is lost; the cart empties it at its pump points,
+//! and as bytes come while it pumps in a loop). It is lib/lockstep_unit's
+//! cable with byte timing and the random delay the gate asks for (that
+//! one delivers a packet in an instant). The two badges run 60 Hz
 //! frames of slightly different lengths with a missed vsync now and then,
 //! a 1.5-4 ms render between the mid-frame pump and the late pumps.
 //!
@@ -24,6 +27,12 @@ const layouts = @import("layouts.zig");
 const testing = std.testing;
 
 const qlen: u32 = 2048;
+/// Bytes a badge holds unread: the PIO's 8-entry receive FIFO plus the one
+/// its receive program has shifted in and waits to push (a blocking push
+/// stalls it there; the bytes after it are lost). So the 10-byte HELLO
+/// keeps all but its closing END, and the next HELLO's opening END ends
+/// it (the link's HELLO opens with END for this).
+const rx_capacity = 9;
 
 /// One direction of the cable: bytes in flight with their arrival times.
 const Line = struct {
@@ -71,7 +80,7 @@ const Rig = struct {
                     continue;
                 }
                 const far = &r.cable.ends[s ^ 1];
-                if (far.uart_tx != null and far.rx_len >= 8 and !r.draining[s ^ 1]) {
+                if (far.uart_tx != null and far.rx_len >= rx_capacity and !r.draining[s ^ 1]) {
                     r.fifo_drops += 1;
                     continue;
                 }
@@ -363,7 +372,7 @@ const World2 = struct {
         const pk = w.rig.sent / 8;
         std.debug.print("link gate [{s}]: {d} rounds, NO CONTEST {d}/{d}, hashes compared {d}, mismatched {d}; " ++
             "bytes {d} sent, {d} lost, {d} FIFO drops (~{d} packets); stalled frames {d}/{d} and {d}/{d}; " ++
-            "inputs sent {d}/{d}, old windows {d}/{d}, sync skips {d}/{d}, checks ok {d}/{d}\n", .{
+            "inputs sent {d}/{d}, old windows {d}/{d}, stalls {d}/{d}, checks ok {d}/{d}\n", .{
             name,                     w.rounds(),
             games[0].lk.no_contests,  games[1].lk.no_contests,
             w.compared,               w.mismatches,
@@ -373,7 +382,7 @@ const World2 = struct {
             b.stall_frames,           b.racing_frames,
             a.n.ls.stats.inputs_sent, b.n.ls.stats.inputs_sent,
             a.n.ls.stats.old_windows, b.n.ls.stats.old_windows,
-            a.n.ls.stats.skips,       b.n.ls.stats.skips,
+            a.n.ls.stats.stalls,      b.n.ls.stats.stalls,
             a.n.ls.stats.checks_ok,   b.n.ls.stats.checks_ok,
         });
     }
@@ -412,7 +421,10 @@ test "LINK DUEL: 50 rounds with 5% packet loss and random delay: in sync or a cl
 fn run_to_play(w: *World2, t: u32) !void {
     var k: u32 = 0;
     while (!(games[0].state == .play and games[1].state == .play and games[0].world.tick > t and games[1].world.tick > t)) : (k += 1) {
-        if (k > 60 * 400) return error.NoPlay;
+        if (k > 60 * 400) {
+            std.debug.print("no play: {s}/{s} {s}/{s} ticks {d}/{d}\n", .{ @tagName(games[0].state), @tagName(games[1].state), @tagName(games[0].lk.status), @tagName(games[1].lk.status), games[0].world.tick, games[1].world.tick });
+            return error.NoPlay;
+        }
         w.run(16_000);
     }
 }
