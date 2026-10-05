@@ -75,11 +75,17 @@ both orientations that counts fights and lost bytes.
   0xC0 or 0xDB byte in it. If more than 8 wire bytes arrive between two
   polls, bytes are lost and the CRC drops that packet. So keep packets short
   (n <= 5 is always safe), poll at least once per frame, and poll in a loop
-  while waiting for the partner. A DMA receive ring would lift the limit
-  and is safe on every firmware since March 2026 (the pinned a6ce19f too):
-  the OS aborts cart DMA channels 3-15 when a cart stops, by either exit
-  path (`reset_after_cart`). It is an optional extra, not built yet; the
-  games never depend on it (Adrian: occasional loss is fine).
+  while waiting for the partner.
+- **Optional DMA receive ring.** `link.rp2350.rx_dma = 11` (any cart
+  channel, 3-15) before the link locks, or followed by `restart`, makes
+  a DMA channel copy every received byte into a 256-byte ring, so nothing
+  is lost however long the cart goes between polls. It is safe on every
+  firmware since March 2026 (the pinned a6ce19f too): the OS aborts cart
+  DMA channels 3-15 when a cart stops, by either exit path
+  (`reset_after_cart`); on older firmware the channel would keep writing
+  into the next cart's RAM. Off by default, and no game depends on it
+  (Adrian: occasional loss is fine, no firmware update required). The
+  test cart's Up switches it.
 - **Delivery is best effort.** A dropped packet is gone (`stats`
   counts CRC errors and framing errors). Lockstep games resend or carry
   enough state to recover.
@@ -105,6 +111,10 @@ both orientations that counts fights and lost bytes.
   cable orientation, partner app/version/session, round trip, received
   and lost packets, CRC and framing errors, and both badges' buttons.
 - badge-bench fakes the link registers with no cable plugged in.
+- Added after M1: Up switches the receiver between the PIO FIFO and the
+  DMA ring (`F`/`D` on the MODE line, `FIFO`/`DMA` on the CABLE line).
+  **Hardware check:** connected, LOST should stop rising with DMA on both
+  badges; it rises now and then with FIFO.
 
 Status 2026-10-04: host tests pass for both cable kinds over 200 seeds
 each, at 1 ms and at frame-rate polling (worst connect 0.08 s crossed,
