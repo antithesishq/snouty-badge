@@ -289,7 +289,9 @@ const Duo = struct {
         if (n.paused and !was_paused) b.pause_on = n.tick - 1;
         if (!n.paused and was_paused) b.pause_off = n.tick - 1;
         if (n.tick <= max_ticks) logs[b.side][n.tick] = match.G.hash(&b.w);
-        if (b.mutate_at != 0 and n.tick == b.mutate_at) b.w.m.players[1].x +%= 1;
+        // A counter nothing rewrites (a position change is undone by a
+        // respawn when player 1 happens to be in its death view: M9 bots).
+        if (b.mutate_at != 0 and n.tick == b.mutate_at) b.w.m.deaths[1] +%= 1;
     }
 
     fn both(d: *Duo, s: lockstep.State) bool {

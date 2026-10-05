@@ -140,7 +140,7 @@ node ../../tools/preview.mjs $W --frames 40 --quiet --out out/m7_title --script 
   --dump-exports debug_mode,debug_title_cursor,debug_level \
   --at "9 debug_title_cursor == 1" --at "15 debug_mode == 0" --at "25 debug_title_cursor == 0" \
   --expect "debug_mode == 1" --expect "debug_level == 0"
-node ../../tools/preview.mjs $W --frames 9000 --quiet --out out/m7_local --call debug_dm_bots:0 \
+node ../../tools/preview.mjs $W --frames 15000 --quiet --out out/m7_local --call debug_dm_bots:0 \
   --dump-exports debug_dm_screen,debug_dm_over,debug_dm_frags,debug_dm_tick --until "debug_dm_screen == 2" \
   --expect "debug_dm_over == 1" --expect "debug_dm_screen == 2"
 # M8 party: on the title, Down twice selects PARTY, greyed in the simulator

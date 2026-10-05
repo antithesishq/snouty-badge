@@ -18,4 +18,6 @@ test {
     // M8: party badges through a model of `badge lobby` (the build's
     // `party_lib` import, so only `zig build test` runs it).
     _ = @import("party_net_test.zig");
+    // M9: the deathmatch arsenal (weapons, pads, the DM projectile pool).
+    _ = @import("arsenal_test.zig");
 }

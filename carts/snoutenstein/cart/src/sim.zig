@@ -515,9 +515,9 @@ pub const Shot = struct {
 };
 
 /// What a swing or ray hit first.
-const Target = union(enum) { none, enemy: usize, rival: usize };
+pub const Target = union(enum) { none, enemy: usize, rival: usize };
 
-fn apply_hit(s: *GameState, t: Target, d: i16, shot: ?*Shot) void {
+pub fn apply_hit(s: *GameState, t: Target, d: i16, shot: ?*Shot) void {
     switch (t) {
         .none => {},
         .enemy => |i| damage_enemy(s, i, d),
@@ -531,7 +531,7 @@ pub fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons, shot:
     if (p.fire_cooldown > 0) p.fire_cooldown -= 1;
     if (!b.a or p.fire_cooldown != 0) return;
     switch (p.weapon) {
-        .swatter => swat(s, level, shot),
+        .swatter => _ = melee(s, level, shot, swatter_reach, swatter_cone, swatter_damage),
         .zapper => {
             if (p.ammo_zapper == 0) return;
             p.ammo_zapper -= 1;
@@ -542,11 +542,8 @@ pub fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons, shot:
             if (p.ammo_spray == 0) return;
             p.ammo_spray -= 1;
             s.last_shot = s.tick;
-            const span: u32 = 2 * @as(u32, spray_jitter) + 1;
             for (0..spray_pellets) |_| {
-                const j: i32 = @as(i32, @intCast(next_rand(s) % span)) - spray_jitter;
-                const a: fixed.Angle = p.angle +% @as(u16, @bitCast(@as(i16, @intCast(j))));
-                apply_hit(s, cast(s, level, a, spray_reach, shot), spray_damage, shot);
+                apply_hit(s, cast(s, level, jittered(s, p.angle, spray_jitter), spray_reach, shot), spray_damage, shot);
             }
         },
         .debugger => {
@@ -568,7 +565,14 @@ pub fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons, shot:
 /// that `0 < t < reach`, `t` short of the first wall, and the target
 /// centre within its radius of the ray. An enemy wins a tie, then the
 /// earlier rival in the list.
-fn cast(s: *const GameState, level: *const Level, angle: fixed.Angle, reach: Fixed, shot: ?*const Shot) Target {
+/// `a` plus a uniform offset in -j .. +j from the PRNG (one draw).
+pub fn jittered(s: *GameState, a: fixed.Angle, j: fixed.Angle) fixed.Angle {
+    const span: u32 = 2 * @as(u32, j) + 1;
+    const o: i32 = @as(i32, @intCast(next_rand(s) % span)) - j;
+    return a +% @as(u16, @bitCast(@as(i16, @intCast(o))));
+}
+
+pub fn cast(s: *const GameState, level: *const Level, angle: fixed.Angle, reach: Fixed, shot: ?*const Shot) Target {
     const p = &s.player;
     const dx = fixed.cos(angle);
     const dy = fixed.sin(angle);
@@ -602,34 +606,36 @@ fn cast(s: *const GameState, level: *const Level, angle: fixed.Angle, reach: Fix
     return best;
 }
 
-/// Swatter: nearest living enemy (or rival) within reach and the facing
-/// cone, in sight.
-fn swat(s: *GameState, level: *const Level, shot: ?*Shot) void {
-    const reach_sq = @as(i64, swatter_reach) * swatter_reach;
+/// Melee (the swatter; M9's Garbage Collector): `d` to the nearest living
+/// enemy (or rival) within `reach` and `cone` (half-angle) of the facing,
+/// in sight. Returns whether it hit anything.
+pub fn melee(s: *GameState, level: *const Level, shot: ?*Shot, reach: Fixed, cone: fixed.Angle, d: i16) bool {
+    const reach_sq = @as(i64, reach) * reach;
     var best: Target = .none;
     var best_d: i64 = reach_sq + 1;
     for (&s.enemies, 0..) |*e, i| {
         if (!living(e)) continue;
-        if (swat_reaches(s, level, e.x, e.y, best_d)) |d| {
+        if (swat_reaches(s, level, e.x, e.y, best_d, cone)) |dd| {
             best = .{ .enemy = i };
-            best_d = d;
+            best_d = dd;
         }
     }
     if (shot) |sh| {
         for (sh.rivals, 0..) |*r, k| {
             if (!r.alive) continue;
-            if (swat_reaches(s, level, r.x, r.y, best_d)) |d| {
+            if (swat_reaches(s, level, r.x, r.y, best_d, cone)) |dd| {
                 best = .{ .rival = k };
-                best_d = d;
+                best_d = dd;
             }
         }
     }
-    apply_hit(s, best, swatter_damage, shot);
+    apply_hit(s, best, d, shot);
+    return best != .none;
 }
 
 /// Squared distance to (x, y) if it is nearer than `best_d`, inside the
-/// swatter cone and in front of the first wall; null otherwise.
-fn swat_reaches(s: *const GameState, level: *const Level, x: Fixed, y: Fixed, best_d: i64) ?i64 {
+/// `cone` and in front of the first wall; null otherwise.
+fn swat_reaches(s: *const GameState, level: *const Level, x: Fixed, y: Fixed, best_d: i64, cone: fixed.Angle) ?i64 {
     const p = &s.player;
     const rx = x - p.x;
     const ry = y - p.y;
@@ -637,7 +643,7 @@ fn swat_reaches(s: *const GameState, level: *const Level, x: Fixed, y: Fixed, be
     if (d >= best_d) return null;
     const a = fixed.atan2(ry, rx);
     const off = fixed.angle_diff(a, p.angle);
-    if (off > @as(i32, swatter_cone) or off < -@as(i32, swatter_cone)) return null;
+    if (off > @as(i32, cone) or off < -@as(i32, cone)) return null;
     const w = @as(i64, wall_distance(s, level, p.x, p.y, a));
     if (d >= w * w) return null;
     return d;

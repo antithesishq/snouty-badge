@@ -69,9 +69,10 @@ fn small_signed(v: i16, x1: i32, y: i32, c: cart.DisplayColor) void {
 // ---------------------------------------------------------------- kill feed
 
 /// The latest death as one line at the top of the view for `feed_ticks`:
-/// "FRAGGED P7" (you did it), "P7 FRAGGED YOU", "P7 FRAGGED P3",
-/// "P3 SELF-FRAG", "BUGS GOT P3", and "SELF-FRAG -1" / "EATEN BY BUGS"
-/// for you. Names in their slot colours. `tick` = the World's tick.
+/// "YOU DELETED P7" (you did it), "P7 DELETED YOU", "P7 DELETED P3",
+/// "P3 SELF-DELETED", "BUGS GOT P3", and "SELF-DELETED -1" / "EATEN BY
+/// BUGS" for you (M9: "DELETED" was "FRAGGED"; the score is still
+/// FRAGS). Names in their slot colours. `tick` = the World's tick.
 pub fn draw_kill_feed(m: *const Match, me: usize, names: []const []const u8, tick: u32) void {
     if (m.kill_tick == state.no_shot or tick -% m.kill_tick >= feed_ticks) return;
     if (m.victim >= max_players) return;
@@ -81,22 +82,22 @@ pub fn draw_kill_feed(m: *const Match, me: usize, names: []const []const u8, tic
     var line: Line = .{};
     if (v == me) {
         if (k == me) {
-            line.add("SELF-FRAG -1", hud.coral);
+            line.add("SELF-DELETED -1", hud.coral);
         } else if (by_player) {
             line.name(m, names, k);
-            line.add(" FRAGGED YOU", hud.coral);
+            line.add(" DELETED YOU", hud.coral);
         } else {
             line.add("EATEN BY BUGS", hud.coral);
         }
     } else if (k == me) {
-        line.add("FRAGGED ", hud.green);
+        line.add("YOU DELETED ", hud.green);
         line.name(m, names, v);
     } else if (k == v) {
         line.name(m, names, v);
-        line.add(" SELF-FRAG", hud.grey);
+        line.add(" SELF-DELETED", hud.grey);
     } else if (by_player) {
         line.name(m, names, k);
-        line.add(" FRAGGED ", hud.grey);
+        line.add(" DELETED ", hud.grey);
         line.name(m, names, v);
     } else {
         line.add("BUGS GOT ", hud.grey);
@@ -124,7 +125,7 @@ const Line = struct {
         l.n += 1;
     }
 
-    /// A slot's name, cut to 5 characters so "NAME FRAGGED NAME" fits.
+    /// A slot's name, cut to 5 characters so "NAME DELETED NAME" fits.
     fn name(l: *Line, m: *const Match, names: []const []const u8, slot: usize) void {
         var buf: [4]u8 = undefined;
         const s = slots.name(names, slot, &buf);

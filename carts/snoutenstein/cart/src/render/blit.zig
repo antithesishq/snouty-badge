@@ -12,6 +12,8 @@ pub const Opts = struct {
     dim: bool = false,
     /// Every opaque texel Anti-White (flash).
     white: bool = false,
+    /// Skip the cell's rows above this one (M9: the paw of a weapon cell).
+    from_row: u8 = 0,
 };
 
 const sw: i32 = @intCast(cart.screen_width);
@@ -69,7 +71,7 @@ pub fn cell(comptime sheet: type, comptime cw: u32, comptime ch: u32, index: u32
     const h: i32 = @intCast(ch);
     const c0: i32 = @max(0, -x);
     const c1: i32 = @min(w, sw - x);
-    const r0: i32 = @max(0, -y);
+    const r0: i32 = @max(opts.from_row, -y);
     const r1: i32 = @min(h, sh - y);
     if (c0 >= c1 or r0 >= r1) return;
     const src_x0: usize = @as(usize, index) * cw;
