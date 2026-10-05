@@ -39,8 +39,8 @@ const tunables = @import("tunables.zig");
 const z80bus = @import("z80bus.zig");
 const undo = @import("undo.zig");
 const sound = @import("sound.zig");
+const ports = @import("ports.zig");
 const Md = md_mod.Md;
-const Pad = md_mod.Pad;
 
 /// A10001 version register: bit 7 overseas (1), bit 6 PAL (0: NTSC), bit 5
 /// no expansion unit (1), bits 3-0 hardware version 0 (a model 1 without
@@ -207,6 +207,7 @@ fn read16_io(md: *Md, addr: u24) u16 {
 fn write8_io(md: *Md, addr: u24, v: u8) void {
     if (addr < 0x400000) {
         if (addr >= md.sram_active.lo and addr <= md.sram_active.hi) {
+            if (md.setup.cfg.kind == .jcart) return ports.jcart_write(md, v);
             undo.touch_sr(@intCast(addr - md.sram_active.lo));
             md.sram[addr - md.sram_active.lo] = v;
         }
@@ -281,18 +282,20 @@ fn set_z80_reset(md: *Md, assert: bool) void {
 }
 
 fn sram_control(md: *Md, v: u8) void {
+    // A J-Cart has no SRAM: its register stays mapped.
+    if (md.setup.cfg.kind == .jcart) return;
     md.sram_active = if (v & 1 != 0) md.sram_map else .{};
 }
 
 // ---- I/O ports (A10000-A1001F) ----
 
-/// Register `r` = (address >> 1) & F: 0 version, 1-3 data (pad 1, pad 2,
-/// EXT), 4-6 control, 7-F serial (TxData FF, the rest 00).
-fn io_read(md: *const Md, r: u4) u8 {
+/// Register `r` = (address >> 1) & F: 0 version, 1-3 data (port 1, port
+/// 2, EXT: what is plugged in is `md.setup.cfg`, core/ports.zig), 4-6
+/// control, 7-F serial (TxData FF, the rest 00).
+noinline fn io_read(md: *const Md, r: u4) u8 {
     return switch (r) {
         0 => version,
-        1 => port_read(md.io.data[0], md.io.ctrl[0], pad_lines(md.pad, th_level(md.io.data[0], md.io.ctrl[0]))),
-        2 => port_read(md.io.data[1], md.io.ctrl[1], 0x7F),
+        1, 2 => port_read(md.io.data[r - 1], md.io.ctrl[r - 1], ports.lines(md, @intCast(r - 1))),
         3 => port_read(md.io.data[2], md.io.ctrl[2], 0x7F),
         4, 5, 6 => md.io.ctrl[r - 4],
         7, 0xA, 0xD => 0xFF,
@@ -300,18 +303,18 @@ fn io_read(md: *const Md, r: u4) u8 {
     };
 }
 
-fn io_write(md: *Md, r: u4, v: u8) void {
+noinline fn io_write(md: *Md, r: u4, v: u8) void {
     switch (r) {
         1, 2, 3 => md.io.data[r - 1] = v,
         4, 5, 6 => md.io.ctrl[r - 4] = v,
+        else => return,
+    }
+    // A Team Player follows its port's TH and TR.
+    switch (r) {
+        1, 4 => ports.port_written(md, 0),
+        2, 5 => ports.port_written(md, 1),
         else => {},
     }
-}
-
-/// TH (bit 6): driven by the data register when the control register makes
-/// it an output, else pulled high.
-inline fn th_level(data: u8, ctrl: u8) bool {
-    return ctrl & 0x40 == 0 or data & 0x40 != 0;
 }
 
 /// A data port read: output pins (control bit set) read back the data
@@ -320,24 +323,8 @@ inline fn port_read(data: u8, ctrl: u8, lines: u8) u8 {
     return (data & 0x80) | (data & ctrl & 0x7F) | (lines & ~ctrl & 0x7F);
 }
 
-/// The 3-button pad's lines, active low, with TH on bit 6 as selected:
-/// TH high `1 TH C B R L D U`, TH low `1 TH St A 0 0 D U`.
-pub fn pad_lines(pad: u16, th: bool) u8 {
-    var pressed: u8 = 0;
-    if (pad & Pad.up != 0) pressed |= 0x01;
-    if (pad & Pad.down != 0) pressed |= 0x02;
-    if (th) {
-        if (pad & Pad.left != 0) pressed |= 0x04;
-        if (pad & Pad.right != 0) pressed |= 0x08;
-        if (pad & Pad.b != 0) pressed |= 0x10;
-        if (pad & Pad.c != 0) pressed |= 0x20;
-        return 0x40 | (0x3F & ~pressed);
-    }
-    pressed |= 0x0C;
-    if (pad & Pad.a != 0) pressed |= 0x10;
-    if (pad & Pad.start != 0) pressed |= 0x20;
-    return 0x3F & ~pressed;
-}
+/// The 3-button pad's lines (core/ports.zig).
+pub const pad_lines = ports.pad_lines;
 
 // ---- VDP and PSG (C00000-DFFFFF) ----
 //

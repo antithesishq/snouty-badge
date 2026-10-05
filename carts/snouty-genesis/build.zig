@@ -48,6 +48,9 @@ const Variant = struct {
     /// only, where the 68000's own writes to the chips are what plays.
     /// The XIP cart and the simulator keep the one-voice `tone` path.
     synth: bool,
+    /// The party lobby and lockstep over the fork firmware's cart serial
+    /// port (docs/MULTIPLAYER.md, root docs/LOCKSTEP_N.md).
+    party: bool = false,
 };
 const full: Variant = .{ .z80 = true, .scrub = true, .synth = false };
 const ram_cart: Variant = .{ .z80 = false, .scrub = false, .synth = true };
@@ -63,6 +66,7 @@ fn variant_options(b: *Build, sound: bool, debug_overlay: bool, v: Variant) *Bui
     options.addOption(bool, "z80", v.z80);
     options.addOption(bool, "scrub", v.scrub);
     options.addOption(bool, "synth", v.synth);
+    options.addOption(bool, "party", v.party);
     return options;
 }
 
