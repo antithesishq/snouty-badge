@@ -748,6 +748,29 @@ test "a double frag at the limit is a draw" {
     try testing.expectEqual([2]i16{ 5, 5 }, w.m.frags);
 }
 
+test "both arenas run a long random match with bugs, the same twice" {
+    for (0..levels.arena_indices.len) |ai_| {
+        var hs: [2]u32 = undefined;
+        for (&hs) |*h| {
+            var w: World = undefined;
+            init_rules(&w, .{ .arena = @intCast(ai_), .frags = 3, .bugs = true }, 77);
+            try testing.expect(w.m.players[0].x != w.m.players[1].x or w.m.players[0].y != w.m.players[1].y);
+            var x: u32 = 5;
+            for (0..6000) |_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                // Mostly walking and shooting, now and then strafing.
+                const in = [2]Buttons{ buttons_of(@truncate((x & 0x3B) | 0x01)), buttons_of(@truncate(((x >> 8) & 0x3B) | 0x01)) };
+                step(&w, arena_level(@intCast(ai_)), in);
+            }
+            try testing.expect(w.m.shots[0] > 0 and w.m.shots[1] > 0);
+            h.* = hash(&w);
+        }
+        try testing.expectEqual(hs[0], hs[1]);
+    }
+}
+
 test "the same inputs give the same World, whatever was in memory" {
     var st: level_parse.Parsed = undefined;
     const L = try hall(&st);

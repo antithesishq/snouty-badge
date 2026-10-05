@@ -17,6 +17,9 @@ const manifest = [_]Entry{
     .{ .name = "production", .file = "production.txt", .default_wall = 0 },
     .{ .name = "test", .file = "test.txt", .default_wall = 0 },
     .{ .name = "wolf_e1m1", .file = "wolf_e1m1.txt", .default_wall = 0 },
+    // Deathmatch arenas (M7), `levels.arena_indices`.
+    .{ .name = "server_room", .file = "server_room.txt", .default_wall = 0 },
+    .{ .name = "build_farm_dm", .file = "build_farm_dm.txt", .default_wall = 0 },
 };
 
 var io_mem: std.Io.Threaded = .init_single_threaded;

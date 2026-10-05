@@ -281,12 +281,25 @@ test "levels/gen.zig matches the .txt sources" {
         .{ .name = "production", .src = @embedFile("levels/production.txt") },
         .{ .name = "test", .src = @embedFile("levels/test.txt") },
         .{ .name = "wolf_e1m1", .src = @embedFile("levels/wolf_e1m1.txt") },
+        .{ .name = "server_room", .src = @embedFile("levels/server_room.txt") },
+        .{ .name = "build_farm_dm", .src = @embedFile("levels/build_farm_dm.txt") },
     };
     for (sources, 0..) |e, i| {
         const l = try parse_level(&p, e.name, e.src, 0);
         try expect_same(&levels.all[i], &l);
     }
     try testing.expectEqual(sources.len, levels.all.len);
+    // The arenas: at least four spawns, no keys, locks or exit, few
+    // enough pickups for the per-pickup respawn timers.
+    for (levels.arena_indices) |ai| {
+        const a = &levels.all[ai];
+        try testing.expect(a.spawns.len >= 4);
+        try testing.expect(a.pickups.len <= state.max_match_pickups);
+        for (a.doors) |d| try testing.expect(d.kind == .plain or d.kind == .secret);
+        for (a.pickups) |pk| try testing.expect(pk.kind != .key_coral and pk.kind != .key_iris and pk.kind != .key_gold);
+    }
+    try testing.expectEqualStrings("server_room", levels.all[levels.arena_indices[0]].name);
+    try testing.expectEqualStrings("build_farm_dm", levels.all[levels.arena_indices[1]].name);
     try testing.expectEqualStrings("test", levels.all[levels.test_index].name);
     try testing.expectEqualStrings("wolf_e1m1", levels.all[levels.e1m1_index].name);
 }

@@ -7,7 +7,8 @@ export PATH="$HOME/.local/bin:$PATH"
 cd "$(dirname "$0")/.."
 repo="../.."
 # Levels: every level solvable, and the generated data file matching the .txt sources.
-python3 tools/check_level.py cart/src/levels/build_farm.txt cart/src/levels/staging.txt cart/src/levels/production.txt cart/src/levels/test.txt cart/src/levels/wolf_e1m1.txt
+python3 tools/check_level.py cart/src/levels/build_farm.txt cart/src/levels/staging.txt cart/src/levels/production.txt cart/src/levels/test.txt cart/src/levels/wolf_e1m1.txt \
+  cart/src/levels/server_room.txt cart/src/levels/build_farm_dm.txt
 tools/gen_levels.sh
 git diff --exit-code -- cart/src/levels/gen.zig || { echo "check: cart/src/levels/gen.zig is stale; commit the regenerated file"; exit 1; }
 # The dormant LED path (docs/NEOPIXELS.md) must keep compiling; build it
