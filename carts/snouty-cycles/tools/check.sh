@@ -31,7 +31,10 @@
 #           (snouty_cycles_level) for 3600 frames each, each with a derez
 #           forced at World tick BENCH_CRASH_AT (1500) so a rewind (freeze,
 #           retraction, replay, repaint) is in the timing, and a SKIRMISH
-#           match of 3 ASM programs (BENCH_SKIRMISH): so sudden death,
+#           match of 3 ASM programs (BENCH_SKIRMISH), and the WRAP runs
+#           (M2.1): level 12 with OPTIONS 16 (WRAP) and 28 (WRAP + GAPS +
+#           SNAKE, BENCH_WRAP_OPTIONS) and the SKIRMISH with WRAP, where the
+#           AI's searches run longest: so sudden death,
 #           layouts, rewinds and three programs are in the timing: worst `busy ms`
 #           frame <= BENCH_MAX_MS (default 12, SPEC section 12) in every
 #           run, no crash or hang. BENCH_SEED (default 2) seeds the level
@@ -46,7 +49,23 @@
 #           whole framebuffer, looks right.
 #   ladder  the content gate: tools/ladder_bot.mjs, autopilot 3, every
 #           level 1..12 cleared with its 3 snapshots (rewinds) on at least
-#           4 of 5 seeds.
+#           4 of seeds 1-5 and 7 of seeds 6-15 (M2.1); it prints the
+#           derezzes per level (the difficulty curve).
+#   link    LINK DUEL (M3): the lockstep host tests (zig build test
+#           -Dtest-filter="LINK DUEL", cart/src/net_test.zig: two Games on
+#           lib/link_virtual.zig play 50 rounds with random riders and
+#           modifiers in sync at every tick; 50 more with ~5% packet loss
+#           and random delay, in sync or a clean NO CONTEST; a corrupted
+#           World is NO CONTEST on both, then a new race in sync; unplugged
+#           in mid-round the program rides the partner's cycle, then the
+#           menu; pause on one badge pauses both); headless: LINK DUEL from
+#           the menu says NO LINK IN SIMULATOR (debug_link_status 0), a demo
+#           duel (the T2 program in the partner's slot) plays to round 3;
+#           badge-bench with no cable: the link costs < LINK_MAX_MS (0.3) a
+#           frame (mean busy ms with and without the snouty_cycles_link_off
+#           poke, on the toml run and on LINK DUEL's cable screen; their
+#           worst frames are shown, the bench step gates them), and a demo
+#           duel (PILLARS, the autopilot against T2) holds BENCH_MAX_MS.
 #
 # Output under out/ (gitignored). Exit 0 when every step passes, else 1
 # (the failing steps are listed at the end).
@@ -69,8 +88,11 @@ bench_seed="${BENCH_SEED:-2}"
 crash_at="${BENCH_CRASH_AT:-1500}"
 # The SKIRMISH run: game.Skirmish.from_bits + 1 (15 = 3 ASM programs, OPEN).
 skirmish="${BENCH_SKIRMISH:-15}"
+# The WRAP runs (levels.Options bits): level 12 with each, and the SKIRMISH
+# run with the first.
+wrap_options="${BENCH_WRAP_OPTIONS-16 28}"
 
-all=(build test float font cycle bench lcd ladder)
+all=(build test float font cycle bench lcd ladder link)
 extra=(ladder)
 steps=("$@")
 [ ${#steps[@]} -eq 0 ] && steps=("${all[@]}")
@@ -228,6 +250,21 @@ if want bench || want lcd; then
                 --out "$out/bench/skirmish" > "$out/bench/skirmish.txt" 2>&1 &
             pids+=($!)
         fi
+        if want bench; then
+            for o in $wrap_options; do
+                "$bench" "$elf" --json --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
+                    --poke "snouty_cycles_seed=$bench_seed" --poke snouty_cycles_level=12 --poke "snouty_cycles_crash_at=$crash_at" \
+                    --poke "snouty_cycles_options=$o" --out "$out/bench/wrap12_o$o" > "$out/bench/wrap12_o$o.txt" 2>&1 &
+                pids+=($!)
+            done
+            if [ -n "$skirmish" ] && [ -n "$wrap_options" ]; then
+                o="${wrap_options%% *}"
+                "$bench" "$elf" --json --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
+                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_skirmish=$skirmish" \
+                    --poke "snouty_cycles_options=$o" --out "$out/bench/wrapskirmish_o$o" > "$out/bench/wrapskirmish_o$o.txt" 2>&1 &
+                pids+=($!)
+            fi
+        fi
         bench_status=0
         for p in "${pids[@]}"; do wait "$p" || bench_status=1; done
         grep -E "^badge-bench:|^  frames|^calibrat|^  (busy|idle) ms|^verdict|warning" "$out/bench/lcd.txt" | head -12
@@ -235,7 +272,8 @@ if want bench || want lcd; then
         if want bench; then
             status=$bench_status
             [ "$status" = 0 ] || echo "check: a badge-bench run failed (crash, hang or setup error); see $out/bench/*.txt"
-            for j in "$out/bench/lcd/bench.json" "$out/bench"/level*/bench.json "$out/bench"/skirmish/bench.json; do
+            for j in "$out/bench/lcd/bench.json" "$out/bench"/level*/bench.json "$out/bench"/skirmish/bench.json \
+                "$out/bench"/wrap*/bench.json; do
                 [ -f "$j" ] || continue
                 python3 - "$j" "$max_ms" <<'PYEOF' || status=1
 import json, sys
@@ -277,8 +315,68 @@ PYEOF
     fi
 fi
 
+if want link; then
+    step "link: LINK DUEL (lockstep host tests, simulator, badge-bench with no cable)"
+    status=0
+    (cd "$root" && zig build test -Dcart=snouty-cycles -Dtest-filter="LINK DUEL" --summary all 2>&1 | grep -E "link gate|error|pass|fail" | tail -12; exit "${PIPESTATUS[0]}") || status=1
+    mkdir -p "$out/link"
+    log="$(node "$preview" "$wasm" --frames 200 --every 100000 --out "$out/link/nolink" \
+        --press A:30-31 --press DOWN:50-51 --press DOWN:70-71 --press A:90-91 \
+        --expect "debug_state == 16" --expect "debug_link_status == 0" 2>&1)" || status=1
+    echo "$log" | grep -E "expect|PASS|FAIL" | sed "s/^/     [nolink] /"
+    log="$(node "$preview" "$wasm" --frames 9000 --every 100000 --out "$out/link/demo" \
+        --call debug_autopilot:3 --call debug_link_demo:1 \
+        --until "debug_link_round >= 3" --expect "debug_link_round >= 3" --dump-exports debug_link_round,debug_link_wins,debug_state 2>&1)" || status=1
+    echo "$log" | grep -E "exports|expect|until|PASS|FAIL" | sed "s/^/     [demo] /"
+    if [ -f "$elf" ]; then
+        b="$out/link/bench"
+        rm -rf "$b"; mkdir -p "$b"
+        "$bench" --help > /dev/null 2>&1
+        pids=()
+        for r in on off; do
+            extra=(); [ "$r" = off ] && extra=(--poke snouty_cycles_link_off=1)
+            "$bench" "$elf" --json --poke snouty_cycles_autopilot=3 --poke snouty_cycles_crash_at=900 "${extra[@]}" \
+                --out "$b/toml_$r" > "$b/toml_$r.txt" 2>&1 &
+            pids+=($!)
+            "$bench" "$elf" --json --frames 1200 --poke snouty_cycles_link=1 "${extra[@]}" \
+                --out "$b/cable_$r" > "$b/cable_$r.txt" 2>&1 &
+            pids+=($!)
+        done
+        "$bench" "$elf" --json --frames 3600 --seed "$bench_seed" --poke "snouty_cycles_seed=$bench_seed" \
+            --poke snouty_cycles_autopilot=3 --poke snouty_cycles_link=2 --poke snouty_cycles_link_layout=1 \
+            --out "$b/duel" > "$b/duel.txt" 2>&1 &
+        pids+=($!)
+        for p in "${pids[@]}"; do wait "$p" || status=1; done
+        python3 - "$b" "${LINK_MAX_MS:-0.3}" "$max_ms" <<'PYEOF' || status=1
+import json, sys
+b, lim, worst_lim = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+ok = True
+def load(n):
+    return json.load(open("%s/%s/bench.json" % (b, n)))["summary"]
+for run in ("toml", "cable"):
+    on, off = load(run + "_on"), load(run + "_off")
+    d = on["mean_ms"] - off["mean_ms"]
+    # The worst frame of these runs is the title / cable screen's first
+    # (the attract's full repaint), the bench step's business: shown only.
+    good = d < lim
+    ok &= good
+    print("%s link cost [%s, no cable]: mean busy %.3f ms with the link, %.3f without: %+.3f ms a frame (limit %.2f); worst %.2f / %.2f"
+          % ("ok  " if good else "FAIL", run, on["mean_ms"], off["mean_ms"], d, lim, on["max_ms"], off["max_ms"]))
+d = load("duel")
+good = d["max_ms"] <= worst_lim
+ok &= good
+print("%s demo duel (PILLARS, autopilot vs T2): worst %.2f ms at frame %d, mean %.2f, p95 %.2f; limit %.1f"
+      % ("ok  " if good else "FAIL", d["max_ms"], d["worst_frame"], d["mean_ms"], d["p95_ms"], worst_lim))
+sys.exit(0 if ok else 1)
+PYEOF
+    else
+        echo "check: no $elf (run the build step)"; status=1
+    fi
+    result link "$status"
+fi
+
 if want ladder; then
-    step "ladder: tools/ladder_bot.mjs (autopilot 3, levels 1..12, 4 of 5 seeds)"
+    step "ladder: tools/ladder_bot.mjs (autopilot 3, levels 1..12, 4 of seeds 1-5 and 7 of 6-15)"
     mkdir -p "$out"
     node "$here/ladder_bot.mjs" --wasm "$wasm" --json "$out/ladder.json"; result ladder $?
 fi

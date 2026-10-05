@@ -120,6 +120,9 @@ pub fn update() void {
         .left = c.left,
         .right = c.right,
     });
+    // A save parked the cart (~55 ms per 4 KB block plus one): the game
+    // clock skips the stall instead of catching it up in one heavy step.
+    if (real_time_clock and app.saver.wrote) clock_last_us = cart.micros_since_boot();
     render.frame(&app);
     if (cart.is_wasm) present_wasm();
 }

@@ -88,7 +88,7 @@ fn mix24(a: u24, b: u24, t: u32) u24 {
 }
 
 /// A 565 colour at about 30%: the banner's dimmed arena.
-pub fn dim565(c: u16) u16 {
+pub inline fn dim565(c: u16) u16 {
     const r = (c & 31) * 5 / 16;
     const g = ((c >> 5) & 63) * 5 / 16;
     const b = (c >> 11) * 5 / 16;
@@ -281,7 +281,18 @@ pub const View = struct {
     /// Bit i: a crash of cycle i gets a small name tag beside it for
     /// `fx.tag_ticks` (the programs; the player's crash is a big banner).
     tags: u8 = 0,
+    /// LINK DUEL's guest: cycles 0 and 1 swap colours, so each badge draws
+    /// its own cycle (slot 1 there) in the player's colour and the partner
+    /// in orange.
+    swap: bool = false,
 };
+
+/// Cycle i's colour slot: i, or 0 and 1 swapped (`View.swap`, set by
+/// `frame`, which repaints everything when it changes).
+var hue_swap: u1 = 0;
+inline fn hue(i: usize) usize {
+    return if (i < 2) i ^ hue_swap else i;
+}
 
 /// Effect tuning (SPEC 8, PLAN M1 Track P item 4). Lives are World ticks:
 /// effects freeze with the World (pause).
@@ -410,6 +421,10 @@ pub fn Renderer(comptime S: type) type {
 
         /// Brings the screen up to date with `w` and `view`.
         pub fn frame(self: *Self, w: *const sim.World, view: View) void {
+            if (@intFromBool(view.swap) != hue_swap) {
+                hue_swap = @intFromBool(view.swap);
+                self.need_full = true;
+            }
             const new_tick = w.tick != self.last_tick;
             if (self.need_full or (new_tick and w.events_lost)) {
                 if (new_tick and !self.need_full) self.fx_tick(w, view);
@@ -606,7 +621,7 @@ pub fn Renderer(comptime S: type) type {
                 const b = head_px(c);
                 const bx = b[0];
                 const by = b[1];
-                var cols = [4]u16{ 0, colors.trail[i], colors.hot[i][0], colors.white };
+                var cols = [4]u16{ 0, colors.trail[hue(i)], colors.hot[hue(i)][0], colors.white };
                 // Rubber: a stalled head flickers red against its wall.
                 if (c.stalled and (w.tick >> 1) & 1 != 0) cols = .{ 0, colors.stall, colors.stall, colors.spark[1] };
                 for (0..4) |li| {
@@ -810,7 +825,7 @@ pub fn Renderer(comptime S: type) type {
                     c = colors.spark[@min(age, 2)];
                 } else {
                     if (d.life < 8 and (d.life + w.tick) & 1 != 0) continue;
-                    c = colors.burst[(d.kind - 1) & 3][age];
+                    c = colors.burst[hue((d.kind - 1) & 3)][age];
                     // Big and hot first, then embers.
                     if (age < 2 and px + 1 < screen_w and py + 1 < screen_h) size = 2;
                 }
@@ -849,7 +864,7 @@ pub fn Renderer(comptime S: type) type {
                 }
             }
             const target: ScreenTarget = .{ .clip = r };
-            raster5(name, @as(i32, t.x) + 2, @as(i32, t.y) + 2, target, colors.hot[t.cycle][1]);
+            raster5(name, @as(i32, t.x) + 2, @as(i32, t.y) + 2, target, colors.hot[hue(t.cycle)][1]);
             S.mark_dirty(r);
             t.drawn = r;
         }
@@ -943,7 +958,7 @@ pub fn Renderer(comptime S: type) type {
         const OverlayTarget = struct {
             self: *Self,
             clip: Rect,
-            fn set(t: OverlayTarget, x: i32, y: i32, v: u8) void {
+            inline fn set(t: OverlayTarget, x: i32, y: i32, v: u8) void {
                 if (x < t.clip.x0 or x >= t.clip.x1 or y < t.clip.y0 or y >= t.clip.y1) return;
                 t.self.ov[@intCast(x)][@intCast(y - arena_y)] = v;
             }
@@ -951,7 +966,7 @@ pub fn Renderer(comptime S: type) type {
 
         const ScreenTarget = struct {
             clip: Rect,
-            fn set(t: ScreenTarget, x: i32, y: i32, c: u16) void {
+            inline fn set(t: ScreenTarget, x: i32, y: i32, c: u16) void {
                 if (x < t.clip.x0 or x >= t.clip.x1 or y < t.clip.y0 or y >= t.clip.y1) return;
                 S.put(@intCast(x), @intCast(y), c);
             }
@@ -1015,7 +1030,7 @@ pub fn Renderer(comptime S: type) type {
 
         /// Writes the four pixels of cell (x, y), through the banner if the
         /// cell is in its box. No mark.
-        fn put_cell(self: *const Self, w: *const sim.World, x: u8, y: u8) void {
+        inline fn put_cell(self: *const Self, w: *const sim.World, x: u8, y: u8) void {
             const px: u32 = 2 * @as(u32, x);
             const py: u32 = arena_y + 2 * @as(u32, y);
             var c = cell_colors(w, x, y);
@@ -1122,7 +1137,7 @@ fn bare_floor(w: *const sim.World, x: u8, y: u8) bool {
 inline fn glow_of(w: *const sim.World, v: u8, x: u32, y: u32) ?u16 {
     const t = v & ~sim.fx_bit;
     if (t == sim.empty) return null;
-    if (sim.trail_owner(t)) |o| return colors.glow[o];
+    if (sim.trail_owner(t)) |o| return colors.glow[hue(o)];
     if (t == sim.rim) return colors.rim_glow;
     return if (in_death_ring(w, x, y)) colors.death_glow else colors.block_glow;
 }
@@ -1245,14 +1260,15 @@ pub fn cell_colors(w: *const sim.World, x: u8, y: u8) [4]u16 {
     }
     if (sim.trail_owner(v)) |o| {
         const cy = &w.cycles[o];
-        if (cy.state != .alive) return @splat(colors.dead[o]);
+        const hu = hue(o);
+        if (cy.state != .alive) return @splat(colors.dead[hu]);
         // The three newest cells glow hotter.
         var k: u32 = 0;
         while (k < 3) : (k += 1) {
             const at = w.log_at(o, k) orelse break;
-            if (at == i) return @splat(colors.hot[o][k]);
+            if (at == i) return @splat(colors.hot[hu][k]);
         }
-        return @splat(colors.trail[o]);
+        return @splat(colors.trail[hu]);
     }
     if (v == sim.rim) {
         // A bright outer edge with a darker inner line.

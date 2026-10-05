@@ -31,6 +31,15 @@ turns are scheduled on wall cycles and run from the block hook as soon as
 the cart's clock passes them, so the cart sees the tail move mid-update as
 on the badge. Nothing of this runs for a cart that never sends
 CART_START_AUDIO.
+
+Saves (saves.py). A save request is answered at once; a write or delete
+that touches flash then adds its modelled flash time to the cart's cycle
+count (`host.stall`): the cart is parked in its wait loop on the badge, so
+the time lands in the frame that saved (frame `save_ms`) and moves the
+cart's clock, but not the hang limit. exit_at: at the start of that frame
+the OS writes 1 to the cart's exit word (the settings "Exit cart"), then
+stops the run when the cart writes 2 or after 3 s of wall time
+(res.exit).
 """
 import struct
 
@@ -99,6 +108,8 @@ class Result:
         self.audio = None       # audio.Consumer.summary() once the cart started streaming
         self.audio_frames = []  # (frame, queued at its end, consumed, underrun) once started
         self.audio_stream = None  # the mixed samples (keep_audio)
+        self.saves = None       # save requests: SaveService.summary() + log, or {ignored}
+        self.exit = None        # exit hook outcome (exit_at)
 
 
 def poke_value(elf, spec):
@@ -118,7 +129,7 @@ def poke_value(elf, spec):
 
 def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.0,
         on_trace=None, log=None, flash_cycles=0, romfs=None, flash_read_cycles=0, lcd=False,
-        keep_audio=False):
+        keep_audio=False, save_store=None, exit_at=None):
     """Emulate `frames` updates. controls: list of u16 per frame.
 
     A RAM cart (cart_ram.ld) is loaded into SRAM and started at _start with
@@ -133,7 +144,9 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     adds that many cycles per data load from it. lcd: the PNGs show the
     modelled LCD (only each present's dirty rect reaches it, as on the badge)
     instead of the presented framebuffer. keep_audio: keep the stream the OS
-    mixer consumed (res.audio_stream) for --wav."""
+    mixer consumed (res.audio_stream) for --wav. save_store: a saves.Store
+    to serve save requests from (None: ignore them, as stock firmware);
+    exit_at: frame at which the OS asks the cart to exit (see above)."""
     res = Result()
     res.xip = elf.is_xip()
     lcd_img = bytearray(OS.FB_SIZE) if lcd else None
@@ -167,6 +180,19 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         startup_blocks = None
         stopping = False
         extra_reads = 0
+        save_ms = 0.0
+        exit_wall = None    # wall ms when the exit was requested
+
+        def wall_ms(self):
+            return (cyc + wait_total) / M.CYCLES_PER_MS
+
+        def stall(self, ms):
+            """The cart is parked for `ms` while the OS writes flash."""
+            nonlocal cyc, limit
+            c = int(round(ms * M.CYCLES_PER_MS))
+            cyc += c
+            limit += c
+            self.save_ms += ms
 
         def cycles(self):
             return int(cyc)             # DWT_CYCCNT is an integer (cyc is a float when calibrated)
@@ -253,6 +279,27 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
                 else:
                     self.extra_reads += 1
 
+        def exit_step(self, k):
+            """Before frame k: the exit hook. True when the OS stops the cart."""
+            sv = fake.saves
+            if exit_at is None or sv is None or k < exit_at:
+                return False
+            if res.exit is None:
+                watched = sv.request_exit()
+                self.exit_wall = self.wall_ms()
+                res.exit = dict(requested_frame=k, watched=watched, ready_frame=None,
+                                waited_ms=0.0, outcome='stopped at once (no exit word)')
+                return not watched
+            e = res.exit
+            e['waited_ms'] = self.wall_ms() - self.exit_wall
+            if sv.exit_word_value() == 2:
+                e.update(ready_frame=k, outcome='cart ready')
+                return True
+            if e['waited_ms'] >= 3000.0:
+                e['outcome'] = 'timed out after 3 s'
+                return True
+            return False
+
         def wait_vsync(self, d):
             """A frame of `d` modelled cycles just ended: add the LCD wait."""
             nonlocal wait_total
@@ -285,11 +332,12 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
                     ms=d / M.CYCLES_PER_MS, presents=self.presents,
                     fb=self.present_idx, controls=controls[self.frame],
                     neopixels=fake.neopixels(), user_led=fake.user_led(),
-                    tones=len(res.tones) - self.tone_count, mem_cyc=mem - w_mem))
+                    tones=len(res.tones) - self.tone_count, mem_cyc=mem - w_mem,
+                    **({'save_ms': self.save_ms} if self.save_ms else {})))
                 if log:
                     log(res.frames[-1])
                 self.wait_vsync(d)
-            if k >= frames:
+            if self.exit_step(k) or k >= frames:
                 self.stopping = True
                 mu.emu_stop()
                 return
@@ -297,11 +345,12 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
             self.frame = k
             self.presents = 0
             self.tone_count = len(res.tones)
+            self.save_ms = 0.0
             self.win = (insn, cyc, taken, mem)
             limit = cyc + max_frame_cyc
 
     host = Host()
-    fake = OS.FakeOS(mu, host, seed=seed)
+    fake = OS.FakeOS(mu, host, seed=seed, save_store=save_store)
     res.os = fake
 
     # ---- load the cart the way the OS does: segments, zeroed .bss, SP, _start
@@ -464,6 +513,15 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     w = neopixel_warning(res.frames)
     if w:
         res.warnings.append(w)
+    if fake.saves is not None and fake.saves.log:
+        res.saves = dict(fake.saves.summary(), log=fake.saves.log)
+        if fake.saves.ignored:
+            res.warnings.append(f"{fake.saves.ignored} save requests named a struct outside "
+                                "process RAM; ignored as the OS does")
+    elif fake.saves_ignored:
+        res.saves = dict(requests=fake.saves_ignored, ignored=True)
+    if exit_at is not None and res.exit is None and fake.saves is not None and not res.crash:
+        res.warnings.append(f"--exit-at {exit_at}: the run ended before that frame")
     return res
 
 

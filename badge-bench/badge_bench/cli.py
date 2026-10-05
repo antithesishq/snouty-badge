@@ -10,6 +10,7 @@ from . import config as C
 from . import model as M
 from . import report as R
 from . import run as RUN
+from . import saves as SV
 from .elf import BenchError, CartElf
 from .audio import SAMPLE_RATE as AUDIO_RATE, wav_bytes
 from .listing import listing
@@ -98,6 +99,20 @@ def build_parser():
                          'cart\'s stream (8-bit unsigned mono 44,100 Hz WAV, from its '
                          'CART_START_AUDIO on, silence where the ring ran dry); nothing is '
                          'written if the cart never starts audio')
+    ap.add_argument('--saves', metavar='FILE.json',
+                    help='serve the patched OS\'s cart saves (message 0x2C) from this JSON store, '
+                         'created if missing and rewritten after every commit, so saves survive '
+                         'between runs (default: an empty in-memory store; requests are always '
+                         'answered unless --no-saves)')
+    ap.add_argument('--no-saves', action='store_true',
+                    help='behave like stock firmware: save requests are never answered (the '
+                         'cart\'s probe times out after 250 ms)')
+    ap.add_argument('--no-save-rate-limit', action='store_true',
+                    help='turn off the store\'s commit rate limit (8 burst, 1 per 10 s)')
+    ap.add_argument('--exit-at', type=int, metavar='N',
+                    help='before update N, do what the settings "Exit cart" does on the saves OS: '
+                         'write 1 to the exit word the cart registered, then stop when the cart '
+                         'writes 2 or after 3 s (at once if it registered none)')
     ap.add_argument('--version', action='version', version=f'badge-bench {__version__}')
     return ap
 
@@ -133,6 +148,17 @@ def _main(a):
     if a.every < 1:
         raise BenchError("--every must be at least 1")
     png_every = 0 if a.png is None else (a.png or a.every)
+    if a.no_saves and (a.saves or a.exit_at is not None or a.no_save_rate_limit):
+        raise BenchError("--no-saves excludes --saves, --exit-at and --no-save-rate-limit")
+    if a.exit_at is not None and a.exit_at < 0:
+        raise BenchError("--exit-at must not be negative")
+    save_store = None
+    if not a.no_saves:
+        try:
+            save_store = (SV.FileStore(a.saves, rate_limit=not a.no_save_rate_limit) if a.saves
+                          else SV.MemoryStore(rate_limit=not a.no_save_rate_limit))
+        except ValueError as e:
+            raise BenchError(str(e))
     out = a.out or os.path.join('out', name)
 
     entries = load_script(script) if script else []
@@ -146,7 +172,9 @@ def _main(a):
                 budget_ms=budget, config=cfg_path, note=cfg.get('note'),
                 clock_mhz=M.CLOCK_HZ / 1e6, xip=elf.is_xip(), flash_cycles=a.flash_cycles,
                 romfs=romfs, romfs_bytes=len(romfs_img) if romfs_img else 0,
-                flash_read_cycles=a.flash_read_cycles)
+                flash_read_cycles=a.flash_read_cycles,
+                saves='off (stock firmware)' if a.no_saves else (a.saves or 'in memory'),
+                exit_at=a.exit_at)
 
     cal = None
     if a.calibrate and a.no_calibrate:
@@ -176,7 +204,7 @@ def _main(a):
                   max_frame_ms=a.max_frame_ms, on_trace=on_trace,
                   log=progress if a.progress else None, flash_cycles=a.flash_cycles,
                   romfs=romfs_img, flash_read_cycles=a.flash_read_cycles, lcd=a.lcd,
-                  keep_audio=bool(a.wav))
+                  keep_audio=bool(a.wav), save_store=save_store, exit_at=a.exit_at)
     if cal:
         add_busy(res.frames, cal)
         st = R.stats(res.frames, budget, key='busy_ms')

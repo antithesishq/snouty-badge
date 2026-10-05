@@ -31,6 +31,8 @@ pub const bot = @import("bot.zig");
 pub const prepare = @import("prepare.zig");
 /// IEEE f64 add/mul/compare for the badge (exported as __aeabi_* there).
 pub const softfloat = @import("softfloat.zig");
+/// The saved game: `Game` as a versioned, compressed blob.
+pub const snapshot = @import("snapshot.zig");
 
 comptime {
     _ = softfloat; // its exports (badge builds only)
@@ -749,6 +751,18 @@ pub const Game = struct {
 pub fn init(g: *Game, seed: u64) void {
     set_defaults(g);
     g.rng = rng_mod.Rng.init(seed);
+    load(g);
+}
+
+/// The page load when localStorage holds a savePrestige (the original's
+/// loadPrestige() + refresh()): a new game that keeps a finished game's
+/// universe and sim levels. The cart's NEW GAME over a saved game.
+pub fn init_with_prestige(g: *Game, seed: u64, prestige_u: f64, prestige_s: f64) void {
+    set_defaults(g);
+    g.rng = rng_mod.Rng.init(seed);
+    g.prestige_u = prestige_u;
+    g.prestige_s = prestige_s;
+    g.has_save_prestige = true;
     load(g);
 }
 

@@ -38,6 +38,16 @@
 //! Up/Down/A bring the full menu back. A neopixel history meter (one LED per
 //! fifth) is dormant behind -Dneopixels=true (docs/NEOPIXELS.md).
 //!
+//! Battery saves (frontend/battery.zig, root docs/SAVES.md): only when the
+//! OS stores saves and the cartridge has battery RAM (`battery.live.active`)
+//! a "Save: <state>" row sits above About and the rows are 9 px instead of
+//! 10 so that eight fit. A on it opens the Save page: the key, the size
+//! and the last result, then "Save now" (saves at once, "SAVING" shows
+//! while it writes), "Delete save" (A twice: removes the stored save, empties
+//! the cart RAM and restarts the game) and "Back". About gains the key and
+//! the save line when the OS supports saves at all (the version moves into
+//! its footer to make room). Stock firmware: no Save row, About as before.
+//!
 //! Chorded rewind (docs/FAST_FORWARD.md, frontend/flow.zig): Left during a
 //! fast-forward hold freezes the game the same way (`rewind_open`), steps
 //! time through the same `rewind.step` and draws the same bar
@@ -52,6 +62,7 @@ const debug = @import("debug.zig");
 const input = @import("input.zig");
 const rewind = @import("rewind.zig");
 const romsrc = @import("romsrc.zig");
+const battery = @import("battery.zig");
 const hint = @import("hint");
 
 pub const version = "0.6.0-m6";
@@ -63,11 +74,17 @@ pub var sound_enabled: bool = build_options.sound;
 
 pub const Result = enum { stay, resume_game };
 
-const Item = enum { resume_game, palette, scale, sound, debug, reset, about };
+const Item = enum { resume_game, palette, scale, sound, debug, reset, save, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
 
 var cursor: Item = .resume_game;
 var showing_about: bool = false;
+/// The Save page (A on the Save row) and its cursor: 0 Save now, 1 Delete
+/// save, 2 Back; `confirm_delete` after the first A on Delete save.
+var showing_save: bool = false;
+var save_cursor: u8 = 0;
+var confirm_delete: bool = false;
+const save_rows = [_][]const u8{ "Save now", "Delete save", "Back" };
 /// After a scrub step the panel would hide the restored frame, so only the
 /// scrub bar is drawn (`draw_scrub_bar`) until Up/Down/A.
 var scrub_view: bool = false;
@@ -89,6 +106,8 @@ comptime {
 /// drawing anything.
 pub fn open() void {
     showing_about = false;
+    showing_save = false;
+    confirm_delete = false;
     scrub_view = false;
     select_armed = false;
     scrub_repeat.stop();
@@ -148,7 +167,7 @@ fn set_leds(lit: u8) void {
 fn is_setting(item: Item) bool {
     return switch (item) {
         .palette, .scale, .sound, .debug => true,
-        .resume_game, .reset, .about => false,
+        .resume_game, .reset, .save, .about => false,
     };
 }
 
@@ -172,6 +191,8 @@ pub fn update(gb: *core.Gb, e: input.Edge) Result {
 
     if (showing_about) {
         if (e.pressed(.a) or e.pressed(.b) or select_tap) showing_about = false;
+    } else if (showing_save) {
+        if (save_page(gb, e, select_tap)) return .resume_game;
     } else if (scrub_view) {
         if (e.pressed(.b) or select_tap) return .resume_game;
         // Up/Down/A bring the full menu back without acting.
@@ -193,6 +214,11 @@ pub fn update(gb: *core.Gb, e: input.Edge) Result {
                     return .resume_game;
                 },
                 .about => showing_about = true,
+                .save => {
+                    showing_save = true;
+                    save_cursor = 0;
+                    confirm_delete = false;
+                },
                 else => adjust(1),
             }
         }
@@ -202,10 +228,53 @@ pub fn update(gb: *core.Gb, e: input.Edge) Result {
     return .stay;
 }
 
+/// The Save page's input; true when the game should resume (the save was
+/// deleted and the game restarted).
+fn save_page(gb: *core.Gb, e: input.Edge, select_tap: bool) bool {
+    const bat = &battery.live;
+    if (e.pressed(.b) or select_tap) {
+        showing_save = false;
+        confirm_delete = false;
+    } else if (e.pressed(.up) or e.pressed(.down)) {
+        const n = save_rows.len;
+        save_cursor = @intCast(if (e.pressed(.up)) (save_cursor + n - 1) % n else (save_cursor + 1) % n);
+        confirm_delete = false;
+    } else if (e.pressed(.a)) {
+        switch (save_cursor) {
+            // main.zig draws "SAVING" over this frame and writes next update.
+            0 => bat.request(),
+            1 => if (confirm_delete) {
+                confirm_delete = false;
+                if (bat.delete()) {
+                    // The RAM is empty now (and `keep_cart_ram` keeps it so).
+                    gb.reset();
+                    rewind.reset(gb);
+                    showing_save = false;
+                    return true;
+                }
+            } else {
+                confirm_delete = true;
+            },
+            else => showing_save = false,
+        }
+    } else if (e.any_pressed()) {
+        confirm_delete = false;
+    }
+    return false;
+}
+
+/// Rows on screen: the Save row only with saves on for this ROM.
+fn visible(item: Item) bool {
+    return item != .save or battery.live.active;
+}
+
 fn move(d: i2) void {
-    const i: usize = @backingInt(cursor);
-    const n: usize = if (d < 0) (i + item_count - 1) % item_count else (i + 1) % item_count;
-    cursor = @fromBackingInt(@intCast(n));
+    var i: usize = @backingInt(cursor);
+    while (true) {
+        i = if (d < 0) (i + item_count - 1) % item_count else (i + 1) % item_count;
+        if (visible(@fromBackingInt(@intCast(i)))) break;
+    }
+    cursor = @fromBackingInt(@intCast(i));
 }
 
 /// Left/Right (or A) on a setting cycles it. Other rows: nothing (their
@@ -224,7 +293,7 @@ fn adjust(d: i2) void {
         .scale => video.set_scale(if (video.scale == .squeeze) .crop else .squeeze),
         .sound => sound_enabled = !sound_enabled,
         .debug => debug.enabled = !debug.enabled,
-        .resume_game, .reset, .about => {},
+        .resume_game, .reset, .save, .about => {},
     }
 }
 
@@ -243,12 +312,27 @@ const text_x = panel_x + 4;
 const first_row_y = panel_y + 3;
 /// The panel's bottom line (y 109): the scrub readout, or on Resume the
 /// rewind hint (`hint.resume_line`); "B: back" on About.
-const scrub_line_y = first_row_y + item_count * row_h;
+/// Seven rows: the Save row shows only in the compact layout below.
+const scrub_line_y = first_row_y + (item_count - 1) * row_h;
 /// The footer under it (y 119): how to leave the menu (`hint.back`).
 const footer_y = scrub_line_y + row_h;
 
+/// With the Save row (eight rows) the rows are 9 px from y 38, so the
+/// scrub line and the footer stay where they are (y 110 and 119).
+const compact_row_h = 9;
+const compact_first_row_y = panel_y + 2;
+
+/// First row's y and the row pitch of the main menu and its pages.
+fn rows_y() i32 {
+    return if (battery.live.active) compact_first_row_y else first_row_y;
+}
+fn pitch() i32 {
+    return if (battery.live.active) compact_row_h else row_h;
+}
+
 comptime {
     if (footer_y + 8 > panel_y + panel_h - 1) @compileError("menu footer outside the panel");
+    if (compact_first_row_y + item_count * compact_row_h + compact_row_h + 8 > panel_y + panel_h - 1) @compileError("compact menu footer outside the panel");
     if (hint.panel_cols != (panel_w - (text_x - panel_x) - 2) / 8) @compileError("hint.panel_cols does not match this panel");
 }
 
@@ -314,10 +398,17 @@ fn draw(gb: *const core.Gb) void {
         draw_about(gb, fg, dim);
         return;
     }
+    if (showing_save) {
+        draw_save(bg, fg, dim);
+        return;
+    }
 
+    var row: i32 = 0;
     for (0..item_count) |i| {
         const item: Item = @fromBackingInt(@intCast(i));
-        const y: i32 = first_row_y + @as(i32, @intCast(i)) * row_h;
+        if (!visible(item)) continue;
+        const y: i32 = rows_y() + row * pitch();
+        row += 1;
         const label: []const u8 = switch (item) {
             .resume_game => "Resume",
             .palette => if (video.cgb)
@@ -328,23 +419,53 @@ fn draw(gb: *const core.Gb) void {
             .sound => if (sound_enabled) "Sound: On" else "Sound: Off",
             .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",
             .reset => "Reset",
+            .save => cat(&buf, "Save: ", battery.live.short_status()),
             .about => "About",
         };
         var color = fg;
         if (item == cursor) {
-            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = row_h, .fill_color = fg });
+            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = @intCast(pitch()), .fill_color = fg });
             color = bg;
         }
         cart.text(.{ .str = label, .x = text_x, .y = y, .text_color = color });
     }
     const history = rewind.history_frames();
     const depth = rewind.depth_frames();
+    const line_y = rows_y() + row * pitch();
     if (hint.resume_line(cursor == .resume_game, true, depth, history)) |s| {
-        cart.text(.{ .str = s, .x = text_x, .y = scrub_line_y, .text_color = if (history == 0) dim else fg });
+        cart.text(.{ .str = s, .x = text_x, .y = line_y, .text_color = if (history == 0) dim else fg });
     } else {
-        cart.text(.{ .str = scrub_label(&buf, depth, history), .x = text_x, .y = scrub_line_y, .text_color = if (history == 0) dim else fg });
+        cart.text(.{ .str = scrub_label(&buf, depth, history), .x = text_x, .y = line_y, .text_color = if (history == 0) dim else fg });
     }
     cart.text(.{ .str = hint.back, .x = text_x, .y = footer_y, .text_color = dim });
+}
+
+/// The Save page: the key over two lines, size and last result, then the
+/// three action rows (9 px pitch from y 38, as the compact menu).
+fn draw_save(bg: cart.DisplayColor, fg: cart.DisplayColor, dim: cart.DisplayColor) void {
+    const bat = &battery.live;
+    var b0: [24]u8 = undefined;
+    const key = bat.key();
+    const k1 = key[0..@min(key.len, about_cols)];
+    const k2 = key[k1.len..];
+    const y0 = compact_first_row_y;
+    const p = compact_row_h;
+    cart.text(.{ .str = "Save key:", .x = text_x, .y = y0, .text_color = dim });
+    cart.text(.{ .str = k1, .x = text_x, .y = y0 + p, .text_color = fg });
+    cart.text(.{ .str = k2[0..@min(k2.len, about_cols)], .x = text_x, .y = y0 + 2 * p, .text_color = fg });
+    cart.text(.{ .str = bat.about_line(&b0), .x = text_x, .y = y0 + 3 * p, .text_color = fg });
+    for (save_rows, 0..) |label, i| {
+        const y: i32 = y0 + @as(i32, @intCast(i + 5)) * p;
+        const s = if (i == 1 and confirm_delete) "A again: delete" else label;
+        var color = fg;
+        if (i == save_cursor) {
+            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = p, .fill_color = fg });
+            color = bg;
+        }
+        cart.text(.{ .str = s, .x = text_x, .y = y, .text_color = color });
+    }
+    const note = if (confirm_delete) "Erases + restarts" else "B: back";
+    cart.text(.{ .str = note, .x = text_x, .y = footer_y, .text_color = dim });
 }
 
 /// Characters that fit inside the panel at the About text indent.
@@ -385,6 +506,29 @@ fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor)
     } else w.put(if (info.source == .drive) "Source: drive" else "Source: embedded");
     const source = w.done();
 
+    const bat = &battery.live;
+    if (bat.supported) {
+        // Saves: the key and the save line replace the Version row, which
+        // moves into the footer; 9 px rows from y 38.
+        var b5: [24]u8 = undefined;
+        var b6: [24]u8 = undefined;
+        const save_lines = [_][]const u8{
+            rom_title(header(&gb.rom)),
+            mbc_size,
+            source,
+            fit(&b4, info.name()),
+            crc,
+            if (bat.active) fit(&b5, bat.key()) else "",
+            bat.about_line(&b6),
+            input.fast_hint,
+            input.rewind_hint,
+        };
+        for (save_lines, 0..) |l, i| {
+            cart.text(.{ .str = l, .x = text_x, .y = compact_first_row_y + @as(i32, @intCast(i)) * compact_row_h, .text_color = if (i >= 7) dim else fg });
+        }
+        cart.text(.{ .str = cat(&b0, "B: back v", version), .x = text_x, .y = footer_y, .text_color = dim });
+        return;
+    }
     const lines = [_][]const u8{
         cat(&b0, "Version ", version),
         rom_title(header(&gb.rom)),
@@ -498,6 +642,7 @@ fn mbc_name(k: core.mmu.MbcKind) []const u8 {
     return switch (k) {
         .none => "MBC: none",
         .mbc1 => "MBC: MBC1",
+        .mbc2 => "MBC: MBC2",
         .mbc3 => "MBC: MBC3",
         .mbc5 => "MBC: MBC5",
     };

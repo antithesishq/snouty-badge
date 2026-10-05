@@ -8,6 +8,7 @@ const G = @import("game");
 const pages = @import("pages.zig");
 const text = @import("text.zig");
 const layout = @import("layout.zig");
+pub const saves = @import("saves.zig");
 
 pub const Page = pages.Page;
 
@@ -123,6 +124,13 @@ pub const App = struct {
     /// A count of how many presses reached the game (debug export).
     presses: u32 = 0,
 
+    /// Save and continue (saves.zig): inert on stock firmware.
+    saver: saves.Saver = .{},
+    /// The title's menu with a saved game: 0 CONTINUE, 1 NEW GAME, and
+    /// the NEW GAME confirmation.
+    title_sel: u8 = 0,
+    confirm_new: bool = false,
+
     pub fn init(app: *App, seed: u64) void {
         app.* = .{};
         app.seed = if (seed == 0) 1 else seed;
@@ -131,6 +139,30 @@ pub const App = struct {
     /// Starts a game (the title's A).
     pub fn new_game(app: *App) void {
         G.init(app.game, app.seed);
+        app.begin();
+    }
+
+    /// NEW GAME over a saved game: a finished game's universe and sim
+    /// levels carry over (the original keeps savePrestige apart from the
+    /// game it resets).
+    fn new_game_over_save(app: *App) void {
+        const g = app.game;
+        if (g.has_save_prestige) G.init_with_prestige(g, app.seed, g.prestige_u, g.prestige_s) else G.init(g, app.seed);
+        app.begin();
+    }
+
+    /// CONTINUE: the saved game (decoded into `game` by the probe).
+    fn continue_game(app: *App) void {
+        app.begin();
+    }
+
+    pub fn title_menu(app: *const App) bool {
+        return !app.playing and app.saver.found == .game;
+    }
+
+    fn begin(app: *App) void {
+        app.confirm_new = false;
+        app.saver.start_game(app.game);
         app.playing = true;
         app.screen = .game;
         app.page = .business;
@@ -162,6 +194,11 @@ pub const App = struct {
         const pressed = edges(now, app.prev);
         defer app.prev = now;
         app.frame +%= 1;
+        // Saves: the probe on the title's second frame, the OS's exit
+        // request, a save the last frame marked.
+        if (!app.saver.probed and app.frame >= saves.knobs.probe_frame) app.saver.probe(app.game, app.playing);
+        if (app.saver.frame_start(app.game, app.playing)) return;
+        if (app.playing and @as(u8, @bitCast(pressed)) != 0) app.saver.input(app.game);
         if (app.cheat_flash < 1000) app.cheat_flash += 1;
         if (app.msg_age < 1000) app.msg_age += 1;
 
@@ -190,6 +227,7 @@ pub const App = struct {
         }
 
         if (app.playing) app.tick();
+        app.saver.frame_end(app.game, app.playing);
     }
 
     fn title_input(app: *App, pressed: Buttons) void {
@@ -201,6 +239,18 @@ pub const App = struct {
             app.konami_hist = @splat(.start);
             app.cheats = true;
             app.cheat_flash = 0;
+            return;
+        }
+        if (app.title_menu()) {
+            if (app.confirm_new) {
+                if (pressed.a) app.new_game_over_save();
+                if (pressed.b) app.confirm_new = false;
+                return;
+            }
+            if (pressed.up or pressed.down) app.title_sel ^= 1;
+            if (pressed.a) {
+                if (app.title_sel == 0) app.continue_game() else app.confirm_new = true;
+            }
             return;
         }
         if (pressed.a) {
@@ -218,6 +268,7 @@ pub const App = struct {
         if (start_click) {
             app.screen = .log;
             app.log_scroll = 0;
+            app.saver.request(app.game, .menu);
             return;
         }
         if (select_click) app.jump_to_news();

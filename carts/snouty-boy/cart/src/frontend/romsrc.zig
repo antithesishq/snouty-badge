@@ -16,10 +16,12 @@
 //! so none of the romfs code or its tables are compiled in. `rom.data` is
 //! referenced only where `use_drive` is false, so a drive build carries no
 //! ROM bytes.
+const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
 const rom = @import("rom");
 const romfs = @import("romfs");
+const battery = @import("battery.zig");
 
 /// The drive path exists in this build.
 pub const use_drive = !cart.is_wasm and rom.source == .drive;
@@ -86,6 +88,15 @@ pub var candidates: [max_candidates]Candidate = @splat(.{});
 pub var candidate_count: usize = 0;
 /// Candidates with `playable` set.
 pub var playable_count: usize = 0;
+/// `.sav` files on the drive (raw battery RAM dumps), for the import.
+const max_savs = 8;
+var savs: [max_savs]romfs.Entry = undefined;
+var sav_count: usize = 0;
+
+fn is_sav(name: []const u8) bool {
+    return name.len >= 4 and std.ascii.eqlIgnoreCase(name[name.len - 4 ..], ".sav");
+}
+
 /// Why the scan found nothing to play (volume error, no file), or null.
 var scan_failure: ?[]const u8 = null;
 
@@ -106,11 +117,23 @@ fn scan_drive() void {
         scan_failure = @errorName(e);
         return;
     };
-    var entries: [max_candidates]romfs.Entry = undefined;
-    candidate_count = @min(vol.find(&.{ "gb", "gbc" }, &entries), max_candidates);
+    // One directory walk for the ROMs and the `.sav` files beside them
+    // (the battery save's import, frontend/battery.zig).
+    var entries: [max_candidates + max_savs]romfs.Entry = undefined;
+    const found = vol.find(&.{ "gb", "gbc", "sav" }, &entries);
+    for (entries[0..found]) |e| {
+        if (is_sav(e.slice())) {
+            if (sav_count < max_savs) {
+                savs[sav_count] = e;
+                sav_count += 1;
+            }
+        } else if (candidate_count < max_candidates) {
+            candidates[candidate_count] = .{ .entry = e };
+            candidate_count += 1;
+        }
+    }
     if (candidate_count == 0) scan_failure = "no ROM file";
-    for (entries[0..candidate_count], candidates[0..candidate_count]) |e, *c| {
-        c.* = .{ .entry = e };
+    for (candidates[0..candidate_count]) |*c| {
         check(&vol, c);
         if (c.playable) playable_count += 1;
     }
@@ -134,7 +157,7 @@ fn check(vol: *const romfs.Volume, c: *Candidate) void {
     // Header 0x143 bit 7: the console runs it as a Game Boy Color (SPEC.md 19).
     if (m.read(0x143) & 0x80 != 0) c.add_note("Color");
     switch (m.read(0x147)) {
-        0x00, 0x01, 0x02, 0x03, 0x08, 0x09, 0x11, 0x12, 0x13, 0x19...0x1E => {},
+        0x00, 0x01, 0x02, 0x03, 0x05, 0x06, 0x08, 0x09, 0x11, 0x12, 0x13, 0x19...0x1E => {},
         // MBC3 with the real-time clock: the core has no RTC (SPEC.md 11).
         0x0F, 0x10 => c.add_note("no RTC"),
         else => c.add_note("mapper?"),
@@ -186,6 +209,17 @@ pub fn select(i: usize) ?core.Rom {
     info.set_name(c.entry.slice());
     return r;
 }
+
+/// The drive and the running ROM's file name, for the battery save's
+/// `.sav` import (frontend/battery.zig); null without the drive path or
+/// before a drive ROM was selected.
+pub fn sav_drive() ?battery.Drive {
+    if (!use_drive or info.source != .drive) return null;
+    if (sav_count == 0) return null;
+    sav_volume = romfs.Volume.open_badge() catch return null;
+    return .{ .vol = &sav_volume, .rom_name = info.name(), .savs = savs[0..sav_count] };
+}
+var sav_volume: romfs.Volume = undefined;
 
 fn none(why: []const u8) ?core.Rom {
     missing = why;

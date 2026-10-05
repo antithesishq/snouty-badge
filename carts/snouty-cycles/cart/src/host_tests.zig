@@ -12,4 +12,6 @@ test {
     _ = @import("levels.zig");
     _ = @import("layouts.zig");
     _ = @import("history.zig");
+    _ = @import("net.zig");
+    _ = @import("net_test.zig");
 }

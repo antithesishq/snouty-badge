@@ -276,6 +276,81 @@ The `Config` fields `wrap`, `snake_len` and `gaps` exist but are inert. Make eac
 - Turn every modifier on in R's rewind test and the options.
 - Run the full gate and the ladder bot, tag `snouty-cycles/m2`, merge to main, push.
 
+## M2.1 and M3: a fair ladder, then the link duel (two Opus tracks in parallel)
+
+Both tracks start from `cycles/m0` at the M2 merge. Track F merges first.
+
+### Track F: fairness and headroom
+
+Owns `ai.zig`, the `levels.zig` table, `tools/ladder_bot.mjs`, the cart's
+`build.zig`, and only the autopilot/pool call order in `game.zig`.
+
+1. **Separate AI pools.** The programs get the same AI pool whether a
+   human or the autopilot plays: the autopilot draws from a pool of its
+   own (or decides after the programs). The bot then measures what a
+   human faces. Keep rewind exactness: `history`'s replay rule and its
+   tests must still hold, so update `CLAUDE.md`'s determinism contract.
+2. **Retune the ladder** so the honest bot (T3 autopilot) clears every
+   level on at least 4 of 5 seeds with snapshots, and on at least 7 of 10
+   on seeds 6-15.
+   - The curve rises: no later level is clearly easier than an earlier one.
+     Report rewinds used per level as the measure.
+   - Prefer preset knobs (reaction, mistakes, vision) over swapping tiers,
+     and keep PROD the hardest.
+   - Report the options-28 ladder; it is not gated.
+3. **RAM headroom** for M3: at least 24 KB free under the ~268 KB window
+   (`.text`+`.data`+`.bss`).
+   - Try ReleaseSmall for the cart (snouty-gc did this), then put hot
+     functions back to speed if needed.
+   - Shrink `.bss` where it is slack.
+   - The bench gate stays at 12 ms worst, including the WRAP runs
+     (options 16 and 28 at level 12, and a WRAP SKIRMISH with 3 ASM programs).
+4. Run `tools/check.sh` green, then record the status here.
+
+### Track L: link duel (SPEC 10)
+
+Owns a new `net.zig`, the link states in `game.zig`, `main.zig`, the
+link wiring in `build.zig` (`lib/link.zig` import), HUD and banner text
+in `render.zig`, `tools/check.sh` (a `link` step), and docs.
+
+1. **Lockstep (`net.zig`, built on the shared `lib/lockstep.zig` since 2026-10-05).** The packet is tick, the inputs for t, t-1 and
+   t-2, and the World CRC byte: at most 5 DATA bytes, SLIP escapes
+   counted. Input delay is 3 ticks; a stall shows WAITING.
+   - **A lost packet** is covered by the redundant inputs, and resent if
+     a gap is longer.
+   - **A CRC mismatch** ends the round as NO CONTEST and the next round
+     resyncs from a fresh seed.
+   - **The partner leaving** (session change, or disconnected for more than
+     2 s): a T2 program takes their cycle until the round ends, then the menu.
+2. **Match flow.**
+   - LINK DUEL in the menu, then a waiting screen (searching, handshake,
+     connected).
+   - The lower nonce is host. The host picks arena, speed and options
+     (SKIRMISH's setup) and sends the seed and config; the guest sees them.
+   - First to 3 rounds, no snapshots, rematch or menu.
+   - Each badge draws itself as cycle 0 colours (blue, you), the
+     partner orange. The sim indices stay host = 0 so both Worlds are equal.
+3. **Polling.** `l.poll` at the top of `update` and between the sim and
+   render (the 8-byte FIFO, docs/LINK.md section 2).
+   - The bench runs with no cable: the link must cost under 0.3 ms a frame
+     there.
+   - The wasm build has the link `.unavailable`: LINK DUEL shows NO LINK
+     IN SIMULATOR.
+4. **The gate** (`check.sh link`, host test):
+   - Two Games on `lib/link_virtual.zig` play 50 rounds with random inputs
+     and random modifiers, and no desync.
+   - Then with 5% packet loss and random delay: still no desync, or a
+     clean NO CONTEST and recovery.
+   - Unplug in mid-round hands over to the AI.
+5. Write the hardware check for Adrian in RUNNING.md: two badges, the
+   UART cable, the snouty-link cart first.
+
+### Integration (lead)
+
+- Merge F, then L. Run the full gate plus `check.sh link`.
+- Tag `snouty-cycles/m2.1` after F and `snouty-cycles/m3` after L.
+- Merge each to main and push.
+
 ## Status
 
 - 2026-10-04: SPEC written from the prior-art research (SPEC section 1). M0 started.
@@ -401,8 +476,108 @@ The `Config` fields `wrap`, `snake_len` and `gaps` exist but are inert. Make eac
     faces programs at full strength; with the programs deciding first,
     PROD cleared 0 of 10 seeds. M2.1 fixes the bot and the RAM headroom.
 
+- 2026-10-05: **M2.1 Track F done** on `cycles/m21-fair` (not merged, not
+  tagged; the lead integrates).
+  - **Separate AI pools.** The programs decide first and share the
+    per-tick pool alone; the autopilot decides after them with
+    `ai.decide_apart`, from its own pool (`apart_pool` = 10,000) capped at
+    `apart_cap` (11,000) less what the programs spent that tick, so a
+    frame's AI work stays bounded and the bot defers past busy ticks. A
+    replay puts the logged input in and runs only the programs (the
+    autopilot's Brain is not replayed; the landing gives it a new one),
+    so rewinds stay exact and cost what a human's do. `history.zig`
+    untouched; its test model still decides the player first, which is
+    a valid exactness check either way. Cart `CLAUDE.md`'s determinism
+    contract is updated.
+  - **Finding:** the bot (T3, full strength) is about as strong as a full
+    T2; a lone T2 at the old preset 1 beat it 1 time in 4. And with no
+    mistakes a round between programs plays the same on every seed (most
+    ASM seeds derezzed the bot at the same tick). So the ladder now uses
+    softened presets, and every softened preset slips 1-3% of its
+    decisions (seed variety; slips barely change strength). The steep
+    knob is the reaction delay (T2 turning a cell late loses most of its
+    bite), then vision.
+  - **Presets** (`ai.preset`, level 3 unchanged): T1 mistakes 12/8/4/0.
+    T2 vision 20/28/28/full, reaction 2/1/0/0, aggression 4/6/4/8,
+    mistakes 20/12/12/0. T3 vision 40/40/full/full, depth 1/1/2/full,
+    mistakes 15/30/10/0, reaction 1/0/0/0.
+  - **Table:** FORTRAN 2x T1 L1, LISP 3x T1 L1, C T2 L1, C++ 2x T2 L1,
+    JAVA T2 L2 + 2x T1 L1, RUST T2 L2 + T2 L1 (1.1x), ASM T3 L1, ZIG
+    T3 L0 + T2 L1, PROD T3 L0 + T2 L2 + T2 L0; BASIC, COBOL, PASCAL,
+    layouts and speeds unchanged. SKIRMISH (preset 2) is softer too.
+  - **Ladder bot** (gate now 4/5 of seeds 1-5 and 7/10 of seeds 6-15):
+
+    | Level | 1-5 | 6-15 | derezzes (1-15) | rewinds (1-15) | derezzes (80 seeds) | clears (80) |
+    |---|---|---|---|---|---|---|
+    | BASIC | 5 | 10 | 0.13 | 0.13 | 0.03 | 80 |
+    | COBOL | 5 | 10 | 0 | 0 | 0 | 80 |
+    | PASCAL | 5 | 10 | 0 | 0 | 0 | 80 |
+    | FORTRAN | 5 | 10 | 0 | 0 | 0.04 | 80 |
+    | LISP | 5 | 10 | 0 | 0 | 0.14 | 79 |
+    | C | 4 | 10 | 0.40 | 0.33 | 0.12 | 79 |
+    | C++ | 5 | 10 | 0.27 | 0.27 | 0.41 | 77 |
+    | JAVA | 5 | 9 | 0.47 | 0.40 | 0.56 | 73 |
+    | RUST | 4 | 9 | 0.53 | 0.40 | 0.85 | 72 |
+    | ASM | 4 | 8 | 0.80 | 0.60 | 0.80 | 69 |
+    | ZIG | 5 | 9 | 0.87 | 0.80 | 0.71 | 72 |
+    | PROD | 4 | 10 | 0.93 | 0.87 | 1.26 | 64 |
+
+    A dumped run counts its 4 derezzes. PROD is the hardest on both
+    measures. Options 28 (WRAP+GAPS+SNAKE, not gated): every level passes
+    but ASM (5/5 + 6/10); derezzes 0.20 0.13 0.33 0.47 0.60 0.27 0.87 1.07
+    1.20 2.00 1.33 1.47.
+  - **RAM.** The cart builds ReleaseSmall: `.text` 58,072, `.data` 176,
+    `.bss` 140,188 = 198,436 B, **75,740 B free** of the 274,176 B window
+    (was 8,592), so M3's ~18.5 KB leaves ~57 KB. `.bss` not shrunk (no
+    need). ReleaseSmall alone made frames 2-3 ms slower: compiler_rt's
+    ReleaseSmall `memcpy` copies bytes (2.6 ms a frame in the API's
+    copy-forward present), so `cart/src/mem.zig` exports word-wise
+    `memcpy`/`memset` and the `__aeabi_*` entry points (one import line
+    in `main.zig`); `put_cell`, `dim565`, the raster targets (render.zig)
+    and the T3 endgame's `hug_order`/`free4_t` are `inline` again.
+  - **Bench** (calibrated busy ms, worst, 3600 frames): toml 10.82 (frame
+    0, the title's full repaint plus first decisions: 10.70; L's
+    all-ReleaseSmall build had it at 15.2-15.9 before the memcpy fix),
+    level 1 6.17, level 6 7.43, level 12 7.45, SKIRMISH 3 ASM 8.37, level
+    12 WRAP 10.55, level 12 WRAP+GAPS+SNAKE 9.49, WRAP SKIRMISH 3 ASM
+    11.55 (a round-over banner plus a T3 endgame search). `apart_cap`
+    12,000 put the WRAP runs at 12.4-12.8. `check.sh bench` now runs and
+    gates the three WRAP runs (`BENCH_WRAP_OPTIONS`, default "16 28").
+  - Gate `tools/check.sh`: PASS on every step (79 host tests; `--lcd`
+    equal on 1440 frames).
+
+- 2026-10-05: **M3 done** (tag `snouty-cycles/m3`): LINK DUEL. The lead
+  merged Track L (cycles/m3-link 36ac913e) after M2.1.
+  - **How it is built.** LINK DUEL runs on the shared `lib/lockstep.zig`
+    (lockstep/v1, from Snouty GC's net, owned by the link session) instead
+    of the cart-local core this plan asked for. Adrian wants link
+    multiplayer shared across carts.
+    - `cart/src/net.zig` is the adapter: `World` = `game.Game`,
+      rules 4 bytes, delay 3, app id 'C'.
+    - The lead switched its pump-until-14 ms loop to lockstep's
+      `wants_pump()`, which covers a race or a handshake.
+    - The cart builds the link and lockstep modules ReleaseSmall.
+  - Gate `tools/check.sh`: PASS on every step, including the new `link`
+    step. That is 86 host tests in all.
+  - The link host gate runs two Games on `lib/link_virtual.zig`:
+    - Clean: 50 rounds, 5,353 hashes compared, 0 mismatched.
+    - About 5% packet loss and 0-4 ms delay: 50 rounds, 0 mismatched,
+      1-1.5% of frames stalled.
+    - A corrupted World: NO CONTEST on both badges, then a new race in sync.
+    - Unplugging hands the cycle to a T2 program, then PEER LEFT, then the menu.
+  - badge-bench, calibrated busy ms, worst:
+    - toml 10.90, level 12 7.19, SKIRMISH 8.26, WRAP SKIRMISH 11.67,
+      demo duel 9.34.
+    - The link with no cable costs +0.006 to +0.009 ms a frame.
+    - `--lcd` is equal on every frame.
+  - ELF `.text` 72,168, `.data` 176, `.bss` 141,352: 213,696 of 274,176 B,
+    leaving about 59 KB free.
+  - **Hardware check open.** It needs two badges with working UART headers
+    and a JST-SH 3-pin cable; see docs/RUNNING.md section 9. Adrian's badge
+    header is faulty. `rx_dma` stays off until the link session verifies it.
+
 ## Deferred questions for Adrian
 
 See SPEC section 14. None block the build.
 
-- **Difficulty curve (M1).** The T3 ladder bot finds ASM, ZIG and PROD easier than C++, JAVA and RUST: two hunting T2 programs gang up, and a lone T3 does not. A human may feel it the other way round. Default: keep the table and tune it after a badge play test.
+- **Difficulty curve (M2.1).** Retuned against the honest bot (its own AI pool): the derezzes it costs rise from ~0 (BASIC..LISP) to ~0.9-1.3 at PROD, the hardest, and every level clears on 4 of seeds 1-5 and 7 of 6-15. The bot is about as strong as a full T2, so the ladder's programs are softened presets; a booth player is likely weaker than the bot, so the upper levels may still feel hard. Default: keep this table and tune `ai.preset`'s knobs after a badge play test.

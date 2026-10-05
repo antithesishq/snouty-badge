@@ -156,6 +156,15 @@ pub const Gb = struct {
     serial: serial.Serial = .{},
     /// Current joypad state (Pad bits), set by `step_frame`.
     pad: u8 = 0,
+    /// Set by every cart RAM write that reaches the RAM (enabled, present;
+    /// `mmu.write8`); the frontend clears it when it has noted the write
+    /// (frontend/battery.zig, the battery save). Not console state: not in
+    /// keyframes, cleared by `reset`.
+    sram_dirty: bool = false,
+    /// `reset` keeps the cart RAM instead of zeroing it: a power cycle of a
+    /// cartridge with a battery (the menu's Reset with saves on). Not
+    /// console state; `reset` keeps it.
+    keep_cart_ram: bool = false,
 
     // ---- Sound samples (owner: core/apu.zig "Sample generation") ----
     /// Render the APU into `snd` (set with `apu.set_render`). Off: the
@@ -244,6 +253,7 @@ pub const Gb = struct {
         gb.lines_wanted = @splat(0xFFFF_FFFF);
         gb.snd = null;
         gb.audio_render = false;
+        gb.keep_cart_ram = false;
         gb.reset();
     }
 
@@ -252,7 +262,8 @@ pub const Gb = struct {
         return init(Rom.from_slice(bytes), model, cart_ram);
     }
 
-    /// Post-boot state. Memory, cart RAM included, is zeroed (SPEC.md 10.3).
+    /// Post-boot state. Memory, cart RAM included, is zeroed (SPEC.md 10.3;
+    /// an MBC2's nibble RAM reads 0xF0), unless `keep_cart_ram` is set.
     pub fn reset(gb: *Gb) void {
         const rom = gb.rom;
         const sink = gb.line_sink;
@@ -262,10 +273,12 @@ pub const Gb = struct {
         const snd = gb.snd;
         const render = gb.audio_render;
         const link = gb.link;
-        gb.* = .{ .rom = rom, .line_sink = sink, .link = link, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted, .snd = snd, .audio_render = render };
+        const keep = gb.keep_cart_ram;
+        gb.* = .{ .rom = rom, .line_sink = sink, .link = link, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted, .snd = snd, .audio_render = render, .keep_cart_ram = keep };
         if (render) snd.?.reset();
-        @memset(cart_ram, 0);
         gb.mbc = mmu.Mbc.from_header(&gb.rom);
+        // An MBC2's nibble RAM reads its upper half as 1s.
+        if (!keep) @memset(cart_ram, gb.mbc.ram_fill);
         mmu.remap_rom(gb);
         cpu.reset(gb);
         mmu.reset_io(gb);

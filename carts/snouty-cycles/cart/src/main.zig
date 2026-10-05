@@ -10,9 +10,13 @@ const sim = @import("sim.zig");
 const game = @import("game.zig");
 const render = @import("render.zig");
 const levels = @import("levels.zig");
+const link = @import("link");
+const net = @import("net.zig");
 
 comptime {
     cart.export_start_code();
+    // The badge's word-at-a-time memcpy (the cart builds ReleaseSmall).
+    _ = @import("mem.zig");
 }
 
 /// Pixel sink for the renderer: the cart framebuffer plus the OS dirty rect.
@@ -100,6 +104,15 @@ const debug_build = build_options.debug_overlay;
 
 var prev: game.Buttons = .{};
 
+/// LINK DUEL: the lockstep and the link it owns (PIO2 on the badge,
+/// `.unavailable` in the simulator: NO LINK IN SIMULATOR).
+const Net = net.Net(link.Badge);
+var lnk: Net = undefined;
+/// Simulator previews (`debug_link_view`): a made-up lockstep state shown
+/// instead of the real one (0 off; else bits 0-7 the LinkStatus, bit 8
+/// host, bit 16 set).
+var link_view_fake: u32 = 0;
+
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.copy_forward);
@@ -111,7 +124,17 @@ pub fn start() void {
     } else {
         reseed(if (clock_seeded) cart.rand() ^ clock_mix() else cart.rand());
     }
-    if (bench_skirmish != 0) {
+    // After the game's seed (the first cart.rand(), as before M3, so
+    // preview --seed runs are unchanged). The link's search timing must
+    // differ between two badges: the clock (cart.rand() reads 0 there).
+    lnk = Net.init(link.Badge.init(.{}, net.app_id, cart.rand() ^ clock_mix()));
+    if (bench_link == 1) {
+        g.enter_link();
+    } else if (bench_link == 2) {
+        g.lk.layout = @intCast(bench_link_layout % 9);
+        g.lk.opts = g.opts;
+        g.duel_demo(seed);
+    } else if (bench_skirmish != 0) {
         g.sk = .from_bits(bench_skirmish - 1);
         g.new_match();
     } else if (bench_level != 0) {
@@ -131,6 +154,15 @@ pub fn start() void {
 /// `snouty_cycles_options=B` sets OPTIONS (`levels.Options.from_bits`),
 /// `snouty_cycles_skirmish=B+1` starts a SKIRMISH match
 /// (`game.Skirmish.from_bits(B)`) instead of the ladder.
+/// M3: `snouty_cycles_link=1` opens LINK DUEL's cable screen (no cable in
+/// the bench: SEARCHING, the link's cost alone), `=2` a demo duel (you,
+/// or the autopilot, against the T2 program in the partner's slot) in
+/// arena `snouty_cycles_link_layout` with the OPTIONS poke's modifiers.
+var bench_link: u32 = 0;
+/// `snouty_cycles_link_off=1`: never touch the link (badge-bench measures
+/// the link's cost as the difference; tools/check.sh link).
+var bench_link_off: u32 = 0;
+var bench_link_layout: u32 = 0;
 var bench_seed: u32 = 0;
 var bench_autopilot: u32 = 0;
 var bench_level: u32 = 0;
@@ -145,6 +177,9 @@ comptime {
         @export(&bench_crash_at, .{ .name = "snouty_cycles_crash_at" });
         @export(&bench_options, .{ .name = "snouty_cycles_options" });
         @export(&bench_skirmish, .{ .name = "snouty_cycles_skirmish" });
+        @export(&bench_link, .{ .name = "snouty_cycles_link" });
+        @export(&bench_link_off, .{ .name = "snouty_cycles_link_off" });
+        @export(&bench_link_layout, .{ .name = "snouty_cycles_link_layout" });
     }
 }
 
@@ -196,10 +231,26 @@ fn buttons(c: cart.Controls) game.Buttons {
 }
 
 pub fn update() void {
+    const frame_start = cart.micros_since_boot();
     const held = buttons(read_controls());
     const pressed: game.Buttons = @bitCast(@as(u8, @bitCast(held)) & ~@as(u8, @bitCast(prev)));
     prev = held;
+    // The link runs in every mode (one poll a frame while searching), so
+    // a session survives the menus; LINK DUEL reads it.
+    const link_on = bench_link_off == 0;
+    if (link_on) {
+        lnk.begin(&g, frame_start);
+    } else {
+        // The same screens as with the link and no cable.
+        g.lk.status = .searching;
+    }
+    if (link_view_fake != 0) fake_link_state();
     g.update(held, pressed);
+    if (link_on) {
+        lnk.end(&g, cart.micros_since_boot());
+        // Between the sim and the render (the 8-byte receive FIFO).
+        lnk.pump(cart.micros_since_boot());
+    }
 
     const t0 = cart.micros_since_boot();
     // A rewind's replay frames run on a World the screen must not follow:
@@ -236,6 +287,18 @@ pub fn update() void {
         if (g.state == .rewind and tint_end < render.screen_h and tint_end > render.arena_y) draw_wipe_line(@intCast(tint_end - 1));
     }
     render_us = @truncate(cart.micros_since_boot() - t0);
+
+    // After the render: once, and while racing until 14 ms into the frame
+    // (pumping and retrying a step this frame missed). With no partner
+    // `busy` is false and this is a single pump.
+    if (link_on) lnk.pump(cart.micros_since_boot());
+    if (link_on and lnk.busy()) {
+        while (true) {
+            const now = cart.micros_since_boot();
+            if (now -% frame_start >= net.pump_until_us) break;
+            lnk.retry(&g, now);
+        }
+    }
 
     tick +%= 1;
     if (cart.is_wasm) present_wasm();
@@ -275,6 +338,11 @@ comptime {
         @export(&debug_mode, .{ .name = "debug_mode" });
         @export(&debug_match, .{ .name = "debug_match" });
         @export(&debug_rewind_target, .{ .name = "debug_rewind_target" });
+        @export(&debug_link_view, .{ .name = "debug_link_view" });
+        @export(&debug_link_demo, .{ .name = "debug_link_demo" });
+        @export(&debug_link_round, .{ .name = "debug_link_round" });
+        @export(&debug_link_wins, .{ .name = "debug_link_wins" });
+        @export(&debug_link_status, .{ .name = "debug_link_status" });
     }
 }
 
@@ -334,7 +402,7 @@ fn debug_skirmish(bits: u32) callconv(.c) u32 {
     g.new_match();
     return g.sk.programs;
 }
-/// 0 ladder, 1 SKIRMISH.
+/// 0 ladder, 1 SKIRMISH, 2 LINK DUEL.
 fn debug_mode() callconv(.c) u32 {
     return @backingInt(g.mode);
 }
@@ -345,6 +413,49 @@ fn debug_match() callconv(.c) u32 {
     for (g.sk.wins, 0..) |w, i| v |= @as(u32, w & 15) << @intCast(4 * i);
     return v | @as(u32, g.sk.points[0]) << 16;
 }
+/// Simulator previews of LINK DUEL's screens with no partner: shows
+/// lockstep state `v & 0xFF` (game.LinkStatus: 1 searching, 2 wrong cart,
+/// 3 wrong version, 4 lobby, 6 waiting) from now on instead of the real
+/// one, as the host when bit 8 is set (the guest sees the host's setup),
+/// opening LINK DUEL if needed. 0 stops faking. Returns v.
+fn debug_link_view(v: u32) callconv(.c) u32 {
+    link_view_fake = if (v & 0xFF == 0) 0 else v | 0x10000;
+    if (link_view_fake != 0 and g.mode != .link) g.enter_link();
+    return v;
+}
+/// A demo duel (you, or the autopilot, against the T2 program in the
+/// partner's slot) in arena `layout` with the current OPTIONS modifiers.
+fn debug_link_demo(layout: u32) callconv(.c) u32 {
+    link_view_fake = 0;
+    g.lk.layout = @intCast(layout % 9);
+    g.lk.opts = g.opts;
+    g.duel_demo(seed);
+    return 1;
+}
+/// The lockstep's state as LINK DUEL sees it (game.LinkStatus: 0 offline
+/// = no link hardware, the simulator; 1 searching, 2 wrong cart, 3 lobby,
+/// 4 racing, 5 waiting, 6 peer left, 7 desync).
+fn debug_link_status() callconv(.c) u32 {
+    return @backingInt(g.lk.status);
+}
+/// LINK DUEL: the round of the match (0 off).
+fn debug_link_round() callconv(.c) u32 {
+    return if (g.mode == .link) g.lk.round else 0;
+}
+/// LINK DUEL: your wins (bits 0-3) and the partner's (bits 4-7).
+fn debug_link_wins() callconv(.c) u32 {
+    return @as(u32, g.lk.wins[g.lk.slot]) | @as(u32, g.lk.wins[g.lk.slot ^ 1]) << 4;
+}
+
+fn fake_link_state() void {
+    const lk = &g.lk;
+    lk.status = @fromBackingInt(@intCast(link_view_fake & 0xFF));
+    lk.host = link_view_fake & 0x100 != 0;
+    lk.partner_name = "SNOUTY GC";
+    lk.can_go = true;
+    lk.heard = if (lk.host) null else lk.rules();
+}
+
 /// The World tick the last rewind went back to.
 fn debug_rewind_target() callconv(.c) u32 {
     return g.history.target;

@@ -30,6 +30,15 @@
 //! line and "2x Sel+hold: fast" in a two-line strip at the bottom for the
 //! first 3 s of play after the splash or the picker (gone at the first
 //! fresh press); the menu has its own.
+//! Battery saves (frontend/battery.zig, root docs/SAVES.md): with the
+//! patched OS a cartridge's battery RAM is loaded in `begin` and written
+//! back on the menu, the chorded rewind, the OS exit request and when the
+//! game has been quiet for 1 s after writing it (at most every 30 s). A
+//! save is drawn as "SAVING" across the bottom of the frame it is decided in,
+//! presented, and written at the top of the next update, so the screen
+//! holds that frame while the core is parked in `save.write`. On stock
+//! firmware `save.supported()` is false (one 250 ms probe in `start`,
+//! before the first frame) and nothing of this shows.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -46,6 +55,8 @@ const flow = @import("frontend/flow.zig");
 const tuning = @import("frontend/tuning.zig");
 const linkport = @import("frontend/linkport.zig");
 const hint = @import("hint");
+const save = @import("save");
+const battery = @import("frontend/battery.zig");
 
 comptime {
     cart.export_start_code();
@@ -72,6 +83,8 @@ pub fn start() void {
     // DMG look for the splash and the picker; `begin` switches to the
     // chosen ROM's model.
     video.init(.dmg);
+    // The saves probe (250 ms on stock firmware), before anything is shown.
+    if (save.supported()) save.watchExit() catch {};
     romsrc.scan();
     if (romsrc.use_drive and romsrc.playable_count > 1) {
         fl.pick_after_splash = true;
@@ -96,6 +109,10 @@ fn begin(rom: ?core.Rom) bool {
     gb.line_sink = video.sink(gb);
     audio.attach(gb);
     have_gb = true;
+    // The battery RAM, before the first frame and the first keyframe.
+    bat.begin(.from_rom(&r), l.save_blob, save.supported(), romsrc.sav_drive(), frames_seen);
+    // The menu's Reset is a power cycle then: the battery keeps the RAM.
+    gb.keep_cart_ram = bat.active;
     rewind.reset(gb);
     return true;
 }
@@ -110,6 +127,13 @@ pub fn update() void {
     // game lets the stream ramp out (or plays the boot chime) on the badge.
     audio.enabled = menu.sound_enabled;
 
+    if (save_top()) {
+        audio.idle();
+        frames_seen +%= 1;
+        if (cart.is_wasm) present_wasm();
+        return;
+    }
+
     stepped = false;
     if (have_gb) linkport.update(gb);
     fl.linked = linkport.linked;
@@ -117,9 +141,72 @@ pub fn update() void {
     fl.update(&ctx, @bitCast(read_controls()));
     if (!stepped) audio.idle();
     if (have_gb) linkport.pump(gb, update_us);
+    if (bat.requested and !flush_armed) {
+        // Shown in this frame, written at the top of the next update. The
+        // bottom rows: every screen redraws them (the game, the menu panel,
+        // the scrub bar), so the strip never outlives the save.
+        hint.draw_strip(cart, null, "SAVING", cart.screen_height - hint.strip_h, video.shade_color(0), video.shade_color(3));
+        flush_armed = true;
+    }
 
     frames_seen +%= 1;
     if (cart.is_wasm) present_wasm();
+}
+
+/// The battery save. `bat` is `battery.live`, which the menu shares.
+const bat = &battery.live;
+/// A save was drawn as "SAVING" in the last frame: write it now.
+var flush_armed = false;
+/// The OS asked to exit and the cart has answered (`save.exitReady`).
+var exit_done = false;
+/// "SAVE FULL" / "SAVE ERROR" over the game for a while.
+var toast: []const u8 = "";
+var toast_left: u16 = 0;
+const toast_updates = 150;
+
+/// The saving done at the top of an update: the exit request (save if
+/// anything is pending, then let the OS stop the cart; true from then on,
+/// the cart only waits), or the save drawn in the last frame.
+noinline fn save_top() bool {
+    if (exit_done) return true;
+    if (save.exitRequested()) {
+        exit_done = true;
+        if (have_gb) {
+            if (fl.state == .running) bat.note_writes(gb, frames_seen);
+            bat.flush_if_pending(frames_seen);
+        }
+        save.exitReady();
+        return true;
+    }
+    if (flush_armed) {
+        flush_armed = false;
+        // The stream would run dry during the write: ramp it out first.
+        audio.fast_forward(gb);
+        bat.flush(frames_seen);
+    }
+    return false;
+}
+
+/// The battery save after a game update: note the game's cart RAM writes;
+/// save once it has been quiet for a while (never while fast forwarding or
+/// linked: the partner would wait out the write); show a failure once.
+noinline fn battery_frame(fast: bool) void {
+    bat.note_writes(gb, frames_seen);
+    if (!fast and !linkport.linked and bat.auto_due(frames_seen)) bat.request();
+    if (bat.toast) |t| {
+        bat.toast = null;
+        toast = t;
+        toast_left = toast_updates;
+    }
+    if (toast_left > 0) {
+        toast_left -= 1;
+        draw_strip_top(toast);
+    }
+}
+
+/// `s` on a full-width strip across the top (the save toasts).
+fn draw_strip_top(s: []const u8) void {
+    hint.draw_strip(cart, null, s, 0, video.shade_color(0), video.shade_color(3));
 }
 
 /// The badge side of frontend/flow.zig: the splash, picker, console, menu
@@ -201,12 +288,18 @@ const Ctx = struct {
             linkport.note_left -= 1;
             hint.draw_strip(cart, null, linkport.note, cart.screen_height - hint.strip_h, video.shade_color(0), video.shade_color(3));
         }
+        if (bat.active) battery_frame(fast);
     }
 
     pub fn menu_open(_: *Ctx) void {
         audio.pause(gb);
         play_hint.stop();
         menu.open();
+        // Save what the game wrote before anything can be scrubbed. Not
+        // while linked: the write masks this core's interrupts for up to
+        // 0.55 s and the partner's bytes would be lost (Save now still can).
+        bat.note_writes(gb, frames_seen);
+        if (!linkport.linked) bat.request_if_pending();
     }
 
     pub fn menu_frame(_: *Ctx, e: input.Edge) flow.MenuResult {
@@ -219,6 +312,7 @@ const Ctx = struct {
 
     pub fn menu_close(_: *Ctx) void {
         menu.close();
+        bat.ignore_replays(gb);
     }
 
     /// The chorded rewind (frontend/flow.zig): the menu's freeze, sound
@@ -227,6 +321,8 @@ const Ctx = struct {
         audio.pause(gb);
         play_hint.stop();
         menu.rewind_open();
+        bat.note_writes(gb, frames_seen);
+        bat.request_if_pending();
     }
 
     pub fn rewind_frame(_: *Ctx, dir: i2) void {
@@ -236,6 +332,7 @@ const Ctx = struct {
 
     pub fn rewind_close(_: *Ctx) void {
         menu.close();
+        bat.ignore_replays(gb);
     }
 
     pub fn halted_frame(_: *Ctx) void {

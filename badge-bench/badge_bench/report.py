@@ -165,6 +165,8 @@ def text(meta, res, st, hot, every, top, show_symbols):
         for f in res.frames:
             if f['frame'] % every == 0 or f['frame'] == worst:
                 row = (fmt_frame_row_cal if cal else fmt_frame_row)(f, meta['budget_ms'])
+                if f.get('save_ms'):
+                    row += f"  [save {f['save_ms']:.0f} ms]"
                 if f['frame'] == worst:
                     row += '   <- worst'
                 L.append(row)
@@ -217,6 +219,13 @@ def text(meta, res, st, hot, every, top, show_symbols):
         L.append(f"volume: {len(res.volumes)} CART_VOLUME messages, last {res.volumes[-1][1]:.2f}")
     if res.audio:
         L.extend(audio_lines(res.audio))
+    if res.saves:
+        L.extend(saves_lines(res.saves, meta.get('saves')))
+    if res.exit:
+        e = res.exit
+        L.append(f"exit hook: requested before frame {e['requested_frame']}; {e['outcome']}"
+                 + (f" before frame {e['ready_frame']}" if e['ready_frame'] is not None else '')
+                 + (f" ({e['waited_ms']:.0f} ms wall)" if e['watched'] else ''))
     if res.traces:
         L.append(f"traces: {len(res.traces)} CART_TRACE messages (see above / --json)")
     if res.unknown_msgs:
@@ -266,6 +275,22 @@ def audio_lines(a):
     return L
 
 
+def saves_lines(sv, where):
+    """The save-request summary (saves.SaveService.summary())."""
+    if sv.get('ignored'):
+        return [f"saves: {sv['requests']} requests ignored (--no-saves, as stock firmware)"]
+    ops = ', '.join(f"{op} {d['count']}" + (
+        ' (' + ', '.join(f"{n} {st}" for st, n in sorted(d['statuses'].items())) + ')'
+        if set(d['statuses']) != {'ok'} else '') for op, d in sv['by_op'].items())
+    L = [f"saves: {sv['requests']} requests ({ops}); {sv['commits']} commit{'' if sv['commits'] == 1 else 's'}, modelled flash "
+         f"{sv['flash_ms']:.0f} ms charged to the cart; store {where}"]
+    if sv['keys']:
+        ks = ', '.join(f"{k['key']} ({k['size']:,} B)" for k in sv['keys'][:6])
+        more = f", {len(sv['keys']) - 6} more" if len(sv['keys']) > 6 else ''
+        L.append(f"  stored: {ks}{more}")
+    return L
+
+
 def crash_lines(c):
     where = 'start-up' if c.get('frame', -1) < 0 else f"frame {c['frame']}"
     L = [f"CRASH in {where}: {c['detail']}"]
@@ -296,6 +321,7 @@ def to_json(meta, res, st, hot, top=50):
         volumes=[dict(frame=f, volume=v) for f, v in res.volumes],
         unknown_fifo=[dict(frame=f, word=w) for f, w in res.unknown_msgs],
         warnings=res.warnings, scratch_accesses=res.scratch, crash=res.crash, hang=res.hang,
+        saves=res.saves, exit=res.exit,
         model=dict(clock_hz=M.CLOCK_HZ, ipc_base=OS.IPC_BASE),
         **({} if res.audio is None else dict(audio=dict(
             res.audio, frames=[dict(frame=f, queued=q, consumed=c, underrun=u)

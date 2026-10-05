@@ -24,6 +24,20 @@ pub fn frame(app: *App) void {
         .log => log_screen(app),
         .wall => wall(app),
     }
+    saves_marks(app);
+}
+
+/// The SAVING mark (this frame stays on screen while the next update
+/// writes) and a save error, over the top right of any screen.
+fn saves_marks(app: *App) void {
+    if (app.saver.error_text()) |t| {
+        draw.fill_rect(0, 0, draw.width, 9, .black);
+        draw.text_center(t, 1, .white);
+    }
+    if (app.saver.armed) {
+        draw.fill_rect(draw.width - 40, 0, 40, 9, .black);
+        _ = draw.text("SAVING", draw.width - 37, 1, .white);
+    }
 }
 
 /// Pixels the tab bar and rows move down when the clip count needs four
