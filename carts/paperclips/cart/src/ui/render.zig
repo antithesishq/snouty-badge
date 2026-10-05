@@ -26,9 +26,15 @@ pub fn frame(app: *App) void {
     }
 }
 
+/// Pixels the tab bar and rows move down when the clip count needs four
+/// lines (the ending's 74-character count).
+var shift: i32 = 0;
+
 fn game_screen(app: *App) void {
     draw.clear(.white);
-    if (header(app.game) < 3) status_line(app);
+    const lines = header(app.game);
+    if (lines < 3) status_line(app);
+    shift = if (lines > 3) 8 else 0;
     tab_bar(app);
     rows(app);
     ticker(app);
@@ -64,19 +70,34 @@ fn header(g: *const G.Game) usize {
     // Small type: the label, then the digits right-aligned, broken after
     // commas into lines of at most 26 characters (the first beside the
     // label), up to three lines.
-    // Past 66 characters (the ending's 71) the label gives way.
+    // Past 66 characters the label gives way; the ending's 74-character
+    // count takes four lines (the rows move down, see `shift`).
     const labelled = n.len <= 2 * L.cols + (L.cols - 12);
     if (labelled) _ = draw.text(label, 2, 0, .black);
-    const first_room: usize = if (labelled) L.cols - 12 else L.cols;
-    var lines: [3][]const u8 = undefined;
+    if (!labelled) {
+        // The ending: the count as a paragraph, lines broken after commas.
+        var start: usize = 0;
+        var k: i32 = 0;
+        while (start < n.len and k < 4) : (k += 1) {
+            var end = @min(n.len, start + L.cols);
+            if (end < n.len) {
+                while (end > start + 1 and n[end - 1] != ',') end -= 1;
+            }
+            _ = draw.text(n[start..end], L.text_x, k * 8, .black);
+            start = end;
+        }
+        return @intCast(@max(2, k));
+    }
+    const first_room: usize = L.cols - 12;
+    var lines: [4][]const u8 = undefined;
     var count: usize = 0;
     var end = n.len;
-    // Fill lines from the end so the last lines are full.
-    while (end > 0 and count < 3) {
-        const room: usize = if (count == 2 or end <= first_room) first_room else L.cols;
+    // Fill lines from the end so the last lines are full, each starting
+    // just after a comma.
+    while (end > 0 and count < 4) {
+        const room: usize = if (end <= first_room) first_room else L.cols;
         var start = end - @min(end, room);
         if (start > 0) {
-            // Start just after a comma.
             while (start < end and n[start - 1] != ',') start += 1;
         }
         if (start == end) start = end - @min(end, room);
@@ -105,8 +126,8 @@ fn status_line(app: *App) void {
 // -- page tab: "< BUSINESS >   2/6 !" ------------------------------------
 
 fn tab_bar(app: *App) void {
-    draw.fill_rect(0, L.tab_y, draw.width, L.tab_h, .black);
-    const y = L.tab_y + 1;
+    draw.fill_rect(0, L.tab_y + shift, draw.width, L.tab_h, .black);
+    const y = L.tab_y + 1 + shift;
     const pos = app.page_position();
     if (pos.count > 1) _ = draw.text(&.{font.tri_left}, 2, y, .white);
     const name = app.page.title();
@@ -124,7 +145,7 @@ fn tab_bar(app: *App) void {
     _ = draw.text_right(buf[0..n], right, y, .white);
     if (news and (app.frame / 20) % 3 != 0) {
         // A white box with a black "!" (blinks).
-        draw.fill_rect(L.right_x - 7, L.tab_y + 1, 8, L.tab_h - 2, .white);
+        draw.fill_rect(L.right_x - 7, L.tab_y + 1 + shift, 8, L.tab_h - 2, .white);
         _ = draw.text("!", L.right_x - 5, y, .black);
     }
 }
@@ -135,7 +156,7 @@ fn rows(app: *App) void {
     const list = app.rows.slice();
     const pi = @intFromEnum(app.page);
     const cursor = app.cursor_ix[pi];
-    const area = app.list_lines();
+    const area = app.list_lines() - @as(usize, if (shift > 0) 1 else 0);
     const scroll = app.scroll[pi];
 
     var line: usize = 0;
@@ -146,7 +167,7 @@ fn rows(app: *App) void {
         // A tall row that does not fit waits for the scroll (unless it is
         // the first one shown).
         if (line + r.lines > scroll + area and line > scroll) break;
-        const y = L.rows_y + @as(i32, @intCast(line - scroll)) * L.row_h;
+        const y = L.rows_y + shift + @as(i32, @intCast(line - scroll)) * L.row_h;
         row(app, r, y, i == cursor and list.len > 0);
     }
 
@@ -361,9 +382,23 @@ fn footer(app: *App, r: *const pages.Row) void {
 
 // -- ticker: the newest message, two lines -------------------------------
 
+/// The one HTML entity the original's messages use (the closing credit's
+/// "&#169;") as the font's copyright glyph.
+fn plain(msg: []const u8, buf: []u8) []const u8 {
+    const ent = "&#169;";
+    const i = std.mem.indexOf(u8, msg, ent) orelse return msg;
+    if (msg.len > buf.len) return msg;
+    @memcpy(buf[0..i], msg[0..i]);
+    buf[i] = font.copyright;
+    const rest = msg[i + ent.len ..];
+    @memcpy(buf[i + 1 .. i + 1 + rest.len], rest);
+    return buf[0 .. i + 1 + rest.len];
+}
+
 fn ticker(app: *App) void {
     draw.hline(0, L.rule_y, draw.width, .grey);
-    const msg = app_mod.message(app.game, 0) orelse return;
+    var pb: [160]u8 = undefined;
+    const msg = plain(app_mod.message(app.game, 0) orelse return, &pb);
     var spans: [8]text.Span = undefined;
     const width = L.cols - 1;
     const n = @min(text.wrap(msg, width, &spans), spans.len);
@@ -399,7 +434,9 @@ fn log_screen(app: *App) void {
     var line_y: i32 = top + @as(i32, @intCast(lines_on_screen - 1)) * L.row_h;
     var k: u32 = 0;
     var any_hidden_above = false;
-    outer: while (app_mod.message(app.game, k)) |msg| : (k += 1) {
+    var pb: [160]u8 = undefined;
+    outer: while (app_mod.message(app.game, k)) |raw| : (k += 1) {
+        const msg = plain(raw, &pb);
         var spans: [8]text.Span = undefined;
         const n = @min(text.wrap(msg, L.cols - 1, &spans), spans.len);
         var li = n;
