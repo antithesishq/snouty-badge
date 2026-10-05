@@ -12,14 +12,34 @@ two humans' input bytes, one byte per tick each, and both simulate every
 tick with the same pair. Nothing else reaches `simulate`: no clock, no
 `cart.rand`, no render state, only the agreed bytes and the agreed setup.
 
+**M6 (LINK BATTLE): version 1, five rules bytes.** LINK BATTLE needs
+LIVES and TIME beside the mode, the arena and CREWS, more than M4's one
+rules byte holds. Since M6 `net.Game` has `rules_len = 5` and `version =
+1`, so lockstep sends the rules in its paged SETUP (root
+`docs/LOCKSTEP.md` 4.3: SETUP pages 0x80 | page << 2 | flips, GO 0x90 |
+flip with a CRC8 of the rules) and the link HELLO's version byte is 0x11.
+The five bytes (`Rules.encode`): mode (0 LINK RACE, 1 LINK GC, 2 LINK
+BATTLE), track (`track.tracks`, or `track.arenas` in battle), CREWS (AI
+cars: 4, 2, 0), LIVES (1, 3, 5, 9; 0 INF), TIME (2, 3, 5 minutes; 0
+NONE, never with INF). `Rules.decode` maps any bytes onto rows the menus
+offer, so both badges always build a round they can run. A badge running
+M4 to M5.1 (version 0) and this one never race: the M5.1 badge and this
+one both show `WRONG VERSION` and send nothing; an M4 badge (which
+ignores the version) waits in its lobby (docs/LOCKSTEP.md 4.7).
+`net.GameV0` is the M5.1 game, kept so `net_compat_test.zig` still
+proves its wire is M4's byte for byte; sections 2.1 and 2.2 below
+describe that version-0 form, which the paged form replaces only in
+SETUP and GO.
+
 ## 1. Files
 
 | File | What |
 |---|---|
-| `cart/src/net.zig` | `Net(L)`: GC's names (`Rules`, `Pick`, `Race`, `world_setup`, `world_hash`, ...) over the shared `lib/lockstep.zig` (root `docs/LOCKSTEP.md`); `net.Game` is GC as lockstep's game: rules byte, racer picks, Start as the pause bit, the hand-over |
+| `cart/src/net.zig` | `Net(L)`: GC's names (`Rules`, `Pick`, `Race`, `world_setup`, `world_hash`, ...) over the shared `lib/lockstep.zig` (root `docs/LOCKSTEP.md`); `net.Game` is GC as lockstep's game (M6: version 1, five rules bytes), `net.GameV0` the M5.1 one for the tests: rules, racer picks, Start as the pause bit, the hand-over; `NetOf(L, G)` takes either |
 | `cart/src/net_test.zig` | two `Net` + two `World`s on a `lib/link_virtual.zig` cable with byte loss and the 8-byte FIFO |
 | `cart/src/net_m4.zig` | test only: the M4 net.zig (90683be4, tag `snouty-gc/m4-hw`) verbatim |
-| `cart/src/net_compat_test.zig` | the wire is byte-identical to M4 (one scripted session on both stacks), an M4 badge and a converted one race in sync, a version-1 GC never races an M4 one |
+| `cart/src/net_compat_test.zig` | the version-0 wire (`GameV0`) is byte-identical to M4 (one scripted session on both stacks), an M4 badge and a v0 one race in sync, the cart's version 1 never races an M4 badge, and a v0 (M5.1) and a v1 (M6) badge both say `wrong_version` and never race |
+| `cart/src/battle_text.zig` | M6: the lobby's rows for LINK RACE / LINK GC / LINK BATTLE and the host's rule changes (`lobby_change`), host-tested in `battle_ui_test.zig` |
 | `carts/snouty-gc/build.zig` | `link` and `lockstep` imports for the cart module; `link_host` (link.zig + link_virtual.zig copied under one root) and `lockstep` for the tests |
 
 Since the conversion (after M4) the lockstep itself lives in
@@ -52,8 +72,9 @@ Control messages are link DATA packets with a kind byte first. None is
 | `QUIT` 0xA4 | kind, race id | both | first message after `leave()` |
 | `DESYNC` 0xA5 | kind, race id | both | every 50 ms after finding a desync |
 
-- **rules**: track bits 0-3, crews bits 4-6 (the AI count), mode bit 7
-  (0 LINK RACE, 1 LINK GC).
+- **rules** (version 0, M4 to M5.1): track bits 0-3, crews bits 4-6 (the
+  AI count), mode bit 7 (0 LINK RACE, 1 LINK GC). Version 1 (M6) sends
+  the five rules bytes of the top of this file in paged SETUPs instead.
 - **pick**: racer bits 0-2 (7 = none), ready bit 7.
 - **racers**: host's racer bits 0-2, guest's bits 4-6.
 - **race id**: the last race this badge joined this session (0 = none).
@@ -207,7 +228,7 @@ looped to 14 ms in every state.
 n.pump(now);
 switch (n.state()) {
     .lobby => {
-        if (n.role == .host) n.set_rules(.{ .mode = m, .track = t, .crews = c });
+        if (n.role == .host) n.set_rules(.{ .mode = m, .track = t, .crews = c, .lives = l, .minutes = min });
         // the select: grey n.peer_racer(); ready = A pressed on a free racer
         n.set_pick(racer, ready);
         if (n.role == .host and start_pressed and n.can_go()) _ = n.go(now);
@@ -317,6 +338,17 @@ humans = the autopilot plus random taps.
   without a tick, at most 8 in a row (133 ms). Without the pump loop the
   same loss gives 4.4% and 13 in a row.
 - LINK GC rules race: in sync to its end.
+- M6 LINK BATTLE: the five rules bytes reach the guest through 1% loss
+  and both badges build the same round (LIVES 9, TIME 5, CREWS 2 on the
+  arena); 6 seeded rounds (every LIVES row, CREWS 4 / 2 / 0, 2 minutes)
+  in sync every tick to their end on a clean cable (38,627 ticks, 0.37%
+  of input packets lost to the FIFO model, at most 13 frames in a row
+  without a tick) and 6 more with 1% byte loss (37,510 ticks, 8.6% of
+  packets lost, at most 17 in a row); each ends by lives or time, with a
+  human still in finished and one out of lives marked out.
+- M6 versions: a v0 (M5.1) and a v1 (M6) badge, either side, both
+  cable kinds, clean and 1% loss, 10 s each: both `wrong_version`, no
+  DATA packet sent by either, never racing.
 - Unplug mid-race: both badges `peer_left` 42 ms later, each finishes with
   the AI driving the other car.
 - World changed on one badge: `desync` on both at most 32 ticks later

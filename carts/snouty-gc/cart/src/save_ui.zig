@@ -39,9 +39,14 @@ pub fn draw(menus: bool) void {
 
 /// The chooser over the menu's live floor (the caller draws the floor):
 /// the lockup, the rows in a panel, the row's hint and the footer.
-/// `cont`: the career CONTINUE CAREER loads (the hint names its league
-/// and race).
-pub fn draw_chooser(can_continue: bool, cont: *const career.Career) void {
+/// `session`: the career in this session, else CONTINUE CAREER loads the
+/// stored one (the hint names its league and race).
+pub fn draw_chooser(can_continue: bool, session: ?*const career.Career) void {
+    var stored: career.Career = undefined;
+    const cont = session orelse blk: {
+        stored = saver.stored_career();
+        break :blk &stored;
+    };
     menu.lockup(lay.title_y, 2, true);
     const labels = chooser.rows(can_continue);
     const rows: i32 = @intCast(labels.len);

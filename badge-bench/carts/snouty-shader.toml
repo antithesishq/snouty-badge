@@ -1,0 +1,5 @@
+# snouty-shader: hand-driven shader gallery (TOF), 60 fps, .no_copy_full_frame.
+budget_ms = 16.7
+frames = 3600
+script = "carts/snouty-shader/tools/scripts/bench_all.json"
+note = "No sensor in badge-bench (sensor_frame() is null; -Dtof-fake=true builds run the driver's model instead): the ghost hand drives each program for 600 ticks (INK, RIPPLE, LAVA, ECHO, CELLS, KALEIDO; RIGHT at 600, 1200, ...), with B + stick steering and a B+A punch at +400..+520 of each. Per program: --poke start_program=N --frames 960 --script carts/snouty-shader/tools/scripts/bench_program.json (one 16 s ghost routine incl. its punch, then the B panel with stick moves). Gate: worst busy ms <= 12 per program."

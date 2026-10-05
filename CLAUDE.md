@@ -21,7 +21,9 @@ its design and milestone status.
   `snouty-maze`, `snouty-gear`, `snouty-genesis`, `snouty-lynx`,
   `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only), `snouty-pipes`, `siwoo` (a name
   badge: demosnout's head plus a chrome name), `snouty-link` (the link-cable
-  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md), `snouty-gc` (Snouty GCP
+  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md),
+  `snouty-pong` (the example two-badge game on `lib/lockstep.zig`, written
+  to be read; its README.md is the walkthrough), `snouty-gc` (Snouty GCP
   (Snouty Garbage Collection Prix), a combat racer forked from
   snouty-zero's engine), `snouty-cycles` (Tron light
   cycles against AI programs),
@@ -32,7 +34,9 @@ its design and milestone status.
   driver, docs/TOF.md), `snouty-theremin` (a theremin played by hand over
   the sensor, or the stick; docs/TOF.md M1), `snouty-morph` (a demoscene
   mesh that follows and deforms with your hand over the same sensor;
-  `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3).
+  `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3),
+  `snouty-shader` (a Shadertoy-style gallery of abstract per-pixel shaders
+  whose uniforms are the same sensor's depth field and hand pose).
 - `lib/save.zig` — cart saves (branch `saves/m1` only): the ABI v1 client
   for the patched OS of sycl-badge branch `cart-saves`, with a host fake;
   carts hide Save on stock firmware (`docs/SAVES.md`).
@@ -120,7 +124,7 @@ Reference carts: `sycl-badge/showcase/carts/dvd` (simplest asset pipeline),
 zig build                      # every cart, from the repository root
 zig build -Dcart=snouty-maze   # one cart
 zig build test                 # every cart's host tests and lib/'s
-zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc, morph)
+zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc, morph, shader)
 ```
 
 Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`

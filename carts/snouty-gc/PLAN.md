@@ -1971,6 +1971,76 @@ status.
   2,572 B (cap raised to 2,624, `tuning.world_cap`), `Car` 120 B.
 
 
+**Track B (presentation and LINK BATTLE), 2026-10-05, branch
+`gc/battle-ui`** (worktree `/home/exedev/snouty-badge-gc-battle-ui`, off
+the M6.0 commit 3a112fbd; `origin/gc/present` merged up to f4c0eceb,
+Track A's finished head). The BATTLE presentation and LINK BATTLE are in;
+PLAN's Track B list is done. Decisions L80-L93.
+
+- **Flow**: the menu's BATTLE row (third, `ARENA, MOST KILLS`), the racer
+  select (`A  TO THE ARENA`), the setup over the arena's floor (arena,
+  LIVES 1/3/5/9/INF, TIME 2/3/5/NONE with NONE skipped on INF, CREWS 5..1,
+  FIGHT!; `battle_ui.zig`, words and rows in `battle_text.zig`), the
+  `KILL -9` card over the countdown's READY and 3, the round, pause
+  (RESUME / RESTART / QUIT / SOUND), the winner card and standings.
+  Screen 12 is the setup.
+- **HUD**: ELIM, the clock (last 10 s blinking; TIME NONE counts up), the
+  standing, lives pips (INF), the refill sweep, the whole-arena minimap
+  (one draw path with the race minimap at an arena scale), feed lines
+  `kill -9` / `REAPED` / `SMASHED` and `SMASH!`, bar pops STACK SMASH! /
+  STACK SMASHED / CLEAN LANDING, SAFE MODE, TIME UP / LAST ONE STANDING,
+  the GC claw on a last life, `REAPED` and the kill leader's camera once
+  out. Results: TOP KILLER / LAST PROCESS UP and the standings (ELIM,
+  `LIVES n`, `WRECKS n`, `OUT m:ss`) with the half portraits.
+- **LINK BATTLE**: the lobby's mode row cycles LINK RACE / LINK GC / LINK
+  BATTLE; LINK BATTLE shows the arena and LIVES / TIME rows (six rows),
+  the link select its rules. `net.Game` is version 1 with five rules bytes
+  (mode, track or arena, CREWS, LIVES, TIME) in lockstep's paged SETUP;
+  `net.GameV0` keeps the M5.1 wire for the compat tests (L84).
+- **Tests**: **182 pass** at the merged head (`zig build test-gc`, the
+  binary run directly). Track B's: `battle_ui_test.zig` (10: panel
+  widths, setup rows, the card's window, the clock, standings lines, the
+  winner title, the lobby's rows and changes, the agreed setup),
+  `net_test` (the wire test with LINK BATTLE's bytes and junk decoding;
+  the five bytes reaching the guest through 1% loss; 6 seeded LINK BATTLE
+  rounds in sync every tick to their end, clean: 31,530 ticks, 0.35% of
+  packets lost to the FIFO model, at most 13 frames in a row without a
+  tick; 6 with 1% byte loss: 40,286 ticks, 8.6% lost, at most 17 in a
+  row), `net_compat_test` (v0 still M4's bytes; the cart's v1 against M4;
+  v0 against v1 either side, both cables, clean and 1%: both
+  `wrong_version`, no DATA packet, never racing). Two harness fixes (L92).
+- **check.sh PASS** at the merged head (test via test-gc as before).
+  Track B's previews: the 7-row menu to the setup (B back, LIVES INF,
+  TIME 2) and a round; LINK BATTLE in the made-up lobby and select, WRONG
+  VERSION; a last life (`debug_battle_kill`), the claw, the kill leader's
+  camera, pause and resume, the round to its results; the arena stress.
+  The menu-dependent runs outside the block moved by one Down (L91).
+  Golden checksums unchanged.
+- **Bench** (calibrated, `--lcd` identical, mean / worst ms): `m6_battle`
+  (`--poke gc_battle=1`, 3,600 frames, the battle HUD on Track A's
+  hunter) 3.43 / 5.27; arena stress with the battle HUD's stress (`--poke
+  gc_battle=2`) 4.85 / 6.13; the race benches as before (`m0_race` 3.62 /
+  5.19, stress 4.99 / 6.14; probe stress 5.10 / 6.26, probe GC 3.55 /
+  5.64; the rest within 0.05 ms of Track A's). The
+  first merged bench found a ReleaseSmall crash in `sprites.car_lift` (a
+  kicker's 64-tick hop); Track A fixed it with `Car.air` (18abaaae).
+- **RAM**: `size -A` .text 185,640 + .data 8,104 + .bss 52,428 (+ 2,008
+  exidx/extab) = 248,180 B; **25,908 B free** from the end of .bss to the
+  stack (Track A's head alone: 32,008; M5.1: 47,624), so Track B costs
+  6,100 B. Two size fixes on the way: `hud.fill_rect` is one out-of-line
+  body (its generic `w`/`h` had made a copy per call shape: 1.8 KB
+  across the cart), the winner cards share their own-place and taunt
+  lines, and the arena and race minimaps one draw path.
+- `docs/preview_m6.gif` (463 frames, 50 ms, every third update: real
+  time; `tools/m6_gif.py cut 344`): the title, the menu's BATTLE row, the
+  select, the setup (TIME 2, LIVES 5), the KILL -9 card and countdown,
+  a STACK SMASH, a CLEAN LANDING over the bit bucket, kill -9 lines, a
+  wreck and the respawn in SAFE MODE, the claw on SNOUTY's last life and
+  the kill leader's camera, TIME UP, the winner card and the standings.
+- **On two badges**: never run; `docs/LINK_PLAY.md` items 10 and 11 are
+  the LINK BATTLE and version checks.
+
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -2599,3 +2669,106 @@ L67. **The arena's Sweeper** runs gate to gate along the north straight,
     tracks.
 L68. **RAM**: the arena and the hunter cost about 15 KB of the window, so
     about 32 KB is free for Track B and M7.
+
+Taken during M6 (Track B, BATTLE presentation and LINK BATTLE):
+
+L80. **Battle flow**: menu BATTLE, then the racer select (SPEC 8.1: the
+    select is the first screen of every mode; no track row, `A  TO THE
+    ARENA`), then the setup screen (arena, LIVES, TIME, CREWS, FIGHT!)
+    over the arena's own floor, then the round. The setup's cursor starts
+    on FIGHT!, so A, A from the select fights with the last rules; A or
+    Start on any row fights, B goes back to the select. Pause QUIT and the
+    results go back to the select (then the setup). The options are kept
+    for the session (`battle_ui.opts`; default 3 lives, 3 min, 5 AI).
+L81. **The KILL -9 card** is drawn over the countdown's READY and 3 steps
+    (100 ticks: `$ kill -9 -1` typing itself, KILL -9 at 2x, `no cleanup
+    handler` / `no appeal`, the arena, the rules), then 2, 1, GO show as
+    in a race. Render only, the same on both badges of a link battle: no
+    single-player hold before the countdown, so nothing waits on it.
+L82. **Battle HUD layout**: `ELIM n` replaces `LAP n/N` top left (cyan for
+    the kill leader); the clock is centred (time left as M:SS rounded up,
+    blinking coral in the last 10 s; with TIME NONE the time played in
+    grey); the standing (1ST..6TH) sits right of the clock in grey (cyan
+    when first); the lives are pips under ELIM on a dark plate (green,
+    coral blinking on the last life; `INF` in grey), 5 px apart, 4 px past
+    five lives so nine stay left of `FETCHING...`. The speed reading stays.
+    The refill sweep is a 1 px line between the front and rear ammo rows,
+    filling to the refill and flashing white as it lands.
+L83. **Arena minimap**: 32x32 at the race minimap's place, over the
+    arena's bounds (the tiles that are not `off`, squared), one kind a
+    pixel from the unpacked map at the round's start: wall (a wall tile
+    anywhere in the cell), pit (most of the cell open), bay, ramp, floor
+    (checkerboard, the race shows through). Waiting crates 1 px yellow,
+    the Sweeper 2x2 orange, every car in the round 2x2 in its livery (the
+    followed one white on top), a wrecked car blinks, one in SAFE MODE
+    flickers, the kill leader has a cyan ring.
+L84. **Compat tests after the version bump**: `net.Game` is version 1 with
+    five rules bytes; `net.GameV0` keeps the M5.1 game (one byte, version
+    0) through the same `NetOf(L, G)` wrapper, and `net_compat_test`
+    proves GameV0 is still M4's wire byte for byte and races an M4 badge
+    in sync. New: the cart's v1 never races an M4 badge (M4 waits in its
+    lobby), and a v0 (M5.1) and a v1 badge, either side, both cable kinds,
+    clean and 1% loss, are both `wrong_version` and send no DATA packet
+    for 10 s. The old test of a made-up `GameV1` against M4 now runs the
+    real `net.Game`.
+L85. **The five rules bytes**: mode (0 race, 1 gc, 2 battle), track (or
+    arena), CREWS, LIVES, TIME, in every mode (a race carries the battle
+    defaults, unused). `Rules.decode` maps bytes off the menus' rows to
+    their defaults (an unknown mode is a race), so both badges always
+    build a round they can run; `setup_of` wraps the track index into the
+    table the mode uses.
+L86. **LINK lobby**: the mode row cycles LINK RACE, LINK GC, LINK BATTLE.
+    Into LINK BATTLE the track row becomes the arena (THE SANDBOX, index
+    0) and LIVES and TIME rows appear (six rows 11 px apart, the title 4 px
+    higher); back out, the race track the host had returns. CREWS stays
+    4 / 2 / 0. The link select's panel reads the arena with `CREWS n` at
+    the right and `3 LIVES, 3 MIN` under it. `debug_link_mode` puts the
+    made-up (simulator) lobby on LINK BATTLE.
+L87. **Feed and pops**: an `eliminated` line (`SNOUTY kill -9 KIDDIE`,
+    two rows when wider than the screen) replaces the wreck line the same
+    tick wrote; on a last life (`out`) the victim's name flashes red, and
+    a last life nobody was credited with reads `KIDDIE REAPED`. A STACK
+    SMASH is a minor feed line (`SNOUTY SMASHED KIDDIE`) with `SMASH!`
+    rising over the victim. The bar pops are the badge's own car's:
+    `STACK SMASH!` (it landed one), `STACK SMASHED` (it was under one),
+    `CLEAN LANDING`; after the wreck note, before SAFE MODE. `SAFE MODE`
+    blinks in the bar while `Car.safe` runs (the sprite blinks with the
+    respawn immunity it already had). The round's end reads `TIME UP` or
+    `LAST ONE STANDING` on every badge.
+L88. **Out of lives**: the claw takes the hulk where it went out (the GC
+    claw, `fx.claws`); `REAPED` sits where the armor bar was; once the
+    claw is done the camera rides with the kill leader (the best-ranked
+    car still in while nobody has scored), changing car at most every 2 s.
+L89. **Results**: the winner card is the standings' first, titled `TOP
+    KILLER`, or `LAST PROCESS UP` when the round ended by lives and it is
+    the car left (eliminations rank first, so the top killer can be out
+    of lives; then the card's end line names the car left, `LAST UP:
+    BOTNET`, else `TIME UP`); its eliminations, lives (or wrecks with INF,
+    or `OUT m:ss`), taunt, the player's own standing. The standings: the half portrait, name and
+    `LIVES n` / `WRECKS n` / `OUT m:ss` (time survived), the eliminations
+    under an `ELIM` heading at the right.
+L90. **Debug paths**: the made-up BATTLE row (`debug_menu_battle`,
+    `menu.preview_battle`) is gone with the real row, and check.sh's
+    `menu7` run with it. `debug_start_battle`, `debug_battle_minutes`,
+    `debug_battle_crews` and `debug_battle_kill` return a value so a
+    preview's `--call-at` can use them. New: `debug_link_mode`,
+    `debug_lobby_rules`, `debug_setup_row`, `debug_battle_arena`,
+    `debug_battle_stress`, `debug_me_out`, `debug_safe`, `debug_stunt`.
+L91. **check.sh outside Track B's block**: the BATTLE row moved the rows
+    the `menu`, `pickups`, `link` and `circuit` previews press through
+    (one more Down each, the header comment says so), and
+    `tools/scripts/m5_circuit_race.json` got one more Down (A at 18): the
+    circuit bench runs the same race as before. Track A owns those lines;
+    the edit is the minimum the menu change forces.
+L92. **net_test harness**: two M4-era fragilities that the v1 seeds hit
+    are fixed in the scripted humans, not the netcode: a random Select tap
+    on a frame that holds Start (the OS chord; `submit` clears both, so a
+    held Start showed two edges) is dropped, and the desync test also
+    flips a PRNG bit (a respawn can put a car back on its pad and erase a
+    one-pixel change before the next check).
+L93. **Arena stress** (`--poke gc_battle=2`, `debug_battle_stress`): the
+    render stress scene keeps BATTLE rules in an arena (so its HUD is the
+    one stressed) and adds a `kill -9` line every 90 frames (every other
+    one a last life with its claw), a STACK SMASH and a CLEAN LANDING on
+    SNOUTY in turn, a rival in SAFE MODE, the kill leader, moving lives,
+    eliminations and refill, and the clock in its last 10 s.

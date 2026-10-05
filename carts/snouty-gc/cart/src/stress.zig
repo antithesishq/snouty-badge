@@ -19,6 +19,13 @@
 //! +-14 degrees so the list changes every frame. main.zig runs it
 //! instead of `sim.simulate` when `gc_stress` is set (badge-bench
 //! `--poke gc_stress=1`, or the wasm `debug_stress` export).
+//!
+//! M6: placed in a BATTLE arena (`--poke gc_battle=2`) the scene also
+//! runs the battle HUD at its busiest: a `kill -9` line every 90 frames
+//! (the last life of a car every other time: `REAPED` and a second claw),
+//! a STACK SMASH and a CLEAN LANDING on SNOUTY in turn, a rival blinking in
+//! SAFE MODE, the kill leader's ring, lives and eliminations moving, the
+//! refill sweep running and the clock in its last 10 s.
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
@@ -115,8 +122,10 @@ pub fn fill(w: *World, follow: u8) void {
     w.cars[r3].swap_with = @intCast(r5);
     w.cars[r1].heisen = 240;
     me.duck = 600;
-    // M3: GARBAGE COLLECTION's mark on a rival, and the hazards.
-    w.mode = .gc;
+    // M3: GARBAGE COLLECTION's mark on a rival, and the hazards (M6: an
+    // arena keeps its BATTLE rules, so its HUD is the one under stress;
+    // the MARKED outline is drawn all the same).
+    if (w.mode != .battle) w.mode = .gc;
     w.gc.marked = @intCast((follow + 2 + 1) % world.car_count);
     track.hazard_n = 3;
     track.hazard_specs[0] = across(.mover, 200, 18);
@@ -237,6 +246,39 @@ pub fn step(w: *World, follow: u8, frame: u32) void {
         w.gc.marked = tagged;
         weapons.emit(w, .mark, tagged, tagger, @backingInt(world.GcCause.tag), w.cars[tagged].x, w.cars[tagged].y);
     }
+    if (w.mode == .battle) battle_step(w, follow, frame);
+}
+
+/// The battle HUD's stress (M6), after the race scene's step.
+fn battle_step(w: *World, follow: u8, frame: u32) void {
+    const me = &w.cars[follow];
+    const rival: u8 = (follow + 1) % world.car_count;
+    w.battle.leader = rival;
+    w.battle.refill = @intCast(tuning.battle_refill - (frame * 7) % tuning.battle_refill);
+    // The clock sits in its blinking last 10 s, round and round.
+    if (w.battle.limit != 0) w.tick = w.battle.limit -| @as(u32, @intCast(600 - frame % 600));
+    me.kills = @intCast((frame / 90) % 12);
+    me.lives = if (w.battle.lives == 0) 0 else @intCast(1 + (frame / 120) % w.battle.lives);
+    w.cars[rival].kills = me.kills + 1;
+    const safe = &w.cars[(follow + 2) % world.car_count];
+    safe.safe = @intCast(90 - frame % 90);
+    safe.immune = safe.safe;
+    safe.wreck = .none;
+    if (frame % 90 == 30) {
+        const victim: u8 = (follow + 5) % world.car_count;
+        const v = &w.cars[victim];
+        weapons.emit(w, .eliminated, rival, victim, w.cars[rival].kills, v.x, v.y);
+        if ((frame / 90) % 2 == 0) {
+            const at = ahead(120, -26);
+            weapons.emit(w, .out, victim, 3, 0, at[0], at[1]);
+        }
+    }
+    if (frame % 60 == 10) {
+        const under: u8 = (follow + 1) % world.car_count;
+        const v = &w.cars[under];
+        weapons.emit(w, .stack_smash, follow, under, 40, v.x, v.y);
+    }
+    if (frame % 60 == 40) weapons.emit(w, .clean_landing, follow, me.burst_charges, 0, me.x, me.y);
 }
 
 fn flasher_index(follow: u8) u8 {

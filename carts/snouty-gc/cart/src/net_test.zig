@@ -13,6 +13,8 @@ const ai = @import("ai.zig");
 const net = @import("net.zig");
 const racers = @import("racers.zig");
 const gc_mode = @import("gc_mode.zig");
+const tuning = @import("tuning.zig");
+const battle_text = @import("battle_text.zig");
 
 const World = world.World;
 
@@ -196,6 +198,11 @@ const Badge = struct {
         if (r % 89 == 0) in.select = true;
         if (r % 113 == 0) in.left = !in.left;
         if (b.press_start_at != 0 and b.frames >= b.press_start_at and b.frames < b.press_start_at + 3) in.start = true;
+        // Start with a random Select tap is the OS chord: `submit` clears
+        // both, so a held Start would show two edges (pause, unpause).
+        // A player pausing does not press Select with it (M6: the v1 seeds
+        // hit this in the RESUME test).
+        if (in.start) in.select = false;
         return in.byte();
     }
 };
@@ -352,7 +359,14 @@ const Duo = struct {
             b.pause_offs += 1;
         }
         if (n.ls.tick <= max_ticks) logs[b.side][n.ls.tick] = net.world_hash(&b.w);
-        if (b.mutate_at != 0 and n.ls.tick == b.mutate_at) b.w.cars[3].x +%= 1 << 16;
+        if (b.mutate_at != 0 and n.ls.tick == b.mutate_at) {
+            // Car 3 a pixel over, and the PRNG: a hulk's respawn puts the
+            // car back on its pad, which can erase the pixel before the
+            // next check (M6: a v1 seed did), the PRNG change stays.
+            b.w.cars[3].x +%= 1 << 16;
+            b.w.rng ^= 0x10;
+            if (b.w.rng == 0) b.w.rng = 1;
+        }
     }
 
     fn both(d: *Duo, s: net.State) bool {
@@ -449,11 +463,17 @@ fn synced_race(opts: Opts, tally: *Tally) !void {
     try std.testing.expectEqual(net.State.racing, d.b[1].net.state());
     // Both humans drove (their cars are human slots) and finished: a lap
     // race when both crossed the line; GARBAGE COLLECTION when one car is
-    // left (the survivor finished; a collected human is out, L4).
+    // left (the survivor finished; a collected human is out, L4); BATTLE
+    // (M6) when the round ended by lives or time (a human still in
+    // finished with it, one out of lives has its `out` bit).
     for (&d.b) |*b| {
         const c = &b.w.cars[b.net.local_car()];
         try std.testing.expectEqual(@as(u8, b.net.local_slot()), c.human);
-        if (b.w.mode == .gc) {
+        if (b.w.mode == .battle) {
+            try std.testing.expect(b.w.battle.end != .none);
+            const out = b.w.battle.out & (@as(u8, 1) << @intCast(b.net.local_car())) != 0;
+            try std.testing.expect(c.finished != out);
+        } else if (b.w.mode == .gc) {
             try std.testing.expect(b.w.gc.survivor < world.car_count);
             const out = b.w.gc.collected & (@as(u8, 1) << @intCast(b.net.local_car())) != 0;
             try std.testing.expect(c.finished != out);
@@ -511,6 +531,19 @@ test "wire formats: rules, picks" {
     try std.testing.expect(std.meta.eql(r, net.Rules.decode(r.encode())));
     const r0 = net.Rules{};
     try std.testing.expect(std.meta.eql(r0, net.Rules.decode(r0.encode())));
+    // M6: LINK BATTLE's five bytes, every LIVES and TIME row.
+    for (tuning.battle_lives_opts) |l| for (tuning.battle_minutes_opts) |m| {
+        const rb = net.Rules{ .mode = .battle, .track = 0, .crews = 0, .lives = l, .minutes = m };
+        try std.testing.expect(std.meta.eql(rb, net.Rules.decode(rb.encode())));
+    };
+    // Bytes off the rows decode to the defaults; an unknown mode is a race.
+    const junk = net.Rules.decode(.{ 9, 1, 200, 4, 7 });
+    try std.testing.expectEqual(world.Mode.race, junk.mode);
+    try std.testing.expectEqual(@as(u8, 3), junk.lives);
+    try std.testing.expectEqual(@as(u8, 3), junk.minutes);
+    try std.testing.expectEqual(@as(u8, 7), junk.crews);
+    // The M5.1 byte still round-trips race and GC rules.
+    try std.testing.expect(std.meta.eql(r, net.Rules.decode_v0(r.encode_v0())));
     const p = net.Pick{ .racer = 4, .ready = true };
     try std.testing.expect(std.meta.eql(p, net.Pick.decode(p.encode())));
     try std.testing.expectEqual(net.no_racer, net.Pick.decode((net.Pick{}).encode()).racer);
@@ -642,6 +675,69 @@ test "CREWS 2 and 0: the cars left off the grid stay off, in sync to the end" {
     try synced_race(.{ .seed = 62, .kind = .straight, .picks = .{ racers.botnet, racers.snouty }, .rules = .{ .crews = 0 } }, &tally);
     try synced_race(.{ .seed = 63, .picks = .{ racers.sysadmin, racers.rootkit }, .rules = .{ .mode = .gc, .track = 1, .crews = 2 } }, &tally);
     tally.print("lockstep, CREWS 2 / 0 / GC with 2");
+}
+
+// ---- M6: LINK BATTLE ----------------------------------------------------------------
+
+/// A LINK BATTLE's rules for seed `k`: every LIVES row (1, 3, 5, 9, INF),
+/// CREWS 4 / 2 / 0, TIME 2 (INF: 2), on the arena.
+fn battle_rules(k: u32) net.Rules {
+    const lives = tuning.battle_lives_opts[k % tuning.battle_lives_opts.len];
+    return .{ .mode = .battle, .track = 0, .crews = battle_text.crew_steps_link[k % 3], .lives = lives, .minutes = 2 };
+}
+
+test "LINK BATTLE: the five rules bytes reach the guest, both badges build the same round" {
+    var d: Duo = undefined;
+    const rules = net.Rules{ .mode = .battle, .track = 0, .crews = 2, .lives = 9, .minutes = 5 };
+    d.init(.{ .seed = 71, .loss_ppm = 10_000, .rules = rules, .picks = .{ racers.kiddie, racers.botnet } });
+    try d.run(20_000_000, {}, done_started);
+    for (&d.b) |*b| {
+        try std.testing.expect(std.meta.eql(rules, b.net.race().rules));
+        const s = b.net.world_setup();
+        try std.testing.expectEqual(world.Mode.battle, s.mode);
+        try std.testing.expectEqual(@as(u8, 9), s.lives);
+        try std.testing.expectEqual(@as(u8, 5), s.minutes);
+        try std.testing.expectEqual(@as(u8, 9), b.w.battle.lives);
+        try std.testing.expectEqual(@as(u16, 5 * tuning.battle_minute), b.w.battle.limit);
+        // Two humans and two AI cars on the arena's pads.
+        try std.testing.expectEqual(@as(u8, 4), gc_mode.active_count(&b.w));
+    }
+    try std.testing.expect(std.meta.eql(d.b[0].net.world_setup(), d.b[1].net.world_setup()));
+    // In step from the first tick (the logs hold both badges' hashes).
+    try d.run(60_000_000, @as(u32, 900), done_tick);
+    _ = try expect_logs_equal(&d);
+}
+
+test "LINK BATTLE: 6 seeded rounds stay in sync every tick to their end" {
+    var tally: Tally = .{};
+    var seed: u32 = 201;
+    while (seed <= 206) : (seed += 1) {
+        const opts: Opts = .{
+            .seed = seed,
+            .kind = if (seed % 2 == 0) .straight else .crossed,
+            .picks = picks_for(seed),
+            .rules = battle_rules(seed),
+            .loop_until = if (seed % 3 == 0) 14_000 else 0,
+        };
+        try synced_race(opts, &tally);
+    }
+    tally.print("lockstep, LINK BATTLE, clean cable");
+}
+
+test "LINK BATTLE: 6 seeded rounds with 1% byte loss stay in sync to their end" {
+    var tally: Tally = .{};
+    var seed: u32 = 301;
+    while (seed <= 306) : (seed += 1) {
+        try synced_race(.{
+            .seed = seed,
+            .kind = if (seed % 2 == 0) .straight else .crossed,
+            .picks = picks_for(seed),
+            .rules = battle_rules(seed + 2),
+            .loss_ppm = 10_000,
+            .loop_until = 14_000,
+        }, &tally);
+    }
+    tally.print("lockstep, LINK BATTLE, 1% byte loss");
 }
 
 test "unplugging mid-race: both sides hand the other car to the AI and finish" {

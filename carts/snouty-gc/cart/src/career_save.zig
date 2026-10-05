@@ -12,7 +12,7 @@
 //!   in the simulator and in wasm builds it is false and nothing here shows
 //!   or runs: the cart is the one without saves, byte for byte in its
 //!   screens. With saves: `watchExit()`, then the stored career is read and
-//!   checked (`decode`) into `staged`.
+//!   checked (`decode`) and kept in `blob`.
 //! - Save points (`request`): the race booked (`finish_race`, results to
 //!   standings), the garage left for the menu (B), the end card dismissed
 //!   (the circuit is over: the key is deleted), and the OS's "Exit cart"
@@ -300,14 +300,14 @@ pub const Saver = struct {
     probed: bool = false,
     /// `save.supported()`: the OS stores saves. False: no save UI at all.
     on: bool = false,
+    /// `.career`: `blob` holds the stored career (CONTINUE CAREER decodes
+    /// it; no second copy of a Career is kept).
     found: Found = .none,
-    /// The career the probe read (CONTINUE CAREER loads it).
-    staged: career.Career = career.Career.init(0),
     /// The store holds our key (read at the probe or written since).
     stored: bool = false,
-    /// The bytes the store holds for the key (`last_ok`: they are a career
-    /// of this build), for "changed since the last save".
-    last: [blob_len]u8 = @splat(0),
+    /// FNV-1a of the blob the store holds (`last_ok`: a career of this
+    /// build), for "changed since the last save" without a copy.
+    last_sum: u32 = 0,
     last_ok: bool = false,
     want: Want = .none,
     /// The SAVING mark is in this frame; the write comes next update.
@@ -348,12 +348,12 @@ pub const Saver = struct {
             s.found = .old;
             return;
         }
-        s.staged = decode(s.blob[0..n]) catch |e| {
+        _ = decode(s.blob[0..n]) catch |e| {
             s.found = if (e == error.Old) .old else .damaged;
             return;
         };
         s.found = .career;
-        s.last = s.blob;
+        s.last_sum = fnv1a(&s.blob);
         s.last_ok = true;
     }
 
@@ -370,17 +370,21 @@ pub const Saver = struct {
         return session or s.found == .career;
     }
 
-    /// CONTINUE CAREER from the store: the staged career (the session's,
-    /// if any, is newer and main.zig keeps it).
-    pub fn take_staged(s: *Saver) career.Career {
-        s.found = .none;
-        return s.staged;
+    /// The stored career the probe found (`found == .career`), decoded
+    /// from `blob`; a fresh one otherwise. CONTINUE CAREER loads it (a
+    /// career in the session is newer and main.zig keeps that).
+    pub fn stored_career(s: *const Saver) career.Career {
+        if (s.found != .career) return career.Career.init(0);
+        return decode(&s.blob) catch career.Career.init(0);
     }
 
-    /// The career differs from what the store holds.
+    /// The career differs from what the store holds. Encodes it into
+    /// `blob`: from here on the session's career is the one that counts
+    /// (the chooser has continued or replaced the stored one).
     pub fn dirty(s: *Saver, c: *const career.Career) bool {
+        s.found = .none;
         encode(c, &s.blob);
-        return !(s.last_ok and std.mem.eql(u8, &s.last, &s.blob));
+        return !(s.last_ok and s.last_sum == fnv1a(&s.blob));
     }
 
     /// A save point: the SAVING mark goes into this frame and the write
@@ -461,7 +465,7 @@ pub const Saver = struct {
         s.writes += 1;
         s.want = .none;
         s.stored = true;
-        s.last = s.blob;
+        s.last_sum = fnv1a(&s.blob);
         s.last_ok = true;
     }
 

@@ -173,7 +173,7 @@ test "round trip through the store mid-career: booked races, a league closed, pu
     t.boot(1, true);
     try expectEqual(csave.Found.career, t.found);
     try expect(t.offers(false) and t.can_continue(false));
-    const back = t.take_staged();
+    const back = t.stored_career();
     try same(&c, &back);
     try expectEqual(csave.Resume.garage, csave.resume_at(&back));
     // Nothing changed since: B out of the garage writes nothing.
@@ -195,7 +195,7 @@ test "a career saved after its league's third race resumes on the standings, and
     save.fake.reboot();
     var t = csave.Saver{};
     t.probe();
-    var back = t.take_staged();
+    var back = t.stored_career();
     try expectEqual(csave.Resume.standings, csave.resume_at(&back));
     // The league closed after the reload is the league closed before it.
     var before = c;
@@ -249,7 +249,7 @@ test "an incompatible save is refused: another version, guard or length is old; 
     ch.enter();
     var buf: [18]u8 = undefined;
     try expectEqual(@as(usize, 1), ch.rows(false).len);
-    try std.testing.expectEqualStrings("OLD SAVE: UNUSABLE", ch.hint(false, s.found, &s.staged, &buf));
+    try std.testing.expectEqualStrings("OLD SAVE: UNUSABLE", ch.hint(false, s.found, &c, &buf));
     try expectEqual(csave.Pick.new_career, ch.update(false, .{ .a = true }));
     var fresh = career.Career.init(racers.rootkit);
     s.request(&fresh, .menu);
@@ -258,7 +258,8 @@ test "an incompatible save is refused: another version, guard or length is old; 
     save.fake.reboot();
     t.probe();
     try expectEqual(csave.Found.career, t.found);
-    try same(&fresh, &t.staged);
+    const st = t.stored_career();
+    try same(&fresh, &st);
 
     // A blob the store's CRC rejects reads as damaged.
     save.fake.reset();
@@ -267,7 +268,7 @@ test "an incompatible save is refused: another version, guard or length is old; 
     var u = csave.Saver{};
     u.probe();
     try expectEqual(csave.Found.damaged, u.found);
-    try std.testing.expectEqualStrings("SAVE IS DAMAGED", ch.hint(false, u.found, &u.staged, &buf));
+    try std.testing.expectEqualStrings("SAVE IS DAMAGED", ch.hint(false, u.found, &fresh, &buf));
 }
 
 test "stock firmware: no probe answer, no UI, no request, no exit hook" {
@@ -308,11 +309,13 @@ test "the exit hook: saves a changed career, then exitReady; nothing to save sti
     save.fake.reboot();
     var t = csave.Saver{};
     t.probe();
-    try same(&c, &t.staged);
+    const st = t.stored_career();
+    try same(&c, &st);
 
     // Unchanged career: no write, still ready.
     save.fake.setExitRequested();
-    top(&t, &t.staged, true, no_link);
+    const again = t.stored_career();
+    top(&t, &again, true, no_link);
     try expectEqual(@as(u32, 2), save.fake.exitWord());
     try expectEqual(@as(u32, 1), save.fake.commits());
 
