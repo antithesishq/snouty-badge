@@ -1,0 +1,9 @@
+# Patches basic.py applies to reference/oregon.bas before running it.
+# Format: one replacement BASIC line per entry (same line number replaces
+# the listing's line). Lines starting with # and blank lines are ignored.
+#
+# The only patch: the transcription dropped a quote at the start of line
+# 620 (it reads PRINT ""RETURN"" KEY, ...). The FreeBASIC copy and the
+# 1978 printing have the intended text, which prints
+#   "RETURN" KEY, THE BETTER LUCK YOU'LL HAVE WITH YOUR GUN.
+620 PRINT """RETURN"" KEY, THE BETTER LUCK YOU'LL HAVE WITH YOUR GUN."
