@@ -2041,6 +2041,128 @@ PLAN's Track B list is done. Decisions L80-L93.
   the LINK BATTLE and version checks.
 
 
+## M7 Track packs
+
+Goal: SPEC 19 and 16 M7 (decision 15). Track packs, `NAME.GCP` files on
+the badge drive, each a league with 1 to 4 race tracks and at most one
+BATTLE arena, show after the built-in tracks in QUICK RACE's and GARBAGE
+COLLECTION's track rows and after The Sandbox in BATTLE's arena row, and
+race and battle from the drive, in a link race too. Then the first two
+packs, **Dead Mall** (19.7, its arena The Food Court) and **The Boneyard**
+(19.5, Hangar 18). Lead: the M7 coordinator. Branch base: `gc/present` =
+origin/main 894b1b76 (M0 to M6 merged, tag `snouty-gc/m6`).
+
+RAM is the constraint: 25,908 B free at M6, so SPEC 19.2's separate 32 KB
+slot does not fit. A pack loads into the slots the built-in leagues use
+(the 8 KB tile slot, the 12 KB horizon slot, the 16 KB map buffer: one
+floor-loop path) plus one 8 KB pack slot for the rest (palette,
+attributes, centerline, feat, props records, the arena blob and the props
+cells the track places). Packs are 128 tiles; 256-tile sets are refused.
+
+### M7.0 Interface (Track A, committed before Track B's packs land)
+
+- **The format**: `docs/PACKS.md` (the binary layout version 1, the
+  source layout, the tile slots, the props sheet, the hazards, the checks,
+  the RAM budget, how to copy a pack onto a badge) and
+  `cart/src/pack_format.zig` (`version` 1, the header, league block and
+  track records as `Directory`, `parse`, `budget`, `Refusal` and its
+  menu lines, `slot_bytes`).
+- **`tools/build_pack.py DIR`**: packages a pack directory (`pack.toml`
+  plus the built-in-format `.bin` files build_tracks.py / build_arena.py
+  write, plus `props.png`) into `<file>.GCP`, checking every section as
+  the cart does; `--info FILE` prints a pack. `tools/build_arena.py`'s
+  `build` takes a pack's `Arena` subclass, league and name (the Sandbox's
+  output is unchanged).
+- **Tiles**: the shared 128-tile layout of `tools/leagues.py`; attribute 12
+  `crust` and tiles 121 (intact), 122 (cracked), 123 (broken) pinned;
+  28..31, 89..91, 124..127 free for a pack's own floors.
+- **Props**: one sheet per pack, up to 16 cells of one size (even width
+  <= 32, height <= 48), 15 colours plus the key; records `[cell, x, y,
+  radius]` per track (<= 24; radius > 0 is solid). A mover may use a props
+  cell as its sprite (feat byte 0 bits 4..7 = cell + 1).
+- **Hazard kinds**: blast (vent), mover (Sweeper), crust (new), slick
+  (attribute coolant), pit (attribute off); turret stays reserved and a
+  pack with one is refused (`NEEDS NEWER CART`).
+- **The test pack** `cart/src/gen/packs/TEST.GCP` (`tools/test_pack/make.py`):
+  the Dumps art with LANDFILL TEST (Landfill Loop with props), CRUST LOOP
+  (a crust band across the top straight, the Sweeper drawn with a props
+  cell) and TEST SANDBOX; 27.5 KB.
+
+### Track A: format, loader, engine (lead's agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present)
+
+Owns `pack_format.zig`, new `pack.zig` (drive scan, background CRC,
+loader into the slots), new `pack_ui.zig` (the picker rows' entries and
+lines), `track.zig`, `world.zig`, `sim.zig`, `hazards.zig` (crust),
+`ai.zig`, `sprites.zig` (props), `net.zig`, `net_test.zig`,
+`net_compat_test.zig` (pack matching), `select.zig` and `battle_ui.zig`
+(the track and arena rows' pack entries), small hooks in `main.zig`
+(kept localized: another session adds career saves there), `build.zig`
+(romfs, `-Dgc-pack`), `tools/build_pack.py`, `tools/build_tracks.py`,
+`tools/build_arena.py`, `tools/leagues.py`, `tools/test_pack/**`,
+`cart/src/gen/packs/**`, `pack_test.zig` (registered in `host_tests.zig`),
+`docs/PACKS.md`, `tools/check.sh`, the bench toml and drive image, PLAN
+"M7 status" Track A.
+
+1. **Loader**: `.GCP` files found on the drive by `romfs` when the menus
+   open (header and directory, then the CRC a few KB a frame); loaded at
+   race start into the tile and horizon slots, the map buffer and the pack
+   slot; a pack track is `track.pack_track`, an arena `track.pack_arena`,
+   through the same `League`/`Track` slices as a built-in.
+2. **Refusals** with a message, never a crash (`PACK DAMAGED`, `NOT A
+   PACK`, `PACK TOO NEW`, `PACK TOO BIG`, `NEEDS NEWER CART`); host tests
+   fuzz the parser and loader with truncated and bit-flipped packs.
+3. **Props**: billboards through the cars' scaled blit and depth list
+   (under the 64-object cap), solid ones as walls in the sim.
+4. **Breakable crust** in the sim (`hazards.zig`): a region cracks on the
+   first touch, breaks `warn` ticks later, stays a pit for `period` ticks.
+5. **Picker**: packs after the built-in tracks in the QUICK RACE and GC
+   track rows and after The Sandbox in BATTLE's arena row; CIRCUIT stays
+   built-in (L-question).
+6. **Link matching**: the rules carry the pack (name and CRC); the host
+   cannot pick a pack its partner lacks (`PARTNER LACKS PACK`). The wire
+   change, if any, bumps `net.Game.version` with the compat tests kept
+   honest; `lib/lockstep.zig` is not edited.
+7. **Simulator and host**: `-Dgc-pack=FILE` embeds one pack in the wasm
+   as its drive; host tests read TEST.GCP and drive images through
+   `romfs`. A virtual-cable link race on the test pack stays in sync.
+8. **Bench**: a pack track with props and a stress scene under 8 ms worst
+   (calibrated, plain and `--lcd`), from a drive image.
+
+### Track B: pack content (Opus agent, worktree /home/exedev/snouty-badge-gc-packs, branch gc/packs)
+
+Owns `tools/packs/**` (the packs' generators: a `LEAGUES` entry per pack
+registered at run time, the `.track` sources, the arenas as
+`build_arena.Arena` subclasses, the art painters), `assets/packs/**` (each
+pack's directory: `pack.toml`, the `.bin` files, `props.png`, the built
+`.GCP`), the pack content tests (`tools/packs/test_*.py`, and
+`cart/src/pack_content_test.zig`, registered by `pack_test.zig`), the
+pack previews under `docs/packs/`, and PLAN "M7 status" Track B. It does
+not edit build_tracks.py, build_arena.py or leagues.py: generalisations
+it needs are requests to Track A.
+
+1. **Dead Mall** (SPEC 19.7): palette, tileset, horizon, props; Anchor
+   Store, Food Court, Parking Structure; the arena The Food Court (19.9).
+2. **The Boneyard** (19.5): Mothball Mile, Wing Row, Reentry Field; the
+   arena Hangar 18.
+3. Each track passes build_tracks.py's validator and build_pack.py; each
+   is completable by the autopilot and every arena's hunters score
+   eliminations (Track A's loader in the host tests).
+
+### M7 gate
+
+`tools/check.sh` PASS at the merged head; the four pinned race scripts
+and the seeded races replay unchanged; the built-in tracks race with no
+pack on the drive; the test pack and both content packs race and battle
+from a drive image (host tests, preview, bench); corrupt, foreign,
+truncated, too-new and too-big packs are refused with their message (the
+fuzz tests); a link race on a pack stays in sync on the virtual cable, a
+partner without the pack sees `PARTNER LACKS PACK`; a pack track's bench
+and stress worst under 8 ms; RAM free reported (25,908 B at M6);
+deferred questions from L94.
+
+### M7 status
+
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -2772,3 +2894,28 @@ L93. **Arena stress** (`--poke gc_battle=2`, `debug_battle_stress`): the
     one a last life with its claw), a STACK SMASH and a CLEAN LANDING on
     SNOUTY in turn, a rival in SAFE MODE, the kill leader, moving lives,
     eliminations and refill, and the clock in its last 10 s.
+L94. **Pack RAM**: no separate 32 KB slot (25,908 B free at M6). A pack
+    loads into the built-in slots (tiles, horizon, map) plus one 8 KB pack
+    slot; per track the arena blob plus the props cells it places must fit
+    5,792 B (`pack_format.slot_free`). 128-tile packs only: a 256-tile set
+    would need another 8 KB and is refused.
+L95. **Pack source** (the lead's call, 2026-10-05): a pack directory holds
+    the built-in `.bin` set (build_tracks.py's rasterizer with a per-pack
+    league) plus `props.png` and `pack.toml`; build_pack.py only packages
+    and checks. No new track source format.
+L96. **Crust**: tiles 121 / 122 / 123 (intact, cracked, broken), attribute
+    12. A crust feat record is a whole-tile rectangle; the first touch of a
+    car on the ground cracks it, it breaks `warn` ticks later (default 12)
+    and stays broken `period` ticks (300); a car on the ground on a broken
+    crust tile falls as into a pit. The cart swaps the three tiles in its
+    map copy for the look; the sim reads only the attribute and the World.
+L97. **Turrets** stay reserved: a pack with a turret record is refused
+    (`NEEDS NEWER CART`) instead of racing with a dead turret.
+L98. **Props**: one sheet per pack, cells of one size (even width <= 32,
+    height <= 48), <= 16 cells, 15 colours and a key; <= 24 props per track;
+    radius > 0 is a solid circle. A mover's sprite may be a props cell
+    (feat byte 0 bits 4..7 = cell + 1), so packs need no hazards sheet.
+L99. **CRC** covers bytes 64 to the end (SPEC 19.1's "CRC32 of the rest");
+    the header is checked field by field (reserved bytes zero, the size
+    field equal to the directory entry's), and names show unknown bytes as
+    `?`. Packs are capped at 128 KB and the picker lists at most 8.

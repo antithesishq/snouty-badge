@@ -30,4 +30,6 @@ test {
     _ = @import("hunt.zig");
     _ = @import("battle_test.zig");
     _ = @import("battle_ui_test.zig");
+    // M7 track packs: every pack module's tests (pack_test.zig imports them).
+    _ = @import("pack_test.zig");
 }

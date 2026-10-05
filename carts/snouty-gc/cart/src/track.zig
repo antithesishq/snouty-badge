@@ -50,8 +50,15 @@ pub const Attr = enum(u8) {
     /// M6, the BATTLE arena: a one-way ramp of a race ramp's air time (the
     /// gap jumps and the wall kickers).
     jump = 11,
+    /// M7 (track packs, docs/PACKS.md): breakable crust, tiles
+    /// `crust_tile` .. + 2. Drivable until its region (a crust hazard)
+    /// breaks; then a car on the ground over it falls, as into a pit.
+    crust = 12,
     _,
 };
+
+/// The crust tiles (intact, cracked, broken; all attribute `crust`).
+pub const crust_tile: u8 = 121;
 
 /// Tile indices of the arena's one-way ramps (tools/leagues.py KICKER,
 /// JUMP): base + direction (0 E, 1 S, 2 W, 3 N).

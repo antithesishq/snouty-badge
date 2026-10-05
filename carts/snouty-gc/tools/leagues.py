@@ -25,9 +25,11 @@ NTILES = 128        # tiles per league (SPEC 13.2): 128 x 64 bytes = 8 KB
 # overclock pad) is the kicker, a long one-way ramp, and 11 the jump, a
 # one-way ramp of a race ramp's air time; both launch only a car moving the
 # way the tile faces (track.zig Attr, tuning.kicker_ticks).
-A_OFF, A_SURF, A_WALL, A_KICKER, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2, A_JUMP = range(12)
-ATTR_NAMES = ["off", "surface", "wall", "kicker", "coolant", "bay", "vent", "ramp", "start", "sector1", "sector2", "jump"]
-DRIVABLE = {A_SURF, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2, A_KICKER, A_JUMP}
+# M7 (track packs, docs/PACKS.md): 12 is breakable crust, drivable until
+# its region breaks, then a pit (track.zig Attr.crust; tiles CRUST..+2).
+A_OFF, A_SURF, A_WALL, A_KICKER, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2, A_JUMP, A_CRUST = range(13)
+ATTR_NAMES = ["off", "surface", "wall", "kicker", "coolant", "bay", "vent", "ramp", "start", "sector1", "sector2", "jump", "crust"]
+DRIVABLE = {A_SURF, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2, A_KICKER, A_JUMP, A_CRUST}
 # Centerline flag bits, also the segment feature names (`wall` is implied:
 # a segment without `open` has walls; the bit is set in the centerline).
 FLAG_BITS = {"wall": 0, "open": 1, "coolant": 3, "bay": 4, "vent": 5, "ramp": 6, "hill": 7}
@@ -56,6 +58,13 @@ SWEEP_GATE = 87     # + axis: its hazard-striped gate in the wall (attr wall)
 PIPE = 89           # inside an outflow pipe: steel plate (attr surface)
 PIPE_RIB = 90       # + axis: a pipe rib across the travel (attr surface)
 PIT = 120           # the pit beyond an open edge (attr off): void with a faint glint
+# M7 track packs (docs/PACKS.md): breakable crust, pinned for every pack,
+# attr crust: CRUST intact, CRUST + 1 cracked (about to break), CRUST + 2
+# broken (looks like a pit). The cart swaps the three in its map copy as a
+# region's state changes; the sim reads only the attribute and the World.
+CRUST = 121
+# Free for a pack's own floors (attr of its choice, docs/PACKS.md): 28..31,
+# 89..91 (the Runoff's pipe floor in the built-ins), 124..127.
 # M6 BATTLE arena pieces (the Dumps only; tools/build_arena.py; the race maps
 # never use these indices).
 PAD_SPAWN = 23      # + direction (0 E, 1 S, 2 W, 3 N): a spawn pad, a chevron facing in (attr surface)
