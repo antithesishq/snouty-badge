@@ -563,11 +563,11 @@ what was built.
 - **Lobby.** PLUG IN THE CABLE while searching, WRONG CART: and the
   partner's cart name, else the rules. The host (the higher link nonce,
   input slot 0) sets ARENA (Server Room, Build Farm), FRAGS (5, 10, 15,
-  20) and BUGS (on, off) with Up/Down and Left/Right; the guest sees
-  them live. A toggles ready on both; with both ready the host's Start
+  20), BUGS (on, off) and RADAR (on, off; M9.3) with Up/Down and
+  Left/Right; the guest sees them live. A toggles ready on both; with both ready the host's Start
   goes. B goes back to the title. The rules travel as one byte
-  (`match.Rules`: arena bits 0-1, frag index 2-3, bugs bit 4); the seed
-  comes from the lockstep.
+  (`match.Rules`: arena bits 0-1, frag index 2-3, bugs bit 4, bit 6 set =
+  RADAR OFF); the seed comes from the lockstep.
 - **The World.** `match.World` = the campaign's `GameState` plus
   `state.Match` (both players, frags, deaths, shots, hits, death views,
   hurt flashes, who hit whom last, the last kill, the rules, per-pickup
@@ -615,6 +615,16 @@ what was built.
   PLAYER 1 (YOU DELETED PLAYER 2, DELETED BY PLAYER 1, SELF-DELETED -1,
   EATEN BY BUGS, ...). M9.2: the weapon in a dying player's hand stays
   on the floor with its ammo for 30 s for the other to take.
+- **Motion tracker (M9.3, RADAR ON by default).** A 23 px disc in the
+  view's bottom-left corner, up = the way you face, 1 px a cell, 11
+  cells of range. A living rival shows only if it moved or fired in the
+  last 2 s; standing still (turning included) hides you. A pulse grows
+  from the centre once a second, and where it passes a loud rival a
+  blip (its slot or team colour) appears and stays put, fading over the
+  second. Render-only (`radar.zig` keeps the memory once per stepped
+  tick, `render/tracker.zig` draws): the World, its hash and
+  `match.G.version` are unchanged, and the default rules byte is
+  M9.2's, so a 9.2 badge plays the same match without the tracker.
 - **Off in a match.** Rewind, keyframes and the meter, the attract demo,
   level progression.
 - **End.** The results: YOU WIN / YOU LOSE / DRAW, frags, shots and
@@ -650,8 +660,8 @@ lockstep (`lib/lockstep_n.zig`, root `docs/LOCKSTEP_N.md`; game id
   "SNOUTY" in the roster (no text entry); the slot colours and numbers
   tell players apart. DEATHMATCH (section 19) is unchanged beside it.
 - **Lobby.** One screen: PARTY, HOST (on the host), n/16; the rules on
-  three lines (ARENA; FRAGS and BUGS; TEAMS and your team) plus DELAY on
-  the host; the roster in two columns of eight in id order (slot colour,
+  four lines (ARENA; FRAGS and BUGS; TEAMS and your team; RADAR, and the
+  host's DELAY); the roster in two columns of eight in id order (slot colour,
   or the team's, the name, a green tick when ready; your row
   highlighted, a player on another cart version in Coral); a status line
   (A: READY, READY: HOST STARTS, START: GO!, n READY, NEED 2, NEED 2
@@ -663,14 +673,17 @@ lockstep (`lib/lockstep_n.zig`, root `docs/LOCKSTEP_N.md`; game id
   Hall beyond) until the host changes it, and turns Coral when the room
   holds more players than the arena was built for. DELAY is AUTO (the
   lockstep's `suggested_delay`, from everyone's round trips to the
-  relay; 3 ticks on one laptop) or 2, 3, 4, 6, 8, 12 ticks, with the
-  suggestion shown beside a manual value. In a team match each player
+  relay; 3 ticks on one laptop) or 2, 3, 4, 6, 8, 12 ticks (shown as
+  AUTO n or DELAY n), with the suggestion on the hint line (AUTO: n)
+  while the cursor is on a manual value. RADAR is section 19's motion
+  tracker. In a team match each player
   picks a team with Left/Right before readying (default: slot mod team
   count). A toggles ready; START: GO! needs two ready players, on two
   teams in a team match (`match.GN.picks_ok`). A badge that joins while
   the room races waits with MATCH IN PROGRESS and is in the next GO.
 - **Wire.** Rules are 2 bytes (`match.Rules.encode2`: byte 0 is M7's
-  byte plus bit 5 for 25 frags; byte 1 the team mode). Each player's
+  byte plus bit 5 for 25 frags and bit 6 for RADAR OFF; byte 1 the team
+  mode). Each player's
   pick is 0 in FFA, else its team + 1; GO's picks give the teams
   (`match.GN.team_of`). The input byte is M7's. The delay travels in
   GO, default 3.

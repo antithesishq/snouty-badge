@@ -24,6 +24,7 @@ const view = @import("render/view.zig");
 const sprites = @import("render/sprites.zig");
 const weapon = @import("render/weapon.zig");
 const hud = @import("render/hud.zig");
+const tracker = @import("render/tracker.zig");
 const fx = @import("render/fx.zig");
 const arsenal = @import("arsenal.zig");
 const audio = @import("audio.zig");
@@ -102,6 +103,7 @@ pub fn enter() void {
 pub fn start_local(r: match.Rules, bots: [2]bool, seed: u32) void {
     local = bots;
     match.init_rules(&world, r, seed);
+    tracker.on = r.radar;
     begin_match();
 }
 
@@ -110,6 +112,7 @@ fn begin_match() void {
     desynced = false;
     results_frames = 0;
     seen_tick = 0xFFFF_FFFF;
+    tracker.reset();
     var shown = shown_state();
     hud.set_rewinding(false);
     hud.meter_override = null;
@@ -144,8 +147,8 @@ fn lobby_frame(pad: Buttons, t0: u64) bool {
     if (fake_lobby == null and net_up) {
         if (net.state() == .lobby) {
             if (net.role == .host) {
-                if (pressed(pad, "up")) cursor = if (cursor == 0) 2 else cursor - 1;
-                if (pressed(pad, "down")) cursor = (cursor + 1) % 3;
+                if (pressed(pad, "up")) cursor = if (cursor == 0) rule_rows - 1 else cursor - 1;
+                if (pressed(pad, "down")) cursor = (cursor + 1) % rule_rows;
                 if (pressed(pad, "left") or pressed(pad, "right")) change_rule(pressed(pad, "right"));
                 net.set_rules(.{rules.encode()});
             }
@@ -162,6 +165,7 @@ fn lobby_frame(pad: Buttons, t0: u64) bool {
             view_slot = net.local_slot();
             local = null;
             match.init_rules(&world, r, net.seed());
+            tracker.on = r.radar;
             begin_match();
         }
     }
@@ -174,11 +178,15 @@ fn lobby_frame(pad: Buttons, t0: u64) bool {
     return true;
 }
 
+/// The host's rules rows: arena, frags, bugs, radar (M9.3).
+const rule_rows = 4;
+
 fn change_rule(up: bool) void {
     switch (cursor) {
         0 => rules.arena = @intCast((rules.arena + 1) % levels.arena_indices.len),
         1 => rules.frags = if (up) (rules.frags + 1) & 3 else (rules.frags + 3) & 3,
-        else => rules.bugs = !rules.bugs,
+        2 => rules.bugs = !rules.bugs,
+        else => rules.radar = !rules.radar,
     }
 }
 
@@ -224,24 +232,25 @@ pub fn draw_lobby(v: LobbyView) void {
 fn draw_rules(v: LobbyView) void {
     const host = v.role == .host;
     centered(if (host) "YOU: P1, PICK RULES" else "YOU: P2, P1 PICKS", 20, hud.iris);
-    const labels = [3][]const u8{ "ARENA", "FRAGS", "BUGS" };
+    const labels = [rule_rows][]const u8{ "ARENA", "FRAGS", "BUGS", "RADAR" };
     var buf: [16]u8 = undefined;
     for (labels, 0..) |label, i| {
-        const y: i32 = 36 + 12 * @as(i32, @intCast(i));
+        const y: i32 = 34 + 10 * @as(i32, @intCast(i));
         const on = host and cursor == i;
         if (on) cart.text(.{ .str = ">", .x = 2, .y = y, .text_color = hud.coral });
         cart.text(.{ .str = label, .x = 12, .y = y, .text_color = hud.grey });
         const value: []const u8 = if (v.rules) |r| switch (i) {
             0 => levels.arena_names[r.arena],
             1 => fmt(&buf, "{d}", .{r.frag_limit()}),
-            else => if (r.bugs) "ON" else "OFF",
+            2 => if (r.bugs) "ON" else "OFF",
+            else => if (r.radar) "ON" else "OFF",
         } else "...";
         cart.text(.{ .str = value, .x = 64, .y = y, .text_color = if (on) hud.anti_white else hud.grey });
     }
-    cart.text(.{ .str = "YOU", .x = 12, .y = 76, .text_color = hud.grey });
-    cart.text(.{ .str = if (v.ready) "READY" else "NOT READY", .x = 64, .y = 76, .text_color = if (v.ready) hud.green else hud.steel });
-    cart.text(.{ .str = "THEM", .x = 12, .y = 88, .text_color = hud.grey });
-    cart.text(.{ .str = if (v.peer_ready) "READY" else "NOT READY", .x = 64, .y = 88, .text_color = if (v.peer_ready) hud.green else hud.steel });
+    cart.text(.{ .str = "YOU", .x = 12, .y = 78, .text_color = hud.grey });
+    cart.text(.{ .str = if (v.ready) "READY" else "NOT READY", .x = 64, .y = 78, .text_color = if (v.ready) hud.green else hud.steel });
+    cart.text(.{ .str = "THEM", .x = 12, .y = 89, .text_color = hud.grey });
+    cart.text(.{ .str = if (v.peer_ready) "READY" else "NOT READY", .x = 64, .y = 89, .text_color = if (v.peer_ready) hud.green else hud.steel });
     if (host and v.can_go) {
         centered("START: FIGHT", 104, hud.coral);
     } else if (host) {
@@ -325,6 +334,7 @@ fn on_tick() void {
     var shown = shown_state();
     hud.tick(&shown);
     audio.tick(&shown, arena());
+    tracker.tick(&world.m, view_slot, world.gs.tick);
 }
 
 fn leave_match(t0: u64) bool {
@@ -381,6 +391,7 @@ pub fn draw_view(m: *const state.Match, me: usize, shown: *const state.GameState
         weapon.gc_spin = m.gc_spin[me];
         weapon.draw(shown, pad.up or pad.down or (pad.b and (pad.left or pad.right)));
     }
+    tracker.draw(m, me, shown.tick);
     hud.dm_ammo = arsenal.ammo(m, me);
     hud.draw_bar(shown);
     hud.dm_ammo = null;

@@ -382,7 +382,7 @@ bot on player 1), `debug_dm_bots:R` (two bots), `debug_dm_view:S` (show
 player S) and `debug_dm_lobby:K` (the lobby as 1 host, 2 guest,
 3 searching, 4 wrong cart; 0 is the real NO LINK screen). R is the rules
 byte: arena bits 0-1 (0 Server Room, 1 Build Farm), frag index bits 2-3
-(5, 10, 15, 20), bugs bit 4.
+(5, 10, 15, 20), bugs bit 4, bit 6 = RADAR OFF (the motion tracker, M9.3).
 
 ```
 node ../../tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --frames 600 --every 6 \

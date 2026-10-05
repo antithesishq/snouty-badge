@@ -82,8 +82,9 @@ pub const team_modes = [3]u8{ 0, 2, 4 };
 /// sends byte 0 alone, `encode`):
 ///
 /// - byte 0: bits 0-1 arena, bits 2-3 frag index bits 0-1, bit 4 bugs,
-///   bit 5 frag index bit 2 (index 4 = 25 frags; M7 never set it), bits
-///   6-7 zero. For M7's values this is M7's byte unchanged.
+///   bit 5 frag index bit 2 (index 4 = 25 frags; M7 never set it), bit 6
+///   RADAR OFF (M9.3; set = no motion tracker), bit 7 zero. For M7's
+///   values with the tracker on this is M7's byte unchanged.
 /// - byte 1: bits 0-1 team mode index (`team_modes`: 0 FFA, 1 two
 ///   teams, 2 four teams), bits 2-7 reserved (zero).
 ///
@@ -97,9 +98,11 @@ pub const Rules = struct {
     bugs: bool = false,
     /// 0 (FFA), 2 or 4.
     teams: u8 = 0,
+    /// The motion tracker (M9.3, render-only: `render/tracker.zig`).
+    radar: bool = true,
 
     pub fn encode(r: Rules) u8 {
-        return (r.arena & 3) | ((r.frags & 3) << 2) | (@as(u8, @intFromBool(r.bugs)) << 4) | (((r.frags >> 2) & 1) << 5);
+        return (r.arena & 3) | ((r.frags & 3) << 2) | (@as(u8, @intFromBool(r.bugs)) << 4) | (((r.frags >> 2) & 1) << 5) | (@as(u8, @intFromBool(!r.radar)) << 6);
     }
     pub fn decode(b: u8) Rules {
         const a = b & 3;
@@ -108,6 +111,7 @@ pub const Rules = struct {
             .arena = if (a < levels.arena_indices.len) a else 0,
             .frags = @min(f, frag_limits.len - 1),
             .bugs = b & 0x10 != 0,
+            .radar = b & 0x40 == 0,
         };
     }
     pub fn encode2(r: Rules) [2]u8 {

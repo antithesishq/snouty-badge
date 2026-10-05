@@ -263,7 +263,7 @@ pub fn death_view(t: u32) void {
     }
 }
 
-fn halve(p: *cart.Pixel) void {
+pub fn halve(p: *cart.Pixel) void {
     if (cart.is_wasm) {
         p.bits = @byteSwap((@byteSwap(p.bits) >> 1) & 0x7BEF);
     } else {

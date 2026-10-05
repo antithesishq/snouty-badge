@@ -1710,6 +1710,15 @@ desync; the World, its hash and `match.G.version` (2) stay as they are.
   `party.zig`, SPEC 19/20, RUNNING.md previews.
 - Gates: tools/check.sh (test-stein incl. a Rules test, tracker host
   test), bench_m8 under 12 ms, size under 140 KiB, preview PNGs.
+- **Done 2026-10-05.** `radar.zig` (pure, 4 host tests) and
+  `render/tracker.zig`; `fx.halve` made public for the darkened disc.
+  Size (main, PARTY out): .text 128,904 + .data 7,948 = 133.6 KiB
+  (+1.7 KiB; the memory is `undefined` until the match-start reset, so
+  .bss, not .data). The -Dstein_party build is 144.7 KiB, still over the
+  140 KiB budget question from M9. Bench: bench_m8 worst 6.79 ms, bench_m7
+  worst 7.04 ms. Gates: tools/check.sh passes. Preview: docs/preview_m9.3.gif
+  (8 bots on Data Hall). Open: the badge play test (blip size: 2x2 px
+  for half a second, then 1 px).
 
 ## Status
 

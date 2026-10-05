@@ -59,18 +59,19 @@ test "Rules: 2-byte round trip, and byte 0 is M7's byte for M7's values" {
     for (0..levels.arena_indices.len) |a| {
         for (0..match.frag_limits.len) |f| {
             for ([2]bool{ false, true }) |bugs| {
-                for (match.team_modes) |t| {
-                    const r: match.Rules = .{ .arena = @intCast(a), .frags = @intCast(f), .bugs = bugs, .teams = t };
+                for (match.team_modes) |t| for ([2]bool{ false, true }) |radar| {
+                    const r: match.Rules = .{ .arena = @intCast(a), .frags = @intCast(f), .bugs = bugs, .teams = t, .radar = radar };
                     try testing.expectEqual(r, match.Rules.decode2(r.encode2()));
                     const b = r.encode2();
-                    try testing.expectEqual(@as(u8, 0), b[0] & 0xC0);
+                    // M9.3: bit 6 = RADAR OFF, so the default (on) byte is M9.2's.
+                    try testing.expectEqual(@as(u8, if (radar) 0 else 0x40), b[0] & 0xC0);
                     try testing.expectEqual(@as(u8, 0), b[1] & 0xFC);
-                    if (f < 4) {
+                    if (f < 4 and radar) {
                         // M7: arena 0-1, frags 2-3, bugs 4.
                         const m7: u8 = @as(u8, @intCast(a)) | (@as(u8, @intCast(f)) << 2) | (@as(u8, @intFromBool(bugs)) << 4);
                         try testing.expectEqual(m7, b[0]);
                     }
-                }
+                };
             }
         }
     }
@@ -80,6 +81,8 @@ test "Rules: 2-byte round trip, and byte 0 is M7's byte for M7's values" {
     try testing.expect(j.arena < levels.arena_indices.len);
     try testing.expectEqual(@as(u8, 0), j.teams);
     try testing.expectEqual(@as(u8, 25), j.frag_limit());
+    try testing.expect(!j.radar);
+    try testing.expect((match.Rules{}).radar);
 }
 
 test "start positions: spread over the spawns, then the farthest rule" {

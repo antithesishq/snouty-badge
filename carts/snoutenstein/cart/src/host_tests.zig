@@ -20,4 +20,6 @@ test {
     _ = @import("party_net_test.zig");
     // M9: the deathmatch arsenal (weapons, pads, the DM projectile pool).
     _ = @import("arsenal_test.zig");
+    // M9.3: the motion tracker's memory.
+    _ = @import("radar.zig");
 }

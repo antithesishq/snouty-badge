@@ -37,6 +37,7 @@ const sprites = @import("render/sprites.zig");
 const hud = @import("render/hud.zig");
 const scoreboard = @import("render/scoreboard.zig");
 const slots = @import("render/slots.zig");
+const tracker = @import("render/tracker.zig");
 const audio = @import("audio.zig");
 
 const Buttons = state.Buttons;
@@ -139,6 +140,7 @@ pub fn start_local(r: match.Rules, present: u16, seed: u32, pad: bool) void {
     local = true;
     local_pad = pad;
     match.init_party(world, r, present, null, seed);
+    tracker.on = r.radar;
     world.m.bots = present;
     if (pad) world.m.bots &= ~(@as(u16, 1) << @intCast(view_slot & 15));
     begin_match();
@@ -159,6 +161,7 @@ fn begin_match() void {
     desynced = false;
     results_frames = 0;
     seen_tick = 0xFFFF_FFFF;
+    tracker.reset();
     prev_bots = world.m.bots;
     notice_left = 0;
     const shown = shown_state();
@@ -231,14 +234,16 @@ fn my_team(teams: u8, me: u8) u8 {
     return (team_choice orelse me) % teams;
 }
 
-/// Host rows: arena, frags, bugs, teams, your team (team modes), delay.
+/// Host rows: arena, frags, bugs, teams, your team (team modes), radar
+/// (M9.3), delay.
 const row_arena = 0;
 const row_frags = 1;
 const row_bugs = 2;
 const row_teams = 3;
 const row_team = 4;
-const row_delay = 5;
-const rows = 6;
+const row_radar = 5;
+const row_delay = 6;
+const rows = 7;
 
 fn lobby_input(pad: Buttons, t0: u64) void {
     const me = pt.local_slot();
@@ -282,6 +287,7 @@ fn change_rule(up: bool, me: u8) void {
             rules.frags = if (up) (rules.frags + 1) % n else (rules.frags + n - 1) % n;
         },
         row_bugs => rules.bugs = !rules.bugs,
+        row_radar => rules.radar = !rules.radar,
         row_teams => rules.teams = switch (rules.teams) {
             0 => if (up) 2 else 4,
             2 => if (up) 4 else 0,
@@ -303,6 +309,7 @@ fn start_race() void {
     const team = match.GN.team_of(&picks);
     const mask = pt.participants();
     match.GN.start(world, r, mask, &team, pt.seed());
+    tracker.on = match.Rules.decode2(r).radar;
     for (0..max) |i| {
         const n = pt.name(@intCast(i));
         const k = @min(n.len, name_len);
@@ -392,23 +399,21 @@ fn draw_room(v: LobbyView) void {
     // Rules: three lines, two fields on the second and third.
     field(row_arena, 2, 9, "ARENA", if (r) |x| levels.arena_names[x.arena] else "...", v, if (r != null and n > levels.arena_max_players[r.?.arena]) hud.coral else null);
     field(row_frags, 2, 18, "FRAGS", if (r) |x| fmt(buf[0..4], "{d}", .{x.frag_limit()}) else "...", v, null);
-    field(row_bugs, 82, 18, "BUGS", if (r) |x| (if (x.bugs) "ON" else "OFF") else "...", v, null);
+    field(row_bugs, 80, 18, "BUGS", if (r) |x| (if (x.bugs) "ON" else "OFF") else "...", v, null);
     field(row_teams, 2, 27, "TEAMS", if (r) |x| (if (x.teams == 0) "FFA" else if (x.teams == 2) "2" else "4") else "...", v, null);
     if (teams != 0 and v.team[v.me] < 4) {
         const t = v.team[v.me];
         const on = cursor == row_team;
-        if (on) cart.text(.{ .str = ">", .x = 82, .y = 27, .text_color = hud.coral });
-        cart.rect(.{ .x = 92, .y = 28, .width = 6, .height = 6, .fill_color = slots.team_color(t) });
-        cart.text(.{ .str = slots.team_names[t], .x = 101, .y = 27, .text_color = slots.team_color(t) });
+        if (on) cart.text(.{ .str = ">", .x = 80, .y = 27, .text_color = hud.coral });
+        cart.rect(.{ .x = 90, .y = 28, .width = 6, .height = 6, .fill_color = slots.team_color(t) });
+        cart.text(.{ .str = slots.team_names[t], .x = 99, .y = 27, .text_color = slots.team_color(t) });
     }
+    field(row_radar, 2, 36, "RADAR", if (r) |x| (if (x.radar) "ON" else "OFF") else "...", v, null);
+    // The host's DELAY (M9.3: right of RADAR): AUTO n, or DELAY n with
+    // the suggestion on the hint line while the cursor is on it.
     if (v.host) {
-        var dbuf: [8]u8 = undefined;
-        if (v.delay_auto) {
-            field(row_delay, 2, 36, "DELAY", fmt(&dbuf, "AUTO {d}", .{v.delay}), v, null);
-        } else {
-            field(row_delay, 2, 36, "DELAY", fmt(&dbuf, "{d}", .{v.delay}), v, null);
-            hud.text_right(fmt(buf[8..], "AUTO {d}", .{v.suggested}), 159, 36, hud.steel);
-        }
+        var dbuf: [4]u8 = undefined;
+        field(row_delay, 80, 36, if (v.delay_auto) "AUTO" else "DELAY", fmt(&dbuf, "{d}", .{v.delay}), v, null);
     }
     cart.rect(.{ .x = 0, .y = 45, .width = 160, .height = 1, .fill_color = hud.trough });
     draw_roster(v, teams);
@@ -428,7 +433,11 @@ fn draw_room(v: LobbyView) void {
     } else {
         centered("A: READY", 112, hud.anti_white);
     }
-    centered(if (teams != 0 and !me_ready) "<>: TEAM  B: BACK" else "B: BACK", 120, hud.grey);
+    if (v.host and cursor == row_delay and !v.delay_auto) {
+        centered(fmt(&buf, "AUTO: {d}  B: BACK", .{v.suggested}), 120, hud.grey);
+    } else {
+        centered(if (teams != 0 and !me_ready) "<>: TEAM  B: BACK" else "B: BACK", 120, hud.grey);
+    }
 }
 
 /// One rules field: the cursor (host), the label, the value.
@@ -555,6 +564,7 @@ fn on_tick() void {
     const shown = shown_state();
     hud.tick(&shown);
     audio.tick(&shown, arena());
+    tracker.tick(&world.m, view_slot, world.gs.tick);
     // A human left (or was dropped): the notice names the slot.
     const gone = world.m.bots & ~prev_bots;
     prev_bots = world.m.bots;
