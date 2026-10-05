@@ -184,7 +184,7 @@ if want tracks; then
     # B's pack checks (tools/packs/test_packs.py: its generator current).
     gp="$cart/cart/src/gen/packs"
     mkdir -p "$tmp/packs"
-    cp "$gp"/DEADMALL.GCP "$gp"/BONEYARD.GCP "$tmp/packs/" 2>/dev/null
+    cp "$gp"/DEADMALL.GCP "$gp"/BONEYARD.GCP "$gp"/COLDSTOR.GCP "$tmp/packs/" 2>/dev/null
     python3 "$here/test_pack/make.py" --out "$tmp/packs/TEST.GCP" > "$out/packs.txt" 2>&1 || st=1
     for f in TEST.GCP drive_test.img drive_frag.img drive_empty.img drive_packs.img; do
         cmp -s "$tmp/packs/$f" "$gp/$f" || { echo "differs: gen/packs/$f"; st=1; }

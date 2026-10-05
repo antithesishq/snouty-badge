@@ -164,7 +164,7 @@ def drives(data, out_dir):
         # packs (Track B's copies in gen/packs) with the test pack.
         subprocess.run([sys.executable, str(rom), str(out_dir / "drive_empty.img"), "--truncate"],
                        check=True, stdout=subprocess.DEVNULL)
-        shelf = [str(out_dir / f) for f in ("DEADMALL.GCP", "BONEYARD.GCP") if (out_dir / f).exists()]
+        shelf = [str(out_dir / f) for f in ("DEADMALL.GCP", "BONEYARD.GCP", "COLDSTOR.GCP") if (out_dir / f).exists()]
         (t / "TEST.GCP").write_bytes(data)
         subprocess.run([sys.executable, str(rom), str(out_dir / "drive_packs.img"), *shelf, str(t / "TEST.GCP"),
                         "--truncate"], check=True, stdout=subprocess.DEVNULL)

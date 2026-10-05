@@ -32,4 +32,6 @@ test {
     _ = @import("battle_ui_test.zig");
     // M7 track packs: every pack module's tests (pack_test.zig imports them).
     _ = @import("pack_test.zig");
+    // M9 more packs: Cold Storage (Track C).
+    _ = @import("cold_storage_test.zig");
 }

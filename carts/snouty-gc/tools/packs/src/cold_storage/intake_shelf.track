@@ -1,0 +1,53 @@
+# Intake Shelf: Cold Storage, track 1 (SPEC 19.8). Along the ice shelf's
+# edge with the open sea on the left (an open edge: off the road is into
+# the water), on glare ice where the spray has frozen, down through a
+# seawater intake pipe as wide as a tunnel and into the server halls under
+# the snow (a grated walkway, glare ice up the halls' aisle, a steam vent
+# where the warm outflow meets the ice), round the halls, back across a
+# frozen inlet on thin sea ice (crust: the car behind goes through), and
+# up the west side to the line.
+# Control point 0 is the start line; features on point i apply to the
+# segment from point i to i+1; a segment without `open` has walls.
+name INTAKE SHELF
+order 1
+floor snow
+background shelf
+league cold_storage
+width 54
+pit_band 8                         # the sea and the inlet are wide water
+# x    y    half   features
+ 300  140   58                     # start line, heading east
+ 520  135   58     open:left drift,p=100   # the shelf's edge, the sea on the left; frozen spray
+ 740  145   56     open:left crates
+ 870  210   52
+ 905  350   48     pipe            # the intake pipe, straight down
+ 905  600   50
+ 880  780   52
+ 760  880   52     shadow,len=36   # into the halls: the grated walkway
+ 630  860   48
+ 590  720   48     drift,p=100     # glare ice up the halls' aisle
+ 590  540   46     vent:left,period=300,warn=50 drift,p=100   # warm outflow meets the ice
+ 540  380   46
+ 420  330   46
+ 320  400   46
+ 320  620   48
+ 300  790   52     crates
+ 210  890   54
+ 115  820   54
+ 110  640   50
+ 115  480   50     open crust      # across the frozen inlet on thin sea ice
+ 130  330   52
+ 180  210   54
+# The open sea along the top of the map, beyond the shelf's edge.
+furrow 52 -60 22 1090 22
+# Props: turbines on the shelf by the sea road, radar domes and a crane by
+# the intake, pylons along the halls, the colony sign (and its last
+# penguin) by the inlet.
+props turbine seg 1 side right gap 80 off 26
+props radar,turbine seg 3 side left gap 70 off 26
+props pipe seg 4 side both gap 120 off 22
+props crane,radar seg 8 side right gap 80 off 24
+props pylon seg 14 side left gap 70 off 22
+props turbine,radar seg 20 side right gap 90 off 26
+prop sign 220 470
+prop penguin 214 560

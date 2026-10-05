@@ -67,7 +67,7 @@ import common as C  # noqa: E402
 import build_tracks as bt  # noqa: E402
 from leagues import A_SURF, DRIVABLE, ATTR_NAMES  # noqa: E402
 
-PACK_NAMES = ("dead_mall", "boneyard")
+PACK_NAMES = ("dead_mall", "boneyard", "cold_storage")
 MY_FEATS = ("crust", "shadow", "drift")
 CRUST_LEN, SHADOW_LEN = 8, 14
 PROP_OFF, PROP_CLEAR = 20, 10     # default offset beyond the road edge; footprint radius kept off road
