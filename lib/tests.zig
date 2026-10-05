@@ -7,6 +7,8 @@ test {
     _ = @import("audio_feed.zig");
     _ = @import("tone_stream.zig");
     _ = @import("link.zig");
+    _ = @import("tof_pose.zig");
+    _ = @import("tof_synth.zig");
     _ = @import("tests/romfs_unit.zig");
     _ = @import("tests/link_unit.zig");
     _ = @import("lockstep.zig");
