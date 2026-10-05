@@ -97,9 +97,10 @@ pub const tuning = struct {
     /// quiet tick), but never more than `apart_cap` less what the
     /// programs spent on that tick: a frame's AI work stays bounded, and
     /// on a busy tick it defers to its last one like a program does.
-    /// 12000 keeps the bench's WRAP runs under 10.5 ms (PLAN M2.1 status).
+    /// 11000 keeps the bench's WRAP SKIRMISH under 10 ms (12000 hit
+    /// 12.4 ms; PLAN M2.1 status).
     pub const apart_pool: i32 = tick_pool;
-    pub const apart_cap: i32 = 12000;
+    pub const apart_cap: i32 = 11000;
     /// A decision starts before its last tick only if this many units of
     /// the pool would be left for programs whose last tick it is.
     pub const due_reserve: i32 = 2000;
@@ -247,8 +248,16 @@ pub const Knobs = struct {
 };
 
 /// The ladder's knobs (levels.zig): `level` 0 is the softest program of a
-/// tier, 3 (or more) the full-strength one. Presets hunt cycle 0 (the
-/// player); a program that is cycle 0 itself hunts the nearest rival.
+/// tier, 3 (or more) the full-strength one (the attract's T2s, the
+/// autopilot). Presets hunt cycle 0 (the player); a program that is
+/// cycle 0 itself hunts the nearest rival.
+///
+/// Tuned with the ladder bot (PLAN M2.1 Track F): the reaction delay is
+/// the steep knob (a T2 that goes straight one cell after each turn
+/// loses most of its bite), then vision; mistakes barely change a
+/// program's strength but make it ride differently on every seed (with
+/// none, a round between two programs plays the same whatever the seed),
+/// so every softened preset slips 1-3% of its decisions.
 pub fn preset(tier: Tier, level: u8) Knobs {
     const l = @min(level, 3);
     return switch (tier) {
@@ -263,23 +272,24 @@ pub fn preset(tier: Tier, level: u8) Knobs {
         .avoid => .{
             .tier = .avoid,
             .vision = ([4]u8{ 10, 16, 0, 0 })[l],
-            .mistake_permille = ([4]u16{ 12, 6, 2, 0 })[l],
+            .mistake_permille = ([4]u16{ 12, 8, 4, 0 })[l],
             .reaction = ([4]u8{ 1, 0, 0, 0 })[l],
         },
-        // Hunts: aggression and vision grow with the level.
+        // Hunts: slow to turn at the low end, sight and aggression grow.
         .territory => .{
             .tier = .territory,
-            .aggression = ([4]u8{ 4, 6, 8, 8 })[l],
-            .vision = ([4]u8{ 28, 30, 0, 0 })[l],
-            .mistake_permille = ([4]u16{ 6, 3, 1, 0 })[l],
-            .reaction = ([4]u8{ 1, 0, 0, 0 })[l],
+            .aggression = ([4]u8{ 4, 6, 4, 8 })[l],
+            .vision = ([4]u8{ 20, 28, 28, 0 })[l],
+            .mistake_permille = ([4]u16{ 20, 12, 12, 0 })[l],
+            .reaction = ([4]u8{ 2, 1, 0, 0 })[l],
         },
-        // Hard: a longer view and a deeper search with the level.
+        // Hard: a deeper search with the level; level 0 slow to turn.
         .search => .{
             .tier = .search,
-            .vision = ([4]u8{ 40, 0, 0, 0 })[l],
-            .depth_cap = ([4]u8{ 1, 2, 3, 0 })[l],
-            .mistake_permille = ([4]u16{ 3, 1, 0, 0 })[l],
+            .vision = ([4]u8{ 40, 40, 0, 0 })[l],
+            .depth_cap = ([4]u8{ 1, 1, 2, 0 })[l],
+            .mistake_permille = ([4]u16{ 15, 30, 10, 0 })[l],
+            .reaction = ([4]u8{ 1, 0, 0, 0 })[l],
         },
     };
 }
@@ -737,7 +747,7 @@ fn free4(g: *const Grid, at: u16) u32 {
     return if (wrapping) free4_t(true, g, at) else free4_t(false, g, at);
 }
 
-fn free4_t(comptime wr: bool, g: *const Grid, at: u16) u32 {
+inline fn free4_t(comptime wr: bool, g: *const Grid, at: u16) u32 {
     var n: u32 = 0;
     inline for (0..4) |k| n += @intFromBool(!wall(g, nb(wr, at, k)));
     return n;
@@ -1015,9 +1025,9 @@ fn sd_clock(w: *const sim.World) void {
 }
 
 /// The sudden-death stage at which cell `at` closes (0: the rim, never).
-fn ring_idx(at: u16) u32 {
+inline fn ring_idx(at: u16) u32 {
     const y = at / sim.grid_w;
-    return sim.ring_of(at - y * sim.grid_w, y) + 1 - sd.first;
+    return @call(.always_inline, sim.ring_of, .{ at - y * sim.grid_w, y }) + 1 - sd.first;
 }
 
 /// The innermost sudden-death stage among `cells`.
@@ -1846,7 +1856,9 @@ fn fill_search_t(comptime wr: bool, w: *const sim.World, i: usize, first: sim.Di
 const mark_me: u8 = 0x44;
 
 /// Free neighbours of `at`, fewest free neighbours of their own first.
-fn hug_order(comptime wr: bool, at: u16, out: *[4]u8) usize {
+/// Inline, with plain swaps: the endgame search calls it per node, and
+/// in the ReleaseSmall build (M2.1) the calls cost more than the work.
+inline fn hug_order(comptime wr: bool, at: u16, out: *[4]u8) usize {
     var n: usize = 0;
     var key: [4]u32 = undefined;
     inline for (0..4) |k| {
@@ -1862,8 +1874,12 @@ fn hug_order(comptime wr: bool, at: u16, out: *[4]u8) usize {
     while (a < n) : (a += 1) {
         var j = a;
         while (j > 0 and key[j - 1] > key[j]) : (j -= 1) {
-            std.mem.swap(u32, &key[j - 1], &key[j]);
-            std.mem.swap(u8, &out[j - 1], &out[j]);
+            const kt = key[j - 1];
+            key[j - 1] = key[j];
+            key[j] = kt;
+            const ot = out[j - 1];
+            out[j - 1] = out[j];
+            out[j] = ot;
         }
     }
     return n;
