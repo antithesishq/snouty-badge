@@ -1147,6 +1147,93 @@ main.
     GC `.mode = .gc`. `m0_race.json` was re-recorded on gc/spec's M0 menu
     flow (Start, Start, A): re-record after the M3 menu lands.
 
+- 2026-10-05: **Track B (flow and mode presentation) DONE** on
+  `gc/present` (gc/spec merged in up to ea6a03f7; not merged back, not
+  tagged). **Flow**: splash, the title (SNOUTY GC at 2x with a coral drop
+  over Landfill Loop's floor and the Dumps horizon, GARBAGE COLLECTION,
+  PRESS START, the six half-scale portraits along the bottom, one stepping
+  up at a time; 10 s idle starts attract), the **main menu** over the same
+  backdrop (QUICK RACE, GARBAGE COLLECTION, LINK greyed with `NO LINK YET`
+  flashing on A, SOUND; a highlight bar, a line about the row; B back to
+  the title), the racer select (B back to the menu; the track row cycles
+  `track.tracks` and its panel shows name, league, `3 LAPS` or `MARK AND
+  SWEEP`, the hazards and the track's outline), countdown, race, pause
+  (Resume, Restart, Quit, Sound), results, the select again. The HUD's
+  `LAP n/N` reads `World.laps`. **GARBAGE COLLECTION**: `SWEEP n` (the
+  next sweep) with a 40 px bar filling as the leader nears it
+  (`gc_mode.sweep_at`); the MARKED car in a blinking red outline with
+  `MARKED` over it, blinking red on the minimap; feed lines `KIDDIE
+  MARKED`, `LEGACY TAGGED KIDDIE`, `GC: freed KIDDIE`; `TAGGED!` rising
+  over the newly tagged car; bar notes on the badge concerned (`MARKED!
+  TAG SOMEONE`, `TAGGED! PASS IT ON`, `MARK PASSED`); on `collect` the
+  claw (`claw.png`) comes down from the top edge on its cable over the
+  car (24 ticks), closes (10), and lifts it out of the frame (56), drawn
+  from a render-side copy because the World has taken the car out; a
+  collected player's camera stays on the claw, then rides with the
+  leader (changing car at most every 2 s) with `COLLECTED` bottom left and
+  the watched racer's name under the top row. The survivor card reads
+  `LAST PROCESS / RUNNING` over the winner's portrait, car, sweeps, kills
+  and taunt; the table ranks by place with `SURVIVOR`, `SWEEP n` or
+  `WRECKED`. **Hazards**: new `hazards.png` (tools/art/hazards.py, 4 cells
+  of 48x32, 13 colours): the Sweeper's end and side views with treads and
+  brushes turning, its roof beacon lit in code (flashing during `warn`,
+  steady while crossing), drawn 2 x size + 8 world px wide at
+  `World.hazards[k]`, an orange dot on the minimap; a vent's `warn`
+  blinks dashed lane edges and puffs steam at the mouth, `active` throws
+  flame (the first 40% of the lane) and steam puffs every 12 px reaching
+  the far end in 6 ticks and thinning in the last 6; `blast` bursts at the
+  mouth, `hazard_hit` sparks, flashes the armor bar and shakes the victim's
+  badge, and adds a `VENT > X` / `SWEEPER > X` feed line. The Runoff
+  needed nothing from the renderer. **Attract**: `.mode = .attract` on the
+  next track each time (from Landfill Loop), the camera cutting to the
+  next running car every 5 s and to any car a KERNEL PANIC freezes (held
+  2.5 s, so the blue screen shows: in the gate's boot run the scripted
+  panic blue-screens the leader at frame 3,470), the spectator HUD,
+  `PRESS START` blinking on the bar row, any button back to the title.
+  **Stress scene**: now in GC mode with a MARKED car, a tag and a claw
+  every 90 frames, a Sweeper crossing and two vents firing 30 of every 40
+  frames (its own hazard specs: a debug write of the track's cache, like
+  its crates); 159 objects gathered, 64 drawn.
+- **RAM, and the build mode.** Merged, the RAM cart no longer fit
+  ReleaseFast: Track A's merge measured 262,640 B (11.3 KB free); this
+  track's code and the Sweeper sheet take it to about 283,800 B, 9.6 KB
+  over the 274,176 B window (measured through the XIP build's sizes).
+  The cart now builds **ReleaseSmall** (`build.zig`): `size -A` **.text
+  137,116 + .data 7,480 + .bss 51,372** (+ 1,164 exidx/extab +
+  descriptor) = 197,152 B, **77,024 B (75 KB) free**. Gameplay is
+  untouched. ReleaseSmall alone made the stress worst 7.75 ms (8.97 with
+  M3's hazards); the hot paths were rewritten so it does not need the
+  optimizer's unrolling: `sprites.blit_rect`'s inner loop specialised per
+  case (plain, flat, odd-pixel skip), the 8x8 glyph unrolled with `inline
+  for`, `hud.fill_rect` writing columns directly for every filled HUD
+  rectangle (the API's `rect` was 9% of a frame), the camera and
+  depth-list helpers `inline`, a 32-bit divide in `hills.height_ahead`,
+  nothing drawn under this badge's CAPTCHA card, and the select drawn
+  once more on the frame a pick unpacks the track's art and map.
+- **Bench** (calibrated, every run `--lcd` identical): stress mean 5.12,
+  **worst 6.15 ms** (M2 ReleaseFast 6.34); `m0_race.json` mean 3.63, worst
+  5.20; `m2_race.json` mean 3.58, worst 5.20; `m3_outflow_race.json`
+  (Outflow Canyon, re-recorded on the M3 menus) mean 3.62, worst 5.66
+  (frame 28, the art unpack; was 7.49 before the select redraw); new
+  `m3_gc_race.json` (a GARBAGE COLLECTION race on Monitor Dunes: marks,
+  two collections, the player collected and watching, the Sweeper) mean
+  3.47, **worst 5.64 ms**. `tools/check.sh` green (build, test via test-gc:
+  97 pass, check-float, tracks, preview, bench); it adds the main menu
+  run (LINK stays, GC races), a GC race to its survivor, the CAPTCHA
+  presses re-derived for the merged sim, the stress check at frame 200
+  (the CAPTCHA card covers the list before it), and the two M3 benches.
+  `tools/record_script.py` takes `--track` and `--gc` and walks the M3
+  menus (Start 2, Start 10, Down 12 for GC, A 14, Down 16, Right every
+  2, A); `m0_race.json`, `m2_race.json` and `m3_outflow_race.json` are
+  re-recorded on it. `build.zig` dropped the stale Dumps and Landfill
+  Loop entries from `data_files` (the copies are removed).
+- `docs/preview_m3.gif` (310 frames, 50 ms): the title, the menu, GC's
+  select and track row, the Sweeper crossing, LEGACY marked, SNOUTY
+  marked and tagging ROOTKIT (`MARK PASSED`), the claw lifting SNOUTY out
+  and the leader's camera, the last `GC: freed`, the survivor card and the
+  table, a vent firing on Salt Pan Sprint, the attract demo's blue screen.
+  Deferred questions 70 to 86.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -1431,3 +1518,74 @@ on gc/spec, renumbered 55 to 69 at the merge with M2 Track B's 44 to 54):
 69. **Cathode Flats' open start straight** costs the AI field about 4
     falls a race (dangerous by design; wall it if the play test says so).
 
+Taken during M3 (Track B, flow and mode presentation):
+
+70. **Quick Race is three presses from the title** (Start, A on QUICK
+    RACE, A on the racer), not SPEC 8.1's two: the PLAN puts PRESS START
+    on the title and the menu after it. The menu remembers its row.
+71. **The cart builds ReleaseSmall** (M3 status: ReleaseFast overflows
+    the RAM window by about 9.6 KB once everything is merged). Hot loops
+    are hand-tuned instead; the stress worst is 6.15 ms. Alternatives
+    if ReleaseFast is wanted back: a 16 KB smaller stack reservation (a
+    repo linker script), or the hot paths as a ReleaseFast leaf module.
+72. **Main menu**: GARBAGE COLLECTION is 18 characters (144 px), so the
+    cursor is a highlight bar, not a `>`; LINK is greyed and A on it
+    flashes `NO LINK YET`; SOUND sits in both the main menu and pause.
+73. **Track row panel** replaces the bio while the row is selected:
+    name, league, `3 LAPS` / `MARK AND SWEEP`, the hazards, the outline;
+    the bottom row reads `TRACK n/6`. The track row starts on the track
+    last raced.
+74. **SWEEP n** counts the next sweep from 1 (the last one, grey, once a
+    survivor is left), with a 40 px bar of the leader's way to it (coral,
+    red in its last fifth); the rank beside it is the place among the
+    cars still running.
+75. **MARKED**: the sprite drawn flat red one pixel out each way under
+    the car (blinking light and dark red), `MARKED` over it (red and
+    white; over the badge's own car it starts at x 62, clear of the speed),
+    pickup tags move up over it; red blink on the minimap. The bar notes
+    run 90 ticks; there is no bar note for being collected (it would hide
+    the claw's lift).
+76. **The claw**: 90 ticks (24 down, 10 closed, 56 lifting), 30x40 sprite
+    px at the car's scale, a 2 px cable to the top edge; the car flashes
+    white as it bites. A collected player watches the leader (at most a
+    change every 2 s) with taunt pop-ups, speed, ammo, armor and the
+    pickup caption hidden; Start still pauses (Quit leaves), there is no
+    skip to the results.
+77. **GC results**: `LAST PROCESS` / `RUNNING` on two rows (20
+    characters do not fit), sweeps survived; the table's second line is
+    `SURVIVOR`, `SWEEP n` (the sweep count when collected, kept
+    render-side from the `collect` event) or `WRECKED` (collected for a
+    wreck while marked).
+78. **Feed lines**: `KIDDIE MARKED` (a sweep), `LEGACY TAGGED KIDDIE`
+    (two rows when long), `GC: freed KIDDIE` (lowercase as SPEC writes
+    it; the font has it), `VENT > X` and `SWEEPER > X` for hazard hits.
+    Wreck, mark and collect lines are never overwritten by pickup, swap
+    or hazard lines.
+79. **Sweeper look**: the end view within 33.75 degrees of the camera's
+    axis either way, else the side view mirrored by direction; 2 x size +
+    8 world px wide (its hit radius plus brushes); beacon pixels at the
+    sheet's lamp; the minimap shows it as an orange dot (blinking while it
+    waits).
+80. **Vents** have no sprite: the warning is blinking dashed lane edges
+    and steam at the mouth, the blast flame for 40% of the lane then steam,
+    puffs every 12 px reaching the end in 6 ticks.
+81. **Attract camera**: a cut every 5 s to the next running car, and a cut
+    (held 2.5 s) to a car a KERNEL PANIC actually freezes (not to the
+    packet's target at launch: a packet can fizzle); the track rotates
+    every demo, starting at Landfill Loop; `PRESS START` blinks on the bar
+    row whenever the bar is free.
+82. **Title**: the backdrop is Landfill Loop's floor turning under the
+    Dumps horizon (the menu shares it); the portrait row's lit racer
+    changes every 0.75 s.
+83. **Pick frame**: the frame A starts a race shows the select once more
+    while `track.select` unpacks the art and map (Outflow's start frame
+    7.49 -> 5.66 ms); the race draws from the next frame.
+84. **Under the CAPTCHA card** nothing of the world is drawn (the 4 px
+    edges show bare floor for those frames).
+85. **Stress scene** runs in GC mode with its own hazard specs written
+    into the track's cache (a debug path, like its crates; the next race's
+    select rebuilds it).
+86. **Debug exports** added: `debug_start_gc`, `debug_start_attract`,
+    `debug_gc_marked`, `debug_gc_sweeps`, `debug_gc_collected`,
+    `debug_gc_survivor`, `debug_alive`, `debug_hazard_state`, `debug_me`;
+    `debug_screen` 6 is the main menu, `debug_mode` 3 GARBAGE COLLECTION.

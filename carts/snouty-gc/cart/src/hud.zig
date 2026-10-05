@@ -253,7 +253,9 @@ pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     const two_line = draw_feed();
     if (!o.spectate) draw_popup(if (two_line) 9 else 0);
     if (o.collected) {
-        text("COLLECTED", margin, speed_y, coral);
+        // Bottom left, where the badge's own armor bar was (the watched
+        // car's MARKED tag sits higher).
+        text("COLLECTED", margin, 116, coral);
     } else if (!o.spectate) {
         draw_bottom_left(w, c, follow, o.frame);
     }
@@ -303,7 +305,9 @@ fn draw_markers(w: *const world.World, c: *const world.Car, follow_index: usize,
         const s = sprites.car_screen[w.gc.marked];
         if (s.visible) {
             const y = s.top - 11;
-            text("MARKED", s.sx - 24, y, if ((frame / 8) % 2 == 0) red else white);
+            // Over the badge's own car, clear of the speed reading.
+            const x = if (w.gc.marked == follow_index) @max(62, s.sx - 24) else s.sx - 24;
+            text("MARKED", x, y, if ((frame / 8) % 2 == 0) red else white);
         }
     }
     for (&fx.acks) |*a| {

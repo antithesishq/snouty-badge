@@ -8,9 +8,12 @@ here: every forked file names its Zero source and commit on its first line.
 
 ## Modules (`cart/src/`)
 
-- `main.zig`: `start`, `update`, the state machine, the `World` instance,
-  the render-side `follow` (which car this badge draws and hears), wasm
-  shims, debug exports.
+- `main.zig`: `start`, `update`, the state machine (splash, title, main
+  menu, select, race, pause, results), the `World` instance, the
+  render-side `follow` (which car this badge draws and hears: the
+  player's `me`, or in the attract demo the camera's cuts, or the leader
+  once GARBAGE COLLECTION has collected the player), wasm shims, debug
+  exports.
 - `world.zig`: the plain `World` (6 `Car`s, clock, PRNG, countdown, track
   index; no pointers), `Input` (the race byte: bit 0 up, 1 down, 2 left,
   3 right, 4 A, 5 B, 6 Start, 7 Select), `Setup` (track, seed, the two
@@ -51,20 +54,28 @@ here: every forked file names its Zero source and commit on its first line.
   and gold car tints), one blit with separate width and height (flat
   decals), the race's depth list (cars, projectiles, drops, crates,
   drones, ducks, particles; 64 drawn, cars never culled), the floor lines
-  (DEADLOCK chains, duck tethers, SPAGHETTI strands) and the car states.
+  (DEADLOCK chains, duck tethers, SPAGHETTI strands) and the car states;
+  M3: the MARKED outline, the GC claw, the Sweeper and the vents' blasts
+  (and their warning lanes among the floor lines).
 - `fx.zig`: render-side effects and HUD notices from the World's event
   ring (own cursor, never writes): explosions, sparks, smoke, muzzle
   flashes, lance beams, kill feed, taunt pop-up, ACK, wreck note, shake;
   M2: crate pops, `<honey>` tags, the duck pop, BIT FLIP's ray, the
-  ZERO-DAY dart and flash, the RACE CONDITION glitch, pickup feed lines.
-- `select.zig` (the racer select, SPEC 8.1), `roster_text.zig` (bios,
+  ZERO-DAY dart and flash, the RACE CONDITION glitch, pickup feed lines;
+  M3: GC feed lines and bar notes, `TAGGED!`, the claws (`claws`, kept
+  here because the World takes a collected car out), each collected car's
+  sweep for the results, the vents' blast clocks and warning steam,
+  hazard hits, the KERNEL PANIC victim the attract camera cuts to.
+- `select.zig` (the racer select, SPEC 8.1; M3 the track row's panel),
+  `menu.zig` (splash, title, main menu, the pause list), `roster_text.zig` (bios,
   taunts, wrecked lines, weapon and pickup names, HUD liveries, stat
   bars), `stress.zig` (the render stress scene: `gc_stress` /
   `debug_stress`; `force_effect` behind the wasm `debug_effect`).
 - `render.zig` (row-loop floor, horizon, fog, BIT FLIP's row jitter),
   `camera.zig` (follow, look back, culling projection), `hills.zig`,
   `hud.zig` (also the pickup box and the gags: blue screen, CAPTCHA,
-  BIT FLIP, DDOS), `font.zig`, `menu.zig`, `results.zig`,
+  BIT FLIP, DDOS; M3 `SWEEP n`, MARKED tags, the spectator view),
+  `font.zig`, `results.zig` (M3 the survivor card and GC table),
   `sound.zig` + `engine.zig` (Zero's tones and drone), `input.zig` (edges,
   the Start+Select chord mask, `race_byte`).
 - Host tests: `host_tests.zig` root, `sim_test.zig` (determinism, laps,
@@ -86,7 +97,8 @@ slices, no comptime decoding: the Mac OOM rule), so a new track needs no
 them the M0 copies of the Dumps and Landfill Loop files) reach the cart
 through the `assets` module `build.zig` generates. Tilesets are 128 tiles. Engine
 sprites: `ASSETS_ENGINE.md`. The art track owns `tools/draw_art.py`,
-`assets/gen/art/` and `ASSETS.md`.
+`assets/gen/art/` and `ASSETS.md` (M3: `tools/art/hazards.py`, the
+Sweeper sheet `hazards.png`).
 
 ## Gates
 
@@ -95,7 +107,12 @@ sprites: `ASSETS_ENGINE.md`. The art track owns `tools/draw_art.py`,
   generator determinism, headless preview runs, badge-bench plain and
   `--lcd` (worst frame under 8 ms).
 - The RAM cart is the shipped artifact; record bench mean/worst and
-  `size -A` in `PLAN.md` per milestone.
+  `size -A` in `PLAN.md` per milestone. Since M3 it builds
+  **ReleaseSmall** (`build.zig`): ReleaseFast no longer fits the 274 KB
+  window (PLAN M3 status). The hot loops are written so ReleaseSmall
+  keeps them fast (`inline for`, `inline fn`, a loop specialised per
+  case in `sprites.blit_rect`, `hud.fill_rect` instead of the API's
+  `rect` for fills); keep new per-pixel code the same way and bench it.
 - Determinism is a gate from M0 (M4 is lockstep netcode): nothing in
   `simulate` may read the clock, `cart.rand`, floats or render state.
 - Never bind the joystick click; react to neither Start nor Select while
