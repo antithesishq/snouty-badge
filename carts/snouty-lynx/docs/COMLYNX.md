@@ -296,8 +296,8 @@ over the real `badge lobby`:
 
 The real relay's latency on this VM (localhost TCP, the badges as TCP
 listeners, measured from a ComLynx message leaving one badge to its DATA
-reaching another): **p50 0.0-0.1 ms, p99 3.6-4.7 ms, max 10-18 ms**
-(4,000-18,000 messages a run). The OS session measured p50 0.16 ms /
+reaching another): **p50 0.0-0.2 ms, p99 3.6-8.2 ms, max 8-36 ms**
+(3,000-18,500 messages a run, two sessions of the default runs). The OS session measured p50 0.16 ms /
 p99 5.4 ms for 16 players; USB adds 1 ms frames and the OS loop's
 packet a pass, so budget p99 ~8 ms on badges.
 
