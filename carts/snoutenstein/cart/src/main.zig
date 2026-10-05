@@ -5,7 +5,9 @@
 //! victory; the title idles into the recorded demo (attract mode, PLAN.md
 //! M5) which any pad press takes over. Rewind semantics: PLAN.md M4; the
 //! core is rewind.zig. The title's DEATHMATCH entry hands every frame to
-//! deathmatch.zig (M7, two badges over the link cable) until it backs out.
+//! deathmatch.zig (M7, two badges over the link cable) until it backs out;
+//! PARTY does the same with party.zig (M8, up to 16 badges through the
+//! laptop's `badge lobby`).
 const std = @import("std");
 const builtin = @import("builtin");
 const cart = @import("cart-api");
@@ -22,13 +24,14 @@ const audio = @import("audio.zig");
 const rewind = @import("rewind.zig");
 const demo = @import("demo.zig");
 const deathmatch = @import("deathmatch.zig");
+const party = @import("party.zig");
 const match = @import("match.zig");
 
 comptime {
     cart.export_start_code();
 }
 
-pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2, intermission = 3, victory = 4, dead = 5, rewinding = 6, deathmatch = 7 };
+pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2, intermission = 3, victory = 4, dead = 5, rewinding = 6, deathmatch = 7, party = 8 };
 
 // Level indices come from levels.zig once the campaign levels land (M3
 // track C); until then everything maps onto the levels that exist.
@@ -90,7 +93,7 @@ var title_ticks: u32 = 0;
 var demo_ticks: u32 = 0;
 var demo_dead: u32 = 0;
 var demo_result: hud.DemoResult = .none;
-/// Title menu row: 0 PLAY, 1 DEATHMATCH (M7).
+/// Title menu row: 0 PLAY, 1 DEATHMATCH (M7), 2 PARTY (M8).
 var title_cursor: u8 = 0;
 /// The link cable exists on the badge, not in the simulator.
 const has_link = !cart.is_wasm;
@@ -100,6 +103,11 @@ const has_link = !cart.is_wasm;
 /// rules byte N - 1 (`match.Rules`). There is no cable in the bench.
 export var stein_dm_bench: u8 = 0;
 var bench_started = false;
+/// badge-bench (`--poke stein_party_bench=V`): with bit 31 set, a local
+/// party match of bots starts at the first update: rules bytes V & 0xFF
+/// and (V >> 8) & 0xFF (`match.Rules.encode2`), (V >> 16) & 31 players
+/// (0 = 16), shown from slot (V >> 24) & 15. No network in the bench.
+export var stein_party_bench: u32 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -118,6 +126,16 @@ pub fn update() void {
         deathmatch.view_slot = 0;
         deathmatch.start_local(match.Rules.decode(stein_dm_bench - 1), .{ true, true }, 1);
         mode = .deathmatch;
+    }
+    if (stein_party_bench >> 31 != 0 and !bench_started) {
+        bench_started = true;
+        start_party_local(stein_party_bench);
+    }
+    if (mode == .party) {
+        if (!party.update(pad, cart.micros_since_boot())) to_title();
+        prev_in = pad;
+        if (cart.is_wasm) present_wasm();
+        return;
     }
     if (mode == .deathmatch) {
         if (!deathmatch.update(pad, cart.micros_since_boot())) to_title();
@@ -149,7 +167,7 @@ pub fn update() void {
     prev_in = in;
 
     switch (mode) {
-        .title => hud.draw_title(tick_total, audio.enabled, demo_result, .{ .cursor = title_cursor, .link = has_link }),
+        .title => hud.draw_title(tick_total, audio.enabled, demo_result, .{ .cursor = title_cursor, .link = has_link, .party = party_ok() }),
         .playing, .paused, .dead, .rewinding => {
             const rw = mode == .rewinding;
             const shown: *const state.GameState = if (rw) rewind.current() else &game;
@@ -170,7 +188,7 @@ pub fn update() void {
         },
         .intermission => hud.draw_intermission(&game, level.name, @intCast(level.enemies.len), card_ticks),
         .victory => hud.draw_victory(&game, card_ticks),
-        .deathmatch => {},
+        .deathmatch, .party => {},
     }
 
     if (cart.is_wasm) present_wasm();
@@ -180,22 +198,27 @@ pub fn update() void {
 fn run_mode(b: state.Buttons) void {
     switch (mode) {
         .title => {
-            // A: the menu row (PLAY: the campaign; DEATHMATCH: the lobby,
-            // badge only). Up/Down: the row. B: the imported E1M1. Start:
+            // A: the menu row (PLAY: the campaign; DEATHMATCH: the cable
+            // lobby, badge only; PARTY: the party lobby, party firmware
+            // only). Up/Down: the row. B: the imported E1M1. Start:
             // the test level (the scripted runs use it). Select: sound
             // (SPEC.md section 3). Nothing for `attract_after` ticks: the
             // recorded demo.
             title_ticks += 1;
             entry_loadout = null;
             if (pressed(b, .up) or pressed(b, .down)) {
-                title_cursor = if (pressed(b, .down)) 1 else 0;
+                const n = hud.title_items;
+                title_cursor = if (pressed(b, .down)) (title_cursor + 1) % n else (title_cursor + n - 1) % n;
                 title_ticks = 0;
             } else if (pressed(b, .a)) {
                 if (title_cursor == 0) {
                     new_game(0);
-                } else if (has_link) {
+                } else if (title_cursor == 1 and has_link) {
                     deathmatch.enter();
                     mode = .deathmatch;
+                } else if (title_cursor == 2 and party_ok()) {
+                    party.enter();
+                    mode = .party;
                 }
             } else if (pressed(b, .b)) {
                 new_game(e1m1_index);
@@ -274,8 +297,24 @@ fn run_mode(b: state.Buttons) void {
             card_ticks += 1;
             if (card_ticks >= victory_max or (card_ticks >= card_min and (pressed(b, .a) or pressed(b, .start)))) to_title();
         },
-        .deathmatch => {},
+        .deathmatch, .party => {},
     }
+}
+
+/// The firmware serves the cart serial port (never in the simulator).
+fn party_ok() bool {
+    return !cart.is_wasm and party.supported();
+}
+
+/// A local party match of bots (`stein_party_bench`'s and
+/// `debug_party_bots`' encoding).
+fn start_party_local(v: u32) void {
+    const r = match.Rules.decode2(.{ @truncate(v), @truncate(v >> 8) });
+    const n: u5 = @truncate(v >> 16);
+    const present: u16 = if (n == 0 or n >= 16) 0xFFFF else @intCast((@as(u32, 1) << n) - 1);
+    party.view_slot = @as(u8, @truncate(v >> 24)) & 15;
+    party.start_local(r, present, 1, false);
+    mode = .party;
 }
 
 /// The level after `i`: through the campaign, then victory; the test level
@@ -435,6 +474,13 @@ comptime {
         @export(&debug_dm_hash, .{ .name = "debug_dm_hash" });
         @export(&debug_dm_hp, .{ .name = "debug_dm_hp" });
         @export(&debug_title_cursor, .{ .name = "debug_title_cursor" });
+        @export(&debug_party_bots, .{ .name = "debug_party_bots" });
+        @export(&debug_party_view, .{ .name = "debug_party_view" });
+        @export(&debug_party_names, .{ .name = "debug_party_names" });
+        @export(&debug_party_lobby, .{ .name = "debug_party_lobby" });
+        @export(&debug_party_screen, .{ .name = "debug_party_screen" });
+        @export(&debug_party_present, .{ .name = "debug_party_present" });
+        @export(&debug_party_top, .{ .name = "debug_party_top" });
     }
 }
 
@@ -497,6 +543,78 @@ fn debug_dm_hash() callconv(.c) u32 {
 fn debug_dm_hp() callconv(.c) u32 {
     return @bitCast(@as(i32, deathmatch.world.m.players[deathmatch.view_slot].hp));
 }
+// Party previews (M8): no party firmware in the simulator, so these run a
+// local match of bots or draw a made-up lobby.
+
+/// Setup call: a local party match of bots, `v` as `stein_party_bench`
+/// without bit 31 (rules bytes, player count, shown slot).
+fn debug_party_bots(v: u32) callconv(.c) void {
+    start_party_local(v);
+}
+/// Show slot `slot` (the scoreboard and HUD follow it); returns it
+/// (`preview.mjs --call-at` wants a value).
+fn debug_party_view(slot: u32) callconv(.c) u32 {
+    party.view_slot = @intCast(slot & 15);
+    return party.view_slot;
+}
+/// Setup call: sample names for the local match (0: "P1".."P16").
+fn debug_party_names(on: u32) callconv(.c) void {
+    party.set_local_names(if (on != 0) &sample_names else &.{});
+}
+const sample_names = [16][]const u8{ "ADRIAN", "WILL", "DAVE", "MAYA", "KENJI", "ROSA", "OMAR", "LIN", "SNOUTY", "ZOE", "IVAN", "PRIYA", "TOM", "ANA", "BEN", "FREYA" };
+/// Setup call: the party lobby, drawn as 0 the simulator really shows
+/// (NEEDS PARTY FIRMWARE), 1 the host of 9 with rules (Data Hall
+/// suggested), 2 a guest of 16 in 4 teams, 3 a late joiner (MATCH IN
+/// PROGRESS), 4 no laptop lobby, 5 joining.
+fn debug_party_lobby(kind: u32) callconv(.c) void {
+    var v: party.LobbyView = .{ .st = .lobby };
+    for (0..16) |i| v.names[i] = sample_names[i];
+    switch (kind) {
+        1 => {
+            v.host = true;
+            v.present = 0x01FF;
+            v.ready = 0x00DB;
+            v.rules = .{ .arena = levels.suggest_arena(9), .frags = 2, .bugs = true };
+            v.suggested = 3;
+            v.delay = 3;
+            v.can_go = true;
+        },
+        2 => {
+            v.me = 5;
+            v.present = 0xFFFF;
+            v.ready = 0xB7DE;
+            v.rules = .{ .arena = 2, .frags = 3, .bugs = false, .teams = 4 };
+            for (0..16) |i| v.team[i] = @intCast(i % 4);
+            v.team[5] = 2;
+            v.other_version = 0x0400;
+        },
+        3 => {
+            v.me = 6;
+            v.present = 0x007F;
+            v.ready = 0x0000;
+            v.rules = .{ .arena = 1, .frags = 1, .bugs = true };
+            v.running = true;
+        },
+        4 => v.st = .disconnected,
+        5 => v.st = .joining,
+        else => v.st = .unsupported,
+    }
+    party.fake = v;
+    party.screen = .lobby;
+    mode = .party;
+}
+fn debug_party_screen() callconv(.c) u32 {
+    return if (mode == .party) @backingInt(party.screen) else 0xFF;
+}
+fn debug_party_present() callconv(.c) u32 {
+    return deathmatch.world.m.present;
+}
+/// The best frags of the match (the frag limit's progress).
+fn debug_party_top() callconv(.c) u32 {
+    var top: i32 = -1000;
+    for (deathmatch.world.m.frags) |f| top = @max(top, f);
+    return @bitCast(top);
+}
 fn debug_title_cursor() callconv(.c) u32 {
     return title_cursor;
 }
@@ -539,6 +657,7 @@ fn debug_ammo() callconv(.c) u32 {
         .zapper => game.player.ammo_zapper,
         .spray => game.player.ammo_spray,
         .debugger => game.player.ammo_debugger,
+        .fuzzer, .fork_bomb, .ship_it, .gc => 0, // M9: deathmatch only
     };
 }
 fn debug_level() callconv(.c) u32 {

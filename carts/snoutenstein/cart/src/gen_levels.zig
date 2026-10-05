@@ -20,6 +20,8 @@ const manifest = [_]Entry{
     // Deathmatch arenas (M7), `levels.arena_indices`.
     .{ .name = "server_room", .file = "server_room.txt", .default_wall = 0 },
     .{ .name = "build_farm_dm", .file = "build_farm_dm.txt", .default_wall = 0 },
+    // M8: the 16-player arena.
+    .{ .name = "data_hall", .file = "data_hall.txt", .default_wall = 0 },
 };
 
 var io_mem: std.Io.Threaded = .init_single_threaded;
@@ -97,14 +99,12 @@ fn emit(w: *std.Io.Writer) !void {
     try w.writeAll("\npub const all = [_]Level{\n");
     for (manifest, 0..) |e, i| {
         const p = &parsed[i];
-        try w.print("    .{{\n        .name = \"{s}\",\n        .width = {d},\n        .height = {d},\n        .cells = .{{\n", .{ e.name, p.width, p.height });
-        for (p.cells) |row| {
-            try w.writeAll("            .{ ");
-            for (row, 0..) |c, x| {
-                if (x != 0) try w.writeAll(", ");
-                try w.print("{d}", .{c});
-            }
-            try w.writeAll(" },\n");
+        try w.print("    .{{\n        .name = \"{s}\",\n        .width = {d},\n        .height = {d},\n        .cells = &.{{\n", .{ e.name, p.width, p.height });
+        // width x height, one source row per line (Level.cells is packed).
+        for (p.cells[0..p.height]) |row| {
+            try w.writeAll("           ");
+            for (row[0..p.width]) |c| try w.print(" {d},", .{c});
+            try w.writeAll("\n");
         }
         try w.print("        }},\n        .start_x = {d},\n        .start_y = {d},\n        .start_angle = {d},\n", .{ p.start_x, p.start_y, p.start_angle });
         try slice_field(w, "doors", e.name, p.door_count);

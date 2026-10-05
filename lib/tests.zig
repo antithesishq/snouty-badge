@@ -19,4 +19,10 @@ test {
     _ = @import("tests/tof_unit.zig");
     _ = @import("lockstep.zig");
     _ = @import("tests/lockstep_unit.zig");
+    _ = @import("cart_serial.zig");
+    _ = @import("party.zig");
+    _ = @import("party_virtual.zig");
+    _ = @import("lockstep_n.zig");
+    _ = @import("tests/party_unit.zig");
+    _ = @import("tests/lockstep_n_unit.zig");
 }

@@ -1209,7 +1209,454 @@ built; RUNNING.md section 7 has the two-badge hardware check.
 - **Open**: the two-badge hardware check (RUNNING.md section 7); feel
   (damage, strafe speed, respawn time) on the badge.
 
+## M8 Party deathmatch (up to 16 badges, planned 2026-10-05)
+
+Adrian, 2026-10-05: "prepare to implement 4 or more player multiplayer
+in snoutenstein. Our OS stack will be able to support up to 16 players,
+let's support as many up to that as are technically feasible and
+reasonable." Another session is building the multi-badge transport in
+the OS (USB; a laptop or hub joins the badges); it messages session
+`exedev-64 [5dbf8e]` when it ships. Everything in this milestone that
+does not need that transport is built now, against a virtual bus in the
+host tests; wiring the real transport is M8.1. Defaults taken (Adrian:
+keep building).
+
+### How many players: 16
+
+16 is feasible on every axis, so the cap is the OS's 16:
+
+| Axis | 2 (M7) | 16 | Verdict |
+|---|---|---|---|
+| Wire | 1 byte/player/tick | 16 bytes/tick received, 1 sent, about 1 KB/s each way at 60 Hz | trivial for USB |
+| `state.Match` | 236 B | about 1 KB (per-player arrays x16) | bss 96 KB of the 120 KB budget |
+| Sim per tick | 2 player passes | 16 passes, hit tests O(n^2) = 240 pairs of a cheap circle test | bench gate below |
+| Render | 1 rival sprite | up to 15 rivals; `render/sprites.zig` holds 64 | the worst frame is many rivals close up: bench gate |
+| Arena | Server Room 28x20, 6 spawns | needs room: a new 48x48 arena with 16 spawns | `levels.max_spawns` is 16 already |
+| Lockstep | the slowest of 2 badges | the slowest of 16 sets the pace; one stalled badge stalls all | stall-drop rule below |
+
+The real limit is fun per square metre, so the lobby suggests the arena
+by head count (Server Room up to 6, Build Farm DM up to 8, Data Hall
+any), and the host can still pick any.
+
+### The transport: cart serial + lobby protocol v1
+
+The OS session's fork (`/home/exedev/sycl-badge-fork`, branch
+`feature/cart-serial`, `fork/CART_SERIAL.md`, M0 = de77fc1) defines it:
+each badge's USB gets a second CDC port for the running cart; the cart
+publishes a `CartSerialRings` struct (address at `ipc_data.cart_serial`
+0x200350F4, `os_flags` bit 1 = supported), and the laptop's `badge
+lobby` relays COBS frames between badges: HELLO (game id, name,
+max_players up to 16) -> WELCOME (player id) + ROSTER on every join and
+leave; SEND(to 0xFF) -> DATA(from) to everyone else, in the order
+received. Reliable, ordered, lossless; no echo to the sender. Simulators
+join over TCP 7341-7356, so a party works on one laptop without badges.
+
+Our carts build against the pinned SDK, so they use the documented ring
+ABI directly ("Cart ABI for other SDKs"), through our own lib, not the
+fork's `cart.lobby`. What the lockstep relies on (to confirm with the OS
+session when it ships, `docs/LOCKSTEP_N.md` section "Transport
+requirements"):
+
+1. The relay forwards each frame to all recipients before the next one,
+   so every badge sees the other badges' frames in one global order, and
+   a ROSTER removing a player comes after every frame that player sent.
+   That makes a leave deterministic with no extra message: the leaver's
+   last tick is the last input of theirs anyone received.
+2. Lossless (USB, and TCP for the planned network hub).
+3. 16 badges x 60 input frames a second through the relay (about 1,000
+   frames in and 15,000 out a second). If the Python relay cannot keep
+   up, the fallback is two ticks per frame (30 Hz frames, one more tick
+   of input delay); measure with 16 simulators.
+4. The OS stops the rings at cart exit (it zeroes `cart_serial`).
+
+### Design
+
+- **Shared libs** (Snoutenstein first; the Genesis 4-player work in
+  `exedev-64 [01b6e6]` needs the same and is told): `lib/cart_serial.zig`
+  (the ring ABI, pinned-SDK safe, a virtual port for tests),
+  `lib/party.zig` (lobby protocol v1 client: COBS, HELLO, WELCOME,
+  ROSTER, SEND/DATA, PING), `lib/lockstep_n.zig` (`LockstepN(B, G)` over
+  any bus giving slot, roster and ordered broadcast; G as in
+  `docs/LOCKSTEP.md` but `simulate(w, in: *const [16]u8, present: u16)`
+  and `hand_over(w, slot)` for each leaver). Lobby: roster, host = lowest
+  present id, host rules (`rules_len` 1-8), per-slot pick + ready, GO
+  with a seed and a start tick; race: each badge broadcasts
+  `INPUT(tick, byte)` (several ticks per frame allowed), a tick runs when
+  every present slot's byte for it is in; hash check every 32 ticks
+  (each slot broadcasts its hash; any mismatch = DESYNC everywhere);
+  pause bit as M7.
+- **Stall-drop**: a slot silent for 3 s while the others wait is
+  dropped by the host: `DROP(slot, tick)` with `tick` one past the last
+  byte the host has from it; by rule 1 everyone else has exactly those
+  bytes too. All apply its bytes up to there and hand it over from
+  there. A dropped badge that comes back sees itself dropped and returns
+  to its lobby ("DROPPED").
+- **Leaver = bot.** `hand_over` puts `bot.zig` on the slot (it reads only
+  the World, so it is deterministic): the frags stay, the match goes on.
+  A match ends at the frag limit, or when one human is left (a forfeit
+  win as M7).
+- **No mid-match join.** A badge that joins during a match waits on the
+  lobby screen ("MATCH IN PROGRESS, n/16"); it joins the next one.
+- **The 2-badge cable stays.** M7's `lib/lockstep.zig` path over the J4
+  cable is untouched and still the DEATHMATCH entry when a cable partner
+  is found; the N-player path is a PARTY entry, greyed "NEEDS PARTY FIRMWARE" when `os_flags`
+  bit 1 is clear, "START BADGE LOBBY ON THE LAPTOP" while the port is
+  not connected. Both drive the
+  same `match.zig`: the 2-player `G` becomes a thin adapter.
+- **Rules (host)**: arena, frag limit (5/10/15/20/25), BUGS ON/OFF, TEAMS
+  (FFA / 2 teams / 4 teams), input delay (3/4/6). 2 bytes.
+- **Teams**: team = slot mod team count by default, the lobby lets each
+  player change their team with Left/Right before ready. No friendly
+  fire (team kills do nothing, self-damage from the Debugger still
+  counts as a suicide). Team frags = sum; the limit is per team.
+- **Spawns**: the spawn whose distance to the nearest living opponent is
+  largest (M7's "farthest from the opponent" generalised); ties to the
+  lowest index. Starting positions: slots dealt round-robin over the
+  spawns from a seeded offset.
+- **Look**: each player's rival Snouty is tinted by slot (16 colours
+  from the badge palette, a palette remap at blit time, no extra sheets);
+  in team modes by team. A slot number floats over the head when nearer
+  than 6 cells. HUD: rank and frags (`#3/12  7`), the leader's frags;
+  hold Select = scoreboard (16 rows of 7 px fit the 128 px screen).
+  Kill feed: one line, "FRAGGED P7" / "P7 FRAGGED P3", 2 s.
+- **Results**: all players sorted by frags (team totals first in team
+  modes), with deaths and accuracy; your row highlighted.
+
+### Work, three Opus tracks (disjoint files; agents do not commit)
+
+- **Track A, party libs (shared)**: `lib/cart_serial.zig`,
+  `lib/party.zig`, `lib/lockstep_n.zig`, `lib/party_virtual.zig` (a
+  model of `badge lobby`: rooms, ids, ROSTER, in-order fan-out, per-port
+  latency and jitter, a port that stalls or unplugs, the badge's rx ring
+  filling up), `lib/tests/party_unit.zig`, `lib/tests/lockstep_n_unit.zig`,
+  `docs/LOCKSTEP_N.md` (API table as LOCKSTEP.md + "Transport
+  requirements" = the four points above, for the OS session). Game id
+  "SNOUTDM1". Tests: COBS and every v1 message against byte vectors
+  from the fork's `lobby.py` / `lobby.zig`; 2, 4, 8 and 16 badges with a
+  toy World reach 10,000 ticks in sync with jitter; a leave mid-race
+  lands on the same tick everywhere; a stalled badge is dropped the same
+  way; a hash mismatch is found on all; pause on the same tick; a join
+  during a race waits.
+- **Track B, the N-player sim**: `state.zig` (`max_players = 16`,
+  `Match` arrays sized to it, `present`, `team`, `bot` masks, padding-
+  free), `match.zig` (N-player `step`, spawns, teams, hand-over to bot,
+  frag limit and end rules; the M7 two-player `G` kept as an adapter
+  over the new core), `bot.zig` (nearest visible opponent instead of
+  "the other one"), `ai.zig` / `sim.zig` / `projectiles.zig` only where
+  "the other player" is assumed. Tests: 16 bots to the frag limit in
+  FFA and in 4 teams; teams have no friendly fire; spawn choice; hand
+  over; `dm_net_test.zig` (the M7 cable tests) passes unchanged; the
+  campaign is bit-identical (DEMO OK, every existing test).
+- **Track C, arena and look**: `levels/data_hall.txt` (48x48, 16
+  spawns, loops, 4 weapon alcoves, a central rack maze; gen.zig
+  regenerated), `levels.zig` arena table; `render/sprites.zig` slot
+  tint remap and the head number; `render/hud.zig` rank line, kill
+  feed, scoreboard; results drawing helpers. Works against Track B's
+  `state.Match` contract below (B lands the struct first, within its
+  first hour, and the lead hands it on).
+
+`state.Match` contract (B owns it; C reads it): `players`, `frags`,
+`deaths`, `shots`, `hits`, `dead`, `hurt`, `last_hit` as
+`[max_players]` arrays; `present: u16`, `bots: u16`, `team: [max_players]u8`,
+`teams: u8` (0 = FFA, 2 or 4), `team_frags: [4]i16`, `victim`, `killer`,
+`kill_tick`, `arena`, `frag_limit`, `bugs`, `over`, `winner` (a slot, or
+`0x80 | team`, or `no_one`), `forfeit`, timers as M7. `by_bug` moves to
+`0xFE`.
+
+Lead, after the tracks: `deathmatch.zig` (PARTY menu entry, the N-slot
+lobby, the bus pump: top of `update` then to 14 ms while busy, results),
+`main.zig` hook, `tools/bench_m8.sh` (16 bots on Data Hall, BUGS ON;
+8 bots crowding one room on Server Room for the render worst case),
+`tools/check.sh`, SPEC.md section 20, RUNNING.md, preview GIF from three
+of the bots' views.
+
+Done when:
+- `zig build`, `zig build test` and `tools/check.sh` pass;
+- the campaign bench is unchanged and the M7 cable tests pass;
+- the 16-bot bench stays under 12 ms worst (knobs if not: rival sprite
+  LOD beyond 10 cells, bug count capped by player count);
+- RAM inside the 140 KB / 120 KB budgets;
+- `docs/LOCKSTEP_N.md` transport requirements are ready to hand to the
+  OS session.
+
+M8.1 (when the OS session says the transport shipped): re-check the ABI
+and protocol against what merged, run 2 then 16 simulators on one
+`badge lobby`, then badges (RUNNING.md hardware check), tune the input
+delay and the stall-drop time.
+
+M8 status (2026-10-05, branch `stein/mp`, integration track; not
+committed by the track): tracks A to C landed earlier (a1888fe7,
+a3b11f64); the lead's list is built. SPEC.md section 20 is what was
+built; RUNNING.md section 8 has the setup and the 2-then-N-badge
+hardware check.
+
+- **Cart.** `party.zig`: the PARTY title row (greyed NEEDS PARTY
+  FIRMWARE without `os_flags` bit 1), `LockstepN(cart_serial.Badge(.{}),
+  match.GN)` opened on the first entry, the N-slot lobby (roster in two
+  columns of eight, host rules with the arena preselected by head count,
+  frags 5-25, bugs, FFA/2/4 teams, DELAY AUTO from `suggested_delay` or
+  a host override, team picks with Left/Right, MATCH IN PROGRESS), the
+  match frame (pump, submit, step, draw from the local slot with Track
+  C's rivals/rank/kill feed/scoreboard, pump to 14 ms; leaver notice,
+  pause, WAITING FOR PLAYERS, DESYNC, YOU WERE DROPPED, relay lost ->
+  lobby screen), the results. `match.GN` gained `input_delay` (3),
+  `picks_ok` (two teams) and `team_of` (pick = team + 1); `match.G.version`
+  = 1. The match World is M7's (`deathmatch.world`, one mode at a time).
+  `deathmatch.band`/`draw_pause` are pub for it.
+- **Scoreboard legibility.** More than 10 players: two columns of eight
+  at an 11 px pitch (3x5-digit place, swatch, five letters, frags) and a
+  "#7/16  3 DTH  57%" line for you; up to 10: one column at 9 px with
+  deaths and accuracy (labels NAME FRG DTH ACC, columns moved so 100%
+  no longer touches the deaths). Same for the results.
+  `docs/m8_scoreboard.png` (16 FFA grid; 10 one column) and
+  `docs/m8_results.png` (16 FFA; 4 teams of 10) regenerated.
+- **Flash (deviation).** The party code took .text from 131.8 to 151.3
+  KB (lockstep_n 6.7 KB, the lobby client 1.3 KB, Track C's HUD now
+  linked 3.6 KB, the screens), over the 140 KB budget. Fixed without
+  cutting anything: `Level.cells` is now the packed width x height
+  (`[]const u8`, it was `[64][64]u8` per level), 22.1 KB less;
+  `gen_levels.zig` writes it, `level_parse.Parsed` keeps a packed copy for
+  tests, `Level.cell` returns the same values everywhere (checked cell by
+  cell against the old gen.zig) and is cheaper (10.3 cycles a call, was
+  14.3: one unsigned compare per axis against the level's size).
+- **RAM** (`size -A`): .text 129,004 + .data 7,944 = 136,948 (133.7 KB of
+  140; was 139,752 at a3b11f64), .bss 107,136 (104.6 KB of 120; was
+  98,592: the LockstepN 2,568, the port rings 5,160, names and lobby
+  state).
+- **Bench** (calibrated, busy ms; `tools/bench_m8.sh`, 1,200 frames, no
+  network so no pump): 16 bots Data Hall BUGS ON worst 7.54 (frame 364),
+  mean 3.98; 16 bots Server Room BUGS ON (six spawns, crowded) worst
+  5.46, mean 3.66. Campaign: Build Farm opening worst 3.50, mean 2.50
+  (was 3.52 / 2.52, the cheaper `Level.cell`); attract worst 10.24 at
+  frame 1,102 (was 10.31). M7 Server Room 2 bots worst 4.72, mean 2.71
+  (was 4.68 / 2.76).
+- **Tests.** `zig build test-stein` 111 (was 107): `party_net_test.zig`
+  puts badges, each a LockstepN over `match.GN` on a virtual port, on
+  lib/party_virtual.zig's relay (1 ms latency, 1.5 ms jitter, own 60 Hz
+  frames): 4 badges Server Room with bugs to 5 frags in sync (3,226
+  ticks), 6 badges in 2 teams from their picks to 10 team frags (9,896
+  ticks), the two-team GO rule, 16 badges on Data Hall with one leaving
+  at tick 400 (a bot on the same tick on all 15, 1,500 ticks in sync).
+  Frames without a tick 0.25-0.46%. `zig build test` (repo) 718/720 (2
+  skipped), `zig build` and `tools/check.sh` pass (new: `m8_title.json`,
+  a 16-bot FFA match with the scoreboard held via `m8_local.json` to 5
+  frags, 16 bots in 4 teams to 10). DEMO OK, the M7 cable tests and the
+  campaign scripts unchanged.
+- **Preview.** `docs/preview_m8.gif`: title with PARTY, the host lobby
+  (9 players, Data Hall preselected), a guest of 16 in 4 teams, a late
+  joiner, a 16-bot Data Hall match from slots 1, 6 and 12, the
+  scoreboard, the results.
+- **Other deviations.** No name entry: everyone is SNOUTY (the slot
+  colour and number tell them apart); the guest does not see the delay
+  until GO; the web simulator cannot join a party (our wasm build has no
+  serial socket; `tools/party_e2e` is M8.1's end-to-end path); the
+  bench numbers have no lockstep pump (no network in the bench).
+- **Open (M8.1 / hardware)**: RUNNING.md section 8 on 2, then 4-16
+  badges; the default delay and stall-drop time from that; the feel of
+  16 in Data Hall.
+
+## M9 Deathmatch arsenal (planned 2026-10-05, branch stein/dm-arsenal off stein/mp 29c30ce7)
+
+Adrian's request, 2026-10-05:
+"replace the 'fragged' message with 'Deleted' and replace the fall-over dead
+animation with a blue cyber warp-out. Also, mix up the deathmatch maps with
+more weapons that spawn in rotation around fix points with respawn delay
+after pickup a-la quake. Add an automatic weapon, a thrown grenade with
+time'd explosion, a rocket launcher, and a button-hold melee weapon,
+sticking to theme with them all. The best gun in the singleplayer (the one
+you get near the end / from a hidden secret) should be hidden behind a
+secret wall and have a longer respawn delay."
+
+Deathmatch only (M7 cable, M8 party, bots). The campaign stays bit-identical:
+GameState 1,376 B, `state.Player` unchanged, campaign demo hash and DEMO OK
+unchanged, campaign bench unchanged. Built on top of M8 (stein/mp), handed
+to the M8 session (exedev-64 [5dbf8e]), which merges it into stein/mp and
+then `party`. It reaches main when party does.
+
+### The arsenal (defaults, names open to Adrian)
+
+Damage to players is in bug units times `pvp_scale` (6), as for the
+existing weapons; 100 HP.
+
+| # | Weapon | Fires | Ammo |
+|---|---|---|---|
+| 0 | Swatter | as now (tap melee) | none |
+| 1 | Zapper | as now | 40 at spawn |
+| 2 | Bug spray | as now | spray cans |
+| 3 | Debugger | as now (splash bolt). Best gun: one pad behind a secret wall per arena, 60 s respawn | cartridges |
+| 4 | **FUZZER** (automatic) | hold A: a hitscan shot every 5 ticks (12/s), +-4 deg jitter from the World PRNG, 1 dmg (6 HP) | 50 per pickup, max 150 |
+| 5 | **FORK BOMB** (thrown grenade) | A throws it 0.12 cells/tick, slows with friction, bounces off walls and doors, explodes after a 90-tick fuse (it blinks faster as it runs out) for up to 15 dmg (90 HP) falling off to 0 at 2 cells; hurts the thrower too | 2 per pickup, max 6 |
+| 6 | **SHIP IT** (rocket launcher) | a rocket at 0.25 cells/tick, explodes on a wall, door or body for up to 16 dmg (96 HP) direct, splash falloff to 0 at 1.75 cells; hurts the shooter; 50-tick cooldown | 5 per pickup, max 20 |
+| 7 | **GARBAGE COLLECTOR** (hold melee) | hold A: spins up for 15 ticks, then every 4 ticks shreds the nearest foe within 1.0 cell in front for 2 dmg (12 HP); walking is 30% slower while it spins; releasing A spins it down | none (the pickup is the weapon) |
+
+Naming: Fuzzer and Fork Bomb are software-testing jokes in the same family as
+the bugs cart's crates; "Ship it" is the rocket (deploy straight to prod);
+Garbage Collector deletes what nothing references any more (and nods to the
+GCP racer). Kill feed: "DELETED BY <name>", "YOU DELETED <name>",
+"SELF-DELETED -1", "EATEN BY BUGS" stays. The score column stays "FRAGS".
+
+Weapon switching stays Select (cycles owned weapons with ammo, now up to
+8). Nothing is displaced: A fires every weapon (tap or hold).
+
+### Weapon pads (Quake-style rotation)
+
+- New legend `@` = a weapon pad. Each pad shows one weapon at a time from
+  the rotation FUZZER, FORK BOMB, SHIP IT, GARBAGE COLLECTOR, BUG SPRAY,
+  starting at (pad index) mod 5, so neighbouring pads differ. Walking over
+  it takes the weapon (or its ammo if already owned); the pad stays empty
+  for 15 s (900 ticks) and then shows the next weapon in its rotation.
+  Deterministic, World-only.
+- The existing `$` spray cans in DM arenas become `@` pads; hotfixes `+`
+  and charges `%` stay fixed (20 s as now).
+- The Debugger: `&` in a DM arena is the Debugger pad, never rotates,
+  respawns after 60 s (3,600 ticks). Every DM arena hides it behind a
+  secret wall `X` (bump to open, stays open for the match).
+- Pads per arena: Server Room 5 `@` + 1 hidden `&`; Build Farm DM 6 `@` +
+  1 hidden `&`; Data Hall 10 `@` + 2 hidden `&` (north and south recesses
+  get `X` faces). Spawn counts unchanged (6 / 8 / 16), check_level passes.
+
+### Death: the blue cyber warp-out
+
+- Rival view: instead of the fall-over sprite (rival cell 4), the dead
+  player's standing sprite dissolves in a blue warp over ~0.6 s: rows tint
+  to cyan/blue, slice into horizontal scanlines that shear sideways and
+  stretch upward, collapse into a thin vertical beam, then a few rising
+  blue pixels and gone. A short reverse (beam opening into the player) on
+  respawn during the first 20 ticks of spawn grace = warp-in.
+- Own view: the dead view turns blue (not red/dark) with a scanline
+  dissolve sweeping the view, "DELETED" banner, then "RESPAWN IN n".
+- Render-only, driven by `Match.dead[i]` / `grace` countdowns, no new state.
+
+### State (constraints from the M8 owner)
+
+- `state.Weapon` gains fuzzer=4, fork_bomb=5, ship_it=6, gc=7 (still u8).
+- Per-slot arrays in `state.Match` (padding-free, hashed raw): ammo_fuzzer,
+  ammo_bomb, ammo_rocket [16]u8; owned [16]u8 (bit per new weapon);
+  gc_spin [16]u8; pad_item [32]u8 (current weapon on each pickup slot).
+- DM projectile pool in Match (GameState.projectiles is the campaign pool
+  and must not grow): 32 entries of {x, y, vx, vy: Fixed; kind, ttl/fuse,
+  owner, flags: u8} = 640 B. Budget about 1 KB of Match growth total;
+  dm_net_test's World < 2560 assert raised with a reason if needed.
+- Rules byte 1 bits 2-7 are free; not used by default (the arsenal is
+  always on in DM).
+- match.G.version stays 1 (nothing at 1 has shipped); match.GN unchanged.
+
+### Tracks (Opus agents, one shared worktree, disjoint files, no commits)
+
+Lead pre-work (done): state.zig additions (Match 812 -> 1,564 B, World
+2,940; size asserts in match_party_test / dm_net_test raised), levels
+`PickupKind.pad` + legend `@`, new `arsenal.zig` with the constants and
+function signatures (stubs), new weapon arms in the exhaustive switches.
+Baseline (`size -A`, 29c30ce7): .text 128,852 + .data 7,944, .bss 107,200.
+
+- **Track A, sim** (`arsenal.zig`, `match.zig`, `projectiles.zig` only if
+  shared helpers are needed; campaign code paths untouched): DM weapon fire
+  (fuzzer, fork bomb, ship it, GC hold), the DM projectile pool, splash and
+  frag credit, pad rotation and timers, Debugger 60 s, select cycling over
+  owned weapons, host tests (each weapon frags as tuned, self-damage,
+  rotation order, Debugger timer, determinism of a 16-bot match).
+- **Track B, render** (`render/sprites.zig`, `render/weapon.zig`,
+  `render/hud.zig`, new `render/fx.zig`): pad and pickup sprites for the 4
+  new weapons, flying fork bomb / rocket / explosion sprites, first-person
+  view models for the 4 new weapons (GC spinning while held), HUD ammo for
+  the new weapons, the warp-out / warp-in and the blue death view.
+  Code-drawn, small (code size is the binding budget).
+- **Track C, levels + bot** (`level_parse.zig` `@`, the three DM .txt,
+  gen.zig via tools/gen_levels.sh, `bot.zig`): pads and secret Debugger
+  alcoves, bots that pick weapons by range (GC and swatter close, ship it
+  mid, fuzzer/zapper any, fork bomb when a foe is around a corner or
+  close), walk to visible pads when unarmed.
+- **Lead after**: kill feed text "DELETED" (deathmatch.zig /
+  render/scoreboard.zig, after M8 integration), check.sh + scripted runs,
+  bench_m8.sh (<12 ms worst with 16 bots), campaign bench unchanged,
+  size report, preview GIF, SPEC/PLAN status, hand-off to [5dbf8e].
+
+### Gates
+
+zig build test-stein (incl. dm_net_test, match_party_test),
+carts/snoutenstein/tools/check.sh, tools/party_e2e.sh, campaign demo hash
+unchanged, bench_m8.sh < 12 ms worst, campaign bench unchanged, .text
+reported against the 140 KB budget (and the real RAM ceiling) with
+options if over.
+
+### Deferred questions (defaults taken)
+
+1. Weapon names and numbers above.
+2. Secret walls stay open once found (as in the campaign).
+3. The rotation is the same in every arena; no lobby toggle for the arsenal.
+4. "FRAGS" stays the score name; only the kill messages say DELETED.
+5. Code size: .text+.data is 145,100 B (141.7 KiB), 1.7 KiB over the
+   self-imposed 140 KiB budget (.bss 109,200 of 120 KB). Default: the
+   budget is raised to 144 KiB for M9. The real ceiling is the 275 KB of
+   the RAM window left after the 32 KB stack, and text+data+bss is 254 KB.
+   The alternative is trimming about 2 KB of effects and view-model detail.
+
+### M9 status (2026-10-05)
+
+Done on branch stein/dm-arsenal and handed to the M8 session for
+stein/mp / party. It stays off main with the rest of the party work.
+
+**Commits**
+- c8b02d63: lead pre-work.
+- 99b13a29: tracks A, B and C.
+- 5a96cbbc: M8.1 (stein/mp 82458a3b) merged in.
+
+**Tuning and arenas**
+- Track A raised the FUZZER to 2 dmg (12 HP a hit, 9 hits, about 0.67 s);
+  at 1 dmg it out-damaged nothing. Rockets live 96 ticks.
+- Arenas: Server Room grew one row (28x21) and has 5 pads and an `X`
+  closet at (21,18). Build Farm DM has 6 pads, the `&` behind the
+  campaign's own `X` (11,19), and two new doors in column 3, so every room
+  is on a loop. Data Hall has 10 pads and `X` closets at (23,5) and
+  (24,42), symmetric. check_level.py knows `@` and checks that each arena
+  `&` is reachable only through an `X`.
+- Bots choose weapons by range (GC within 2.5 cells, held while closing;
+  SHIP IT from 2.25; a fork bomb now and then at 2-4.5), walk to visible
+  pads when holding only the starting weapons, and never go for a Debugger.
+
+**Gates**
+- zig build test-stein: 126 tests, 14 new in arsenal_test.zig.
+- tools/check.sh passes, including DEMO OK and the demo hash (campaign
+  unchanged; Track B compared campaign frames pixel for pixel). The
+  m7_local window is now 15,000 frames: 2-bot matches run up to ~10.6k
+  ticks both before and after M9.
+- tools/party_e2e.sh (2, 4, 8 and 16 badges, plus the events run) passes
+  over the real relay with World 2,940 B.
+
+**Bench**
+- bench_m8 worst 6.50 ms (Server Room, 16 bots) and 5.90 ms (Data Hall).
+- Campaign m4_rewind worst 5.73 ms (5.72 before).
+
+**Size:** .text 137,156 + .data 7,944, .bss 109,200 (see deferred 5).
+
+**Previews:** docs/preview_m9.gif (an 8-bot local match) and
+docs/m9_{warp,pads,views,blast,death}.png.
+
+**Open**
+- Hardware play test.
+- The warp-in is not seen in a preview yet; the first spawn of a match
+  has no grace, so there is no warp-in at the start.
+- View models read small (zapper-sized).
+
 ## Status
+
+M8.1 status (2026-10-05): the OS transport shipped (fork main 8ca6da6;
+frames.py and lobby.py unchanged at b994d04) and every assumption above
+was confirmed by the OS session (ordering, lossless, rejoin = a ROSTER
+without then with, ABI frozen; relay p99 5.4 ms at 16 x 60 Hz).
+Checked against the real thing: byte vectors from frames.py in
+`lib/tests/party_unit.zig` (137 lib tests); fixes: HELLO re-sent every
+2 s while joining (pyserial flushes input on DTR, so a first HELLO can
+vanish), the COBS trailing 0x01 after a full block, relay-model details;
+`cart_serial.zig` already met the OS ring checks (asserts added).
+`tools/party_e2e.sh` (`zig build party-e2e`, pyserial) runs N host badges
+on fake simulator ports through the real `badge lobby`: 2, 4, 8 and 16
+badges in sync on match.GN with bots (16 on Data Hall: 0.10% frames
+without a tick, input latency p50 0.16 / p99 4.7 ms), and an events run
+(unplug, rejoin, relay reconnect, freeze) where every leaver became a
+bot on the same tick on all badges. Open: the badge hardware check;
+relay-side, a stopped TCP simulator is not removed (kernel socket
+buffer; reported to the OS session).
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
 - 2026-09-26: M1 done and tagged `m1`. All four tracks landed as planned.
@@ -1415,3 +1862,12 @@ render check). check.sh now reads the demo level from the data file.
   demo hash and rewind pools unchanged. `docs/preview_m7.gif`: title,
   host and guest lobby, a frag from player 0's view, one from player
   1's, the results. Next: the two-badge hardware check (RUNNING.md 7).
+- 2026-10-05: M8 party deathmatch (up to 16 badges) planned; the OS
+  transport is in progress elsewhere; three tracks launched on the
+  transport-free parts (branch `stein/mp`).
+- 2026-10-05: M8 integrated on `stein/mp` (numbers under "M8 status"):
+  PARTY on the title, the 16-slot lobby, the party match frame and
+  results over `lib/lockstep_n.zig`, two-column scoreboard and results,
+  levels packed to fit the flash budget, `party_net_test.zig`,
+  `tools/bench_m8.sh`, `docs/preview_m8.gif`. Next: M8.1 and the badge
+  check (RUNNING.md section 8).

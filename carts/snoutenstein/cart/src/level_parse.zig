@@ -24,6 +24,8 @@ pub const Error = error{ TooManyRows, RowTooWide, TooManyDoors, TooManyPickups, 
 
 pub const Parsed = struct {
     cells: [size][size]u8,
+    /// `cells` packed to width x height (`level` points `Level.cells` here).
+    packed_cells: [size * size]u8,
     width: u8,
     height: u8,
     start_x: u8,
@@ -127,7 +129,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                     };
                     if (x + 1 < width) x += 1; // the arrow cell is floor
                 },
-                'c', 'i', 'g', '+', '%', '$', '*', '&' => {
+                'c', 'i', 'g', '+', '%', '$', '*', '&', '@' => {
                     if (out.pickup_count >= state.max_pickups) return error.TooManyPickups;
                     const kind: PickupKind = switch (ch) {
                         'c' => .key_coral,
@@ -137,6 +139,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                         '%' => .charge,
                         '$' => .spray_can,
                         '*' => .battery,
+                        '@' => .pad,
                         else => .debugger,
                     };
                     out.pickups[out.pickup_count] = .{ .x = xb, .y = yb, .kind = kind };
@@ -180,6 +183,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
     }
     out.width = @intCast(width);
     out.height = @intCast(height);
+    for (0..height) |y| @memcpy(out.packed_cells[y * width ..][0..width], out.cells[y][0..width]);
     for (out.spawns[0..out.spawn_count]) |*sp| sp.angle = open_facing(&out.cells, sp.x, sp.y);
     if (spawn_start) start_angle = out.spawns[0].angle;
     out.start_x = start_x.?;
@@ -216,7 +220,7 @@ pub fn level(p: *const Parsed, name: []const u8) levels.Level {
         .name = name,
         .width = p.width,
         .height = p.height,
-        .cells = p.cells,
+        .cells = p.packed_cells[0 .. @as(usize, p.width) * p.height],
         .start_x = p.start_x,
         .start_y = p.start_y,
         .start_angle = p.start_angle,
@@ -261,7 +265,7 @@ fn expect_same(want: *const levels.Level, got: *const levels.Level) !void {
     try testing.expectEqualStrings(want.name, got.name);
     try testing.expectEqual(want.width, got.width);
     try testing.expectEqual(want.height, got.height);
-    try testing.expect(std.mem.eql(u8, std.mem.asBytes(&want.cells), std.mem.asBytes(&got.cells)));
+    try testing.expectEqualSlices(u8, want.cells, got.cells);
     try testing.expectEqual(want.start_x, got.start_x);
     try testing.expectEqual(want.start_y, got.start_y);
     try testing.expectEqual(want.start_angle, got.start_angle);
@@ -283,6 +287,7 @@ test "levels/gen.zig matches the .txt sources" {
         .{ .name = "wolf_e1m1", .src = @embedFile("levels/wolf_e1m1.txt") },
         .{ .name = "server_room", .src = @embedFile("levels/server_room.txt") },
         .{ .name = "build_farm_dm", .src = @embedFile("levels/build_farm_dm.txt") },
+        .{ .name = "data_hall", .src = @embedFile("levels/data_hall.txt") },
     };
     for (sources, 0..) |e, i| {
         const l = try parse_level(&p, e.name, e.src, 0);
@@ -300,14 +305,108 @@ test "levels/gen.zig matches the .txt sources" {
     }
     try testing.expectEqualStrings("server_room", levels.all[levels.arena_indices[0]].name);
     try testing.expectEqualStrings("build_farm_dm", levels.all[levels.arena_indices[1]].name);
+    try testing.expectEqualStrings("data_hall", levels.all[levels.arena_indices[2]].name);
+    // Each arena has a spawn per suggested player (M8), at most four
+    // arenas (two bits of `match.Rules`), and the suggestion fits.
+    try testing.expectEqual(levels.arena_indices.len, levels.arena_names.len);
+    try testing.expectEqual(levels.arena_indices.len, levels.arena_max_players.len);
+    try testing.expect(levels.arena_indices.len <= 4);
+    for (levels.arena_indices, levels.arena_max_players) |ai, n| {
+        try testing.expect(levels.all[ai].spawns.len >= n);
+    }
+    try testing.expectEqual(@as(u8, 0), levels.suggest_arena(2));
+    try testing.expectEqual(@as(u8, 0), levels.suggest_arena(6));
+    try testing.expectEqual(@as(u8, 1), levels.suggest_arena(7));
+    try testing.expectEqual(@as(u8, 2), levels.suggest_arena(16));
     try testing.expectEqualStrings("test", levels.all[levels.test_index].name);
     try testing.expectEqualStrings("wolf_e1m1", levels.all[levels.e1m1_index].name);
+}
+
+/// Test helper: can a walker starting on (x, y) reach a spawn while every
+/// secret wall stays shut (floor and the other doors pass)?
+fn reaches_spawn_shut(a: *const levels.Level, x: u8, y: u8) bool {
+    var seen: [size * size]bool = @splat(false);
+    var stack: [size * size]u16 = undefined;
+    var n: usize = 1;
+    stack[0] = @as(u16, y) * size + x;
+    seen[stack[0]] = true;
+    while (n > 0) {
+        n -= 1;
+        const cx: i32 = stack[n] % size;
+        const cy: i32 = stack[n] / size;
+        for (a.spawns) |sp| if (sp.x == cx and sp.y == cy) return true;
+        const steps = [4][2]i32{ .{ 1, 0 }, .{ -1, 0 }, .{ 0, 1 }, .{ 0, -1 } };
+        for (steps) |d| {
+            const nx = cx + d[0];
+            const ny = cy + d[1];
+            const c = a.cell(nx, ny);
+            const pass = c == 0 or (levels.Level.is_door(c) and a.doors[levels.Level.door_index(c)].kind != .secret);
+            if (!pass) continue;
+            const k: u16 = @intCast(ny * size + nx);
+            if (seen[k]) continue;
+            seen[k] = true;
+            stack[n] = k;
+            n += 1;
+        }
+    }
+    return false;
+}
+
+test "arenas (M9): spawns, weapon pads, no spray cans, every Debugger behind a secret wall" {
+    // Server Room, Build Farm DM, Data Hall.
+    const want_pads = [_]usize{ 5, 6, 10 };
+    const want_debuggers = [_]usize{ 1, 1, 2 };
+    for (levels.arena_indices, levels.arena_max_players, want_pads, want_debuggers) |ai, players, np, nd| {
+        const a = &levels.all[ai];
+        try testing.expectEqual(@as(usize, players), a.spawns.len);
+        var pads: usize = 0;
+        var debuggers: usize = 0;
+        for (a.pickups) |pk| switch (pk.kind) {
+            .pad => pads += 1,
+            .debugger => {
+                debuggers += 1;
+                try testing.expect(!reaches_spawn_shut(a, pk.x, pk.y));
+            },
+            .spray_can => return error.TestUnexpectedResult, // spray is in the pad rotation
+            else => {},
+        };
+        try testing.expectEqual(np, pads);
+        try testing.expectEqual(nd, debuggers);
+    }
+    // Data Hall: walls mirror in both axes (door cells aside); pickups,
+    // spawns and doors map onto themselves under a half turn.
+    const a = &levels.all[levels.arena_indices[2]];
+    const w: i32 = a.width;
+    const h: i32 = a.height;
+    var y: i32 = 0;
+    while (y < h) : (y += 1) {
+        var x: i32 = 0;
+        while (x < w) : (x += 1) {
+            const c = a.cell(x, y);
+            for ([2]u8{ a.cell(w - 1 - x, y), a.cell(x, h - 1 - y) }) |m| {
+                if (levels.Level.is_door(c) or levels.Level.is_door(m)) continue;
+                try testing.expectEqual(levels.Level.is_wall(c), levels.Level.is_wall(m));
+            }
+            const r = a.cell(w - 1 - x, h - 1 - y);
+            try testing.expectEqual(levels.Level.is_door(c), levels.Level.is_door(r));
+        }
+    }
+    for (a.pickups) |pk| {
+        var found = false;
+        for (a.pickups) |q| found = found or (q.kind == pk.kind and q.x == w - 1 - pk.x and q.y == h - 1 - pk.y);
+        try testing.expect(found);
+    }
+    for (a.spawns) |sp| {
+        var found = false;
+        for (a.spawns) |q| found = found or (q.x == w - 1 - sp.x and q.y == h - 1 - sp.y);
+        try testing.expect(found);
+    }
 }
 
 test "parse errors" {
     var p: Parsed = undefined;
     try testing.expectError(error.TwoStarts, parse(&p, "1111\n1S>1\n1S>1\n1111\n", 0));
-    try testing.expectError(error.UnknownChar, parse(&p, "1111\n1S>1\n1.@1\n1111\n", 0));
+    try testing.expectError(error.UnknownChar, parse(&p, "1111\n1S>1\n1.~1\n1111\n", 0));
     try testing.expectError(error.NoStart, parse(&p, "1111\n1..1\n1111\n", 0));
     try testing.expectError(error.BadStartArrow, parse(&p, "11111\n1S..1\n11111\n", 0));
 }

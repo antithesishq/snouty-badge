@@ -24,7 +24,9 @@ pub const max_projectiles = 12;
 pub const max_doors = 64;
 pub const max_pickups = 256;
 
-pub const Weapon = enum(u8) { swatter = 0, zapper = 1, spray = 2, debugger = 3 };
+/// 0-3 are the campaign's; 4-7 are deathmatch only (M9 arsenal, `arsenal.zig`;
+/// their ammo lives in `Match`, never in Player).
+pub const Weapon = enum(u8) { swatter = 0, zapper = 1, spray = 2, debugger = 3, fuzzer = 4, fork_bomb = 5, ship_it = 6, gc = 7 };
 
 pub const Player = struct {
     x: Fixed,
@@ -82,6 +84,20 @@ pub const Projectile = struct {
     aux: [2]u8 = @splat(0),
 };
 
+/// One entry of `Match.dm_shots` (M9). `kind` 0 = free; see `arsenal.zig`.
+pub const DmShot = struct {
+    x: Fixed = 0,
+    y: Fixed = 0,
+    vx: Fixed = 0,
+    vy: Fixed = 0,
+    kind: u8 = 0,
+    /// Fork bomb: fuse ticks left; explosion: display ticks left.
+    ttl: u8 = 0,
+    /// Shooter slot (frag credit).
+    owner: u8 = 0,
+    aux: u8 = 0,
+};
+
 pub const Door = struct {
     /// 0 closed .. 255 fully open (16.16 would be overkill; 8 bits of open fraction).
     open: u8 = 0,
@@ -120,54 +136,111 @@ pub const no_shot: u32 = 0xFFFF_FFFF;
 
 // ---------------------------------------------------------------- deathmatch
 
+/// Players a match holds (M8: the party transport's 16 slots; the M7 cable
+/// match uses slots 0 and 1).
+pub const max_players = 16;
+/// Team modes: FFA (`Match.teams` 0), 2 or 4 teams.
+pub const max_teams = 4;
 /// Pickups an arena may hold (each has its own respawn timer).
 pub const max_match_pickups = 32;
-/// `Match.last_hit` / `killer`: who did it. 0 and 1 are the players.
-pub const by_bug: u8 = 2;
+/// The deathmatch projectile pool (M9: fork bombs, rockets, explosions),
+/// kept in Match so GameState.projectiles (the campaign pool) never grows.
+pub const max_dm_shots = 32;
+/// `Match.last_hit` / `killer`: who did it. 0..15 are the player slots.
+pub const by_bug: u8 = 0xFE;
 pub const no_one: u8 = 0xFF;
+/// `Match.winner` of a team mode: `team_win | team`.
+pub const team_win: u8 = 0x80;
 
-/// Deathmatch (M7, `match.zig`): everything two players need beyond the
-/// campaign's GameState, kept beside it (`match.World`) so the campaign
-/// state, its hash and the rewind pools (51 GameState copies) do not grow.
-/// In a match `GameState.player` is a scratch slot: `match.step` swaps
-/// each player into it in turn so sim.zig, ai.zig and projectiles.zig
-/// work on it unchanged. Plain data, padding-free (it is hashed raw).
+/// Deathmatch (M7 two badges, M8 up to 16; `match.zig`): everything the
+/// players need beyond the campaign's GameState, kept beside it
+/// (`match.World`) so the campaign state, its hash and the rewind pools
+/// (51 GameState copies) do not grow. In a match `GameState.player` is a
+/// scratch slot: `match.step` swaps each player into it in turn so sim.zig,
+/// ai.zig and projectiles.zig work on it unchanged. Plain data,
+/// padding-free (it is hashed raw). Per-player arrays are indexed by slot;
+/// only the slots in `present` take part (the others are zero HP, never
+/// targets, never drawn).
 pub const Match = struct {
-    /// Player 0 is the host's human, 1 the guest's.
-    players: [2]Player,
-    frags: [2]i16 = .{ 0, 0 },
-    deaths: [2]u16 = .{ 0, 0 },
-    /// Shots fired (swatter swings included) and shots that hit the
-    /// other player, for the results' accuracy.
-    shots: [2]u16 = .{ 0, 0 },
-    hits: [2]u16 = .{ 0, 0 },
+    /// The M7 cable: slot 0 is the host's human, 1 the guest's. A party:
+    /// the lobby's player ids.
+    players: [max_players]Player,
+    frags: [max_players]i16 = @splat(0),
+    deaths: [max_players]u16 = @splat(0),
+    /// Shots fired (swatter swings included) and shots that hit another
+    /// player (at most one per shot), for the results' accuracy.
+    shots: [max_players]u16 = @splat(0),
+    hits: [max_players]u16 = @splat(0),
     /// Ticks of the death view left; 0 = alive.
-    dead: [2]u8 = .{ 0, 0 },
+    dead: [max_players]u8 = @splat(0),
     /// Red hurt flash per player (`GameState.hurt` is the scratch copy).
-    hurt: [2]u8 = .{ 0, 0 },
-    /// Who damaged each player last: 0, 1, `by_bug` or `no_one`.
-    last_hit: [2]u8 = .{ no_one, no_one },
+    hurt: [max_players]u8 = @splat(0),
+    /// Who damaged each player last: a slot, `by_bug` or `no_one`.
+    last_hit: [max_players]u8 = @splat(no_one),
+    /// Team of each slot (0..teams-1); all 0 in FFA.
+    team: [max_players]u8 = @splat(0),
+    /// Bit per slot in the match (fixed at the start; a leaver stays, as a bot).
+    present: u16 = 0b11,
+    /// Bit per present slot driven by bot.zig (`match.hand_over`, or a
+    /// local match's stand-ins). Humans = `present & ~bots`.
+    bots: u16 = 0,
+    /// 0 = FFA, else 2 or 4 teams.
+    teams: u8 = 0,
     /// The latest death: who died and who gets the credit (`last_hit`).
     victim: u8 = no_one,
     killer: u8 = no_one,
-    /// Tick of that death (`no_shot` if none yet).
-    kill_tick: u32 = no_shot,
     /// Rules, fixed for the match (the host's lobby choice).
     arena: u8 = 0,
+    /// Frags per team (sum of its members'), team modes only.
+    team_frags: [max_teams]i16 = @splat(0),
+    /// Tick of the latest death (`no_shot` if none yet).
+    kill_tick: u32 = no_shot,
+    /// Per player in FFA, per team in team modes.
     frag_limit: u8 = 10,
     bugs: bool = false,
-    /// Set when someone reaches the frag limit or the partner left.
+    /// Set at the frag limit, or when one human (or one team's humans) is left.
     over: bool = false,
-    /// 0 or 1 once over; `no_one` for a draw (both at the limit at once).
+    /// Once over: a slot, `team_win | team`, or `no_one` for a draw
+    /// (the top score shared at the limit).
     winner: u8 = no_one,
-    /// The match ended because the other badge left (`match.forfeit`).
+    /// The match ended because the others left (`match.hand_over`).
     forfeit: bool = false,
-    _pad: [2]u8 = @splat(0),
+    _pad: [3]u8 = @splat(0),
     /// Ticks until each arena pickup comes back (0 = present or waiting
     /// to be taken).
     pickup_timer: [max_match_pickups]u16 = @splat(0),
     /// Ticks until each dead bug respawns (BUGS ON); 0 = alive.
     bug_timer: [max_enemies]u16 = @splat(0),
+    // ---- M9 arsenal (`arsenal.zig`): per-slot state of the deathmatch-only
+    // weapons (Player stays the campaign's struct).
+    ammo_fuzzer: [max_players]u8 = @splat(0),
+    ammo_bomb: [max_players]u8 = @splat(0),
+    ammo_rocket: [max_players]u8 = @splat(0),
+    /// Bit per arsenal weapon owned: 1 << (weapon - 4).
+    owned: [max_players]u8 = @splat(0),
+    /// Garbage Collector spin-up while A is held: 0 idle .. `arsenal.gc_spinup`.
+    gc_spin: [max_players]u8 = @splat(0),
+    /// Each pickup slot that is a weapon pad (`PickupKind.pad`): the
+    /// `state.Weapon` it shows (or shows next, while its timer runs).
+    pad_item: [max_match_pickups]u8 = @splat(0),
+    /// Flying fork bombs and rockets, and explosions (display only).
+    dm_shots: [max_dm_shots]DmShot = @splat(.{}),
+
+    pub fn is_present(m: *const Match, slot: usize) bool {
+        return (m.present >> @intCast(slot)) & 1 == 1;
+    }
+    pub fn is_bot(m: *const Match, slot: usize) bool {
+        return (m.bots >> @intCast(slot)) & 1 == 1;
+    }
+    /// Present, out of the death view and above 0 HP.
+    pub fn alive(m: *const Match, slot: usize) bool {
+        return m.is_present(slot) and m.dead[slot] == 0 and m.players[slot].hp > 0;
+    }
+    /// Can `a` hurt `b`? Different slots, and in a team mode different
+    /// teams (no friendly fire; a self-hit is the caller's business).
+    pub fn foes(m: *const Match, a: usize, b: usize) bool {
+        return a != b and (m.teams == 0 or m.team[a] != m.team[b]);
+    }
 };
 
 /// `sim.hash` runs FNV-1a over the raw bytes of GameState, so no struct
@@ -184,6 +257,7 @@ comptime {
     assert_no_padding(Door);
     assert_no_padding(GameState);
     assert_no_padding(Match);
+    assert_no_padding(DmShot);
 }
 
 pub fn pickup_present(s: *const GameState, i: usize) bool {
