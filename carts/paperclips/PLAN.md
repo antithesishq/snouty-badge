@@ -18,6 +18,10 @@ branch `paperclips/m1`, from origin/main 4ab9e616.
   honor), the ending (dismantle sequence) and prestige for the session.
   Cheats page behind the title code.
 - **M3: polish** after Adrian plays it (deferred questions below).
+- **Saves** (cart saves project track E, branch `saves/paperclips` off
+  `saves/m1`, never main while saves need the patched OS): the whole game
+  saved as `paperclips/game`, CONTINUE / NEW GAME on the title, autosave,
+  the exit hook. Design in docs/RUNNING.md section 9.
 
 ## Tracks (Opus agents in the one worktree, disjoint files)
 
@@ -129,6 +133,19 @@ listed without telling U and O through the lead.
     soft-float add/mul/compare (`game/softfloat*.zig`, bit-exact, ~68
     cycles an add vs compiler_rt's ~155).
   - size 172.2 KB (ReleaseSmall).
+- 2026-10-05: **Saves** (branch `saves/paperclips`, the patched OS only;
+  stock firmware unchanged). `game/snapshot.zig`: the canonicalized
+  `Game` image, LZ, 20-byte header with a layout hash; round trip
+  bit-exact at 9 checkpoints from the opening skirmish to an observed
+  stage-3 battle (`snapshot_tests.zig`). Sizes (seed 2026): 1,268 B after
+  a minute, 2,338 B with projects, 3,267 B at the HypnoDrones, 3.0-3.5 KB
+  in space, 11.9 KB during the opening skirmish, 17.6 KB the largest (a
+  fresh 200 vs 200 battle, full log). `ui/saves.zig` + title menu, 11
+  `saves:` UI tests on lib/save.zig's fake. badge-bench: Start on page 1
+  `[save 110 ms]` (116.4 ms frame, ~3.7 ms of it encoding), Exit cart mid
+  battle `[save 165 ms]` (6.6 KB), `--no-saves` one 252.9 ms probe frame
+  and nothing else; gate frames unchanged (save frames reported apart).
+  Size 197.9 KB (22 KB save buffer). Not run on a badge.
 
 ## Deferred questions (defaults taken)
 
@@ -140,6 +157,8 @@ listed without telling U and O through the lead.
 - After the credits the original offers nothing more; leave through the
   OS chord (Start+Select).
 
-- Saves: none (no OS save region). Default: session only.
+- Saves: none on the organizers' OS (session only); on the saves OS see
+  Status "Saves". Autosave every 60 s (not the original's 25 s: flash
+  wear and a 110 ms freeze per save), 5 min when idle.
 - Hold-to-repeat on buy rows (0.4 s, 8/s); none on Make Paperclip.
 - Font 5x7 in 6x8 cells. Look: black on white like the original.

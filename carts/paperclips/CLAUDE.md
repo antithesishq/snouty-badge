@@ -13,7 +13,8 @@ unchanged: the specification, never built.
   testable. The `game` module, rooted at `game/game.zig`: `Game`, `init`,
   `advance_ms`, `Action`, `act`, `enabled`, panel visibility in
   `g.panels`, messages, projects (PLAN.md has the interface). Only track L
-  edits it.
+  edits it. `snapshot.zig` is the saved game (+ `snapshot_tests.zig`,
+  ReleaseSafe in `zig build test`).
 - `cart/src/main.zig`: `start`/`update`, the badge seed (clock-mixed; wasm
   uses `cart.rand()`), the wasm shims (`present_wasm`, `read_controls`),
   the debug exports and the badge-bench hooks (`paperclips_bench`,
@@ -32,6 +33,8 @@ unchanged: the specification, never built.
   - `draw.zig`, `font.zig` + `gen/font5x7.zig`, `layout.zig`, `text.zig`
     (per-frame text arena, word wrap), `numfmt.zig` (compact formats; the
     game's exact JS formats are `game/fmt.zig`), `title.zig` + `gen/title.*`.
+  - `saves.zig`: save and continue over lib/save.zig (probe, title
+    menu state, autosave timing, calm frames, the exit hook, errors).
   - `tests.zig`: the UI host tests (in `zig build test`).
 - `tools/`: `check.sh` (the gate), `gen_font.py`, `gen_title.py`,
   `gen_scripts.py` (the input scripts in `scripts/`); track O's oracle:
@@ -50,7 +53,10 @@ unchanged: the specification, never built.
   actions); what the original does in its display code (buttonUpdate and
   friends) belongs to the game port.
 - RAM cart, ReleaseSmall (size; the frame budget has room), no sound, no
-  neopixels, no saves (the OS has no cart save region).
+  neopixels. Saves (branch `saves/m1`, the patched OS only):
+  `game/snapshot.zig` is the blob (the whole `Game`, layout-hashed, so
+  any change to `Game` refuses older saves: fine, but say so in the
+  commit), `ui/saves.zig` the policy (docs/RUNNING.md section 9).
 - Every frame redraws the whole screen (`.no_copy_full_frame`): no dirty
   rect bookkeeping.
 - Keep comptime light (the Mac build): data comes from the generators.
