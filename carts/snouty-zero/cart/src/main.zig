@@ -201,7 +201,12 @@ pub fn update() void {
         .pause => pause_frame(),
         .results => results_frame(),
         .standings => standings_frame(),
-        .lobby => lobby_frame(),
+        .lobby => {
+            lobby_frame();
+            // The handshake's HELLO overflows the receive FIFO: keep
+            // pumping while it runs (`wants_pump`).
+            if (screen == .lobby) pump_loop(null);
+        },
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -649,13 +654,13 @@ fn pump_top() void {
     if (lnk_started and !fake_link) lnk.pump(cart.micros_since_boot());
 }
 
-/// After drawing, while a race runs: keep pumping until
+/// After drawing, while a race runs or the link handshakes: keep pumping until
 /// `tuning.link_pump_until_us` into the frame (the vsync wait is the one
 /// stretch where nothing reads the receive FIFO), retrying a stalled step
 /// (`ticked`; null when there is nothing to retry).
 fn pump_loop(ticked: ?*bool) void {
     if (cart.is_wasm or fake_link or !lnk_started) return;
-    while (lnk.busy() and cart.micros_since_boot() -% frame_t0 < tuning.link_pump_until_us) {
+    while (lnk.wants_pump() and cart.micros_since_boot() -% frame_t0 < tuning.link_pump_until_us) {
         lnk.pump(cart.micros_since_boot());
         const t = ticked orelse continue;
         if (!t.* and world.w.phase != .finished) {
