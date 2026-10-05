@@ -31,6 +31,7 @@ const sim = @import("sim.zig");
 const ai = @import("ai.zig");
 const projectiles = @import("projectiles.zig");
 const bot = @import("bot.zig");
+const arsenal = @import("arsenal.zig");
 
 const Fixed = fixed.Fixed;
 const GameState = state.GameState;
@@ -313,6 +314,7 @@ pub fn init_n(w: *World, level: *const Level, level_index: u8, rules: Rules, pre
         m.players[i] = fresh(sp);
         k += 1;
     }
+    arsenal.init(m, level);
     w.gs.player = m.players[first_present(m)];
 }
 
@@ -523,6 +525,8 @@ pub fn step_n(w: *World, level: *const Level, in_raw: *const [max_players]Button
     doors(w, level);
     if (m.bugs) bugs(w, level);
     projectiles.update_match(s, level, m, pvp_scale);
+    // M9: fork bombs and rockets; their blasts' deaths count this tick.
+    arsenal.step_shots(w, level);
 
     // Every weapon from the same positions; damage lands after all fired.
     var pending: [max_players][max_players]i16 = @splat(@splat(0));
@@ -537,7 +541,7 @@ pub fn step_n(w: *World, level: *const Level, in_raw: *const [max_players]Button
         }
         var shot: sim.Shot = .{ .rivals = rivals[0..nr], .tag = i + 1 };
         swap_in(w, i);
-        sim.update_weapon(s, level, in[i], &shot);
+        arsenal.update(w, level, i, in[i], &shot);
         swap_out(w, i);
         if (shot.fired) m.shots[i] +%= 1;
         for (rivals[0..nr]) |r| pending[i][r.slot] = r.damage;
@@ -611,6 +615,10 @@ fn move(w: *World, level: *const Level, i: usize, b: Buttons) void {
     }
     if (b.up) fwd = sim.walk_speed;
     if (b.down) fwd = -sim.back_speed;
+    // A spinning Garbage Collector slows every direction (exact 1.0 otherwise).
+    const scale = arsenal.walk_scale(m, i);
+    fwd = fixed.mul(fwd, scale);
+    side = fixed.mul(side, scale);
     if (p.frozen > 0) {
         p.frozen -= 1;
         fwd = 0;
@@ -636,16 +644,21 @@ fn move(w: *World, level: *const Level, i: usize, b: Buttons) void {
             }
         }
     }
+    swap_out(w, i);
+    // Pickups work on the slot itself (`arsenal.take_pad` reads the Match).
     const cx = fixed.to_int(p.x);
     const cy = fixed.to_int(p.y);
     const np = @min(level.pickups.len, state.max_match_pickups);
     for (level.pickups[0..np], 0..) |pk, k| {
         if (pk.x != cx or pk.y != cy or !state.pickup_present(s, k)) continue;
-        sim.apply_pickup(p, pk.kind);
+        if (pk.kind == .pad) {
+            m.pickup_timer[k] = arsenal.take_pad(w, i, k);
+        } else {
+            sim.apply_pickup(&m.players[i], pk.kind);
+            m.pickup_timer[k] = arsenal.respawn_ticks(pk.kind);
+        }
         state.take_pickup(s, k);
-        m.pickup_timer[k] = pickup_respawn;
     }
-    swap_out(w, i);
 }
 
 /// The nearest living player to (x, y); the lowest slot on a tie, the
@@ -712,6 +725,7 @@ fn die(w: *World, i: usize) void {
     m.dead[i] = death_ticks;
     m.deaths[i] +%= 1;
     m.players[i].frozen = 0;
+    m.gc_spin[i] = 0;
     const k = m.last_hit[i];
     if (k == i) {
         m.frags[i] -= 1;
@@ -763,6 +777,7 @@ fn respawn(w: *World, level: *const Level, i: usize) void {
     m.players[i].prev = prev;
     m.players[i].grace = spawn_grace;
     m.last_hit[i] = state.no_one;
+    arsenal.reset_slot(m, i);
 }
 
 fn tick_pickups(w: *World, level: *const Level) void {

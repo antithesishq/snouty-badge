@@ -2,6 +2,7 @@
 //!
 //!     zig build run-lynx -- <rom> <script.json|-> <updates> <outdir>
 //!         [--every N] [--at U,U,...] [--idle-sleep] [--quiet] [--wav FILE]
+//!         [--uart]
 //!
 //! from the repository root (paths are relative to it). `<updates>` badge
 //! updates are run with the preview/badge-bench input script (`-`: none,
@@ -16,7 +17,9 @@
 //! `--wav FILE` writes the sound of the run (`Lynx.audio_out` after every
 //! update, `core.audio.samples_per_frame` samples each; silence for the
 //! splash updates that do not step the core) as an 8-bit unsigned mono
-//! WAV at `core.audio.sample_rate` (docs/AUDIO.md).
+//! WAV at `core.audio.sample_rate` (docs/AUDIO.md). `--uart` attaches a
+//! ComLynx port with nothing else on the wire (the real UART instead of
+//! the stub: a console alone hears its own frames; docs/COMLYNX.md).
 //!
 //! The hashes are the golden test's (tests/golden.zig), so a run here
 //! gives the values to pin there.
@@ -31,9 +34,10 @@ var lynx: core.Lynx = undefined;
 var rom_buf: [512 * 1024 + 64]u8 = undefined;
 var script_buf: [1 << 16]u8 = undefined;
 var ppm_buf: [runner.ppm_size]u8 = undefined;
+var port: core.comlynx.Port = .{};
 
 fn usage() noreturn {
-    std.debug.print("usage: zig build run-lynx -- <rom> <script.json|-> <updates> <outdir> [--every N] [--at U,U,...] [--idle-sleep] [--quiet] [--wav FILE]\n", .{});
+    std.debug.print("usage: zig build run-lynx -- <rom> <script.json|-> <updates> <outdir> [--every N] [--at U,U,...] [--idle-sleep] [--quiet] [--wav FILE] [--uart]\n", .{});
     std.process.exit(2);
 }
 
@@ -56,6 +60,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var idle_sleep = false;
     var quiet = false;
     var wav_path: ?[]const u8 = null;
+    var with_uart = false;
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "--every")) {
             every = std.fmt.parseInt(u32, args.next() orelse usage(), 10) catch usage();
@@ -66,6 +71,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             idle_sleep = true;
         } else if (std.mem.eql(u8, a, "--quiet")) {
             quiet = true;
+        } else if (std.mem.eql(u8, a, "--uart")) {
+            with_uart = true;
         } else if (std.mem.eql(u8, a, "--wav")) {
             wav_path = args.next() orelse usage();
         } else usage();
@@ -89,6 +96,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var run = runner.Run.init(&lynx, cart, controls);
     lynx.idle_sleep = idle_sleep;
+    if (with_uart) lynx.attach_link(&port);
     const lay = core.cart.parse(rom, @intCast(rom.len));
     std.debug.print("run-lynx: {s}: \"{s}\" {d} B, {d} B blocks, {s}; boot {s}\n", .{
         rom_path,                                         lay.title(), rom.len, lay.block_size, if (lay.headered) "headered" else "headerless",

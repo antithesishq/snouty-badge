@@ -62,9 +62,12 @@
 //!   audio 0, audio 3's clocks a linked timer 1. Only while timer 1 is
 //!   linked and counting are the channels' underflows events (`aud_event`).
 //! - CTLB borrow-in/out and last clock read 0.
-//! - UART: transmitter always ready and empty (SERCTL reads $A0), nothing
-//!   received; with TXINTEN set the serial interrupt (INTSET bit 4) is held
-//!   on, level triggered as on hardware. Timer 4 never sets bit 4 itself.
+//! - UART (core/uart.zig, docs/COMLYNX.md): with no ComLynx port attached
+//!   (`uart.on` false, the default) the M1 stub: transmitter always ready
+//!   and empty (SERCTL reads $A0), nothing received; with TXINTEN set the
+//!   serial interrupt (INTSET bit 4) is held on, level triggered as on
+//!   hardware. Attached, the real UART runs (timer 4 as its baud clock,
+//!   its own event `uart_event`). Timer 4 never sets bit 4 itself.
 //! - DISPCTL flip (bit 1) is ignored (M1).
 
 /// Mikey's clock type: 16 MHz ticks since `Lynx.tick_base` (core/lynx.zig
@@ -129,6 +132,7 @@ pub const serctl_idle: u8 = 0x80 | 0x20;
 const link_next = [8]u8{ 2, 3, 4, 5, 0xFF, 7, 0xFF, 0xFF };
 
 const audio = @import("audio.zig");
+const uart = @import("uart.zig");
 
 /// Timer 2 counts 101..0 on the visible lines (101 = the top line).
 pub const last_visible_line: u8 = 101;
@@ -212,6 +216,10 @@ pub const Mikey = struct {
     /// The audio channels' next underflow while timer 1 is linked and
     /// counting (audio 3 clocks it), else never.
     aud_event: Tick = ticks_never,
+    /// The UART's next event (core/uart.zig: a bit edge at which an
+    /// enabled serial interrupt level could rise), else never. Never while
+    /// no ComLynx port is attached.
+    uart_event: Tick = ticks_never,
     /// Tick of the next display burst or refresh (see `dma_ticks_per_burst`).
     dma_next: Tick = 0,
     /// Display bursts left on the current visible line (0: refresh).
@@ -251,6 +259,8 @@ pub const Mikey = struct {
     /// The four audio channels, the stereo registers and the frame
     /// renderer (core/audio.zig).
     audio: audio.Audio = .{},
+    /// The UART (core/uart.zig); `uart.on` only with a port attached.
+    uart: uart.Uart = .{},
     /// Every other register as last written (MTEST, the unallocated
     /// addresses): read back as stored.
     regs: [256]u8 = @splat(0),
@@ -303,6 +313,11 @@ pub const Mikey = struct {
                 m.reschedule();
                 continue;
             }
+            if (m.uart_event == t_ev) {
+                uart.on_event(m, t_ev);
+                m.reschedule();
+                continue;
+            }
             var i: u3 = 0;
             while (true) : (i += 1) {
                 if (m.event_mask & (@as(u8, 1) << i) != 0 and m.timers[i].expire == t_ev) break;
@@ -330,6 +345,7 @@ pub const Mikey = struct {
         if (t.ctla & Ctla.reload != 0) t.value = t.backup;
         if (i == 2) m.vblank_count +%= 1;
         if (i == 7) audio.timer7_borrow(m, at);
+        if (i == 4 and m.uart.on) uart.t4_borrow(m, at);
         const n = link_next[i];
         if (n != 0xFF) m.borrow_in(@intCast(n), at);
         if (i == 0) m.line_start(at);
@@ -396,10 +412,10 @@ pub const Mikey = struct {
         return nt.linked() and nt.ctla & Ctla.count != 0;
     }
 
-    fn reschedule(m: *Mikey) void {
+    pub fn reschedule(m: *Mikey) void {
         const t1 = &m.timers[1];
         m.aud_event = if (t1.linked() and t1.ctla & Ctla.count != 0) m.audio.next else ticks_never;
-        var next = m.aud_event;
+        var next = @min(m.aud_event, m.uart_event);
         var mask: u8 = 0;
         for (&m.timers, 0..) |*t, k| {
             const i: u3 = @intCast(k);
@@ -448,6 +464,12 @@ pub const Mikey = struct {
         return @intCast((t.expire - next_edge) >> s);
     }
 
+    /// The tick of timer i's next underflow (after a catch-up), or never.
+    pub fn next_underflow(m: *Mikey, i: u3) Tick {
+        m.settle(i);
+        return m.timers[i].expire;
+    }
+
     /// Stop the clock-derived representation: `value` becomes the count.
     fn freeze(m: *Mikey, i: u3) void {
         const t = &m.timers[i];
@@ -468,6 +490,9 @@ pub const Mikey = struct {
 
     fn timer_write(m: *Mikey, addr: u8, v: u8) void {
         const i: u3 = @intCast(addr >> 2);
+        // Timer 4 is the UART's baud clock: its edges up to now first.
+        const clock = i == 4 and m.uart.on;
+        if (clock) uart.before_clock_change(m);
         // The channels run up to now under the old settings first (timer
         // 7 may clock audio 0, timer 1 may become linked behind audio 3).
         audio.sync_clocks(m);
@@ -491,6 +516,7 @@ pub const Mikey = struct {
         }
         m.thaw(i);
         audio.relink(m);
+        if (clock) uart.after_clock_change(m);
         m.reschedule();
     }
 
@@ -518,6 +544,12 @@ pub const Mikey = struct {
     pub fn read(m: *Mikey, addr: u8) u8 {
         if (addr < 0x20) return m.timer_read(addr);
         if (audio.is_audio_reg(addr)) return audio.read(m, addr);
+        if (m.uart.on) switch (addr) {
+            Reg.serctl => return uart.read_ctl(m),
+            Reg.serdat => return uart.read_data(m),
+            Reg.intrst, Reg.intset => uart.sync_irq(m),
+            else => {},
+        };
         return switch (addr) {
             Reg.intrst, Reg.intset => m.pending(),
             Reg.magrdy0, Reg.magrdy1, Reg.audin => 0,
@@ -551,6 +583,27 @@ pub const Mikey = struct {
             if (m.timers[1].linked()) m.reschedule();
             return;
         }
+        if (m.uart.on) switch (addr) {
+            Reg.serctl => {
+                m.regs[addr] = v;
+                return uart.write_ctl(m, v);
+            },
+            Reg.serdat => {
+                m.regs[addr] = v;
+                return uart.write_data(m, v);
+            },
+            Reg.intrst => {
+                uart.sync_irq(m);
+                m.intset &= ~v;
+                return uart.after_intrst(m);
+            },
+            Reg.mtest0 => {
+                uart.before_clock_change(m);
+                m.regs[addr] = v;
+                return uart.after_clock_change(m);
+            },
+            else => {},
+        };
         m.regs[addr] = v;
         switch (addr) {
             Reg.intrst => m.intset &= ~v,
@@ -587,6 +640,8 @@ pub const Mikey = struct {
         m.next_event -|= d;
         if (m.timer_event != ticks_never) m.timer_event -|= d;
         if (m.aud_event != ticks_never) m.aud_event -|= d;
+        if (m.uart_event != ticks_never) m.uart_event -|= d;
+        if (m.uart.on) uart.rebase(m, d);
         audio.rebase(m, d);
         m.dma_next -|= d;
         m.dma_line_end -|= d;

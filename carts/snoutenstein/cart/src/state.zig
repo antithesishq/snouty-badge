@@ -24,7 +24,9 @@ pub const max_projectiles = 12;
 pub const max_doors = 64;
 pub const max_pickups = 256;
 
-pub const Weapon = enum(u8) { swatter = 0, zapper = 1, spray = 2, debugger = 3 };
+/// 0-3 are the campaign's; 4-7 are deathmatch only (M9 arsenal, `arsenal.zig`;
+/// their ammo lives in `Match`, never in Player).
+pub const Weapon = enum(u8) { swatter = 0, zapper = 1, spray = 2, debugger = 3, fuzzer = 4, fork_bomb = 5, ship_it = 6, gc = 7 };
 
 pub const Player = struct {
     x: Fixed,
@@ -82,6 +84,20 @@ pub const Projectile = struct {
     aux: [2]u8 = @splat(0),
 };
 
+/// One entry of `Match.dm_shots` (M9). `kind` 0 = free; see `arsenal.zig`.
+pub const DmShot = struct {
+    x: Fixed = 0,
+    y: Fixed = 0,
+    vx: Fixed = 0,
+    vy: Fixed = 0,
+    kind: u8 = 0,
+    /// Fork bomb: fuse ticks left; explosion: display ticks left.
+    ttl: u8 = 0,
+    /// Shooter slot (frag credit).
+    owner: u8 = 0,
+    aux: u8 = 0,
+};
+
 pub const Door = struct {
     /// 0 closed .. 255 fully open (16.16 would be overkill; 8 bits of open fraction).
     open: u8 = 0,
@@ -127,6 +143,9 @@ pub const max_players = 16;
 pub const max_teams = 4;
 /// Pickups an arena may hold (each has its own respawn timer).
 pub const max_match_pickups = 32;
+/// The deathmatch projectile pool (M9: fork bombs, rockets, explosions),
+/// kept in Match so GameState.projectiles (the campaign pool) never grows.
+pub const max_dm_shots = 32;
 /// `Match.last_hit` / `killer`: who did it. 0..15 are the player slots.
 pub const by_bug: u8 = 0xFE;
 pub const no_one: u8 = 0xFF;
@@ -192,6 +211,20 @@ pub const Match = struct {
     pickup_timer: [max_match_pickups]u16 = @splat(0),
     /// Ticks until each dead bug respawns (BUGS ON); 0 = alive.
     bug_timer: [max_enemies]u16 = @splat(0),
+    // ---- M9 arsenal (`arsenal.zig`): per-slot state of the deathmatch-only
+    // weapons (Player stays the campaign's struct).
+    ammo_fuzzer: [max_players]u8 = @splat(0),
+    ammo_bomb: [max_players]u8 = @splat(0),
+    ammo_rocket: [max_players]u8 = @splat(0),
+    /// Bit per arsenal weapon owned: 1 << (weapon - 4).
+    owned: [max_players]u8 = @splat(0),
+    /// Garbage Collector spin-up while A is held: 0 idle .. `arsenal.gc_spinup`.
+    gc_spin: [max_players]u8 = @splat(0),
+    /// Each pickup slot that is a weapon pad (`PickupKind.pad`): the
+    /// `state.Weapon` it shows (or shows next, while its timer runs).
+    pad_item: [max_match_pickups]u8 = @splat(0),
+    /// Flying fork bombs and rockets, and explosions (display only).
+    dm_shots: [max_dm_shots]DmShot = @splat(.{}),
 
     pub fn is_present(m: *const Match, slot: usize) bool {
         return (m.present >> @intCast(slot)) & 1 == 1;
@@ -224,6 +257,7 @@ comptime {
     assert_no_padding(Door);
     assert_no_padding(GameState);
     assert_no_padding(Match);
+    assert_no_padding(DmShot);
 }
 
 pub fn pickup_present(s: *const GameState, i: usize) bool {

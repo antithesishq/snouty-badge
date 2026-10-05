@@ -43,6 +43,16 @@ picture: Left/Right keep scrubbing, B or a Select tap play on from there
 (the later history is dropped), Up/Down/A bring the menu back. Reset and
 Pick ROM forget the history.
 
+Party (ComLynx, docs/COMLYNX.md): the menu's Party row opens the PARTY
+lobby. It needs the fork firmware with the cart serial port and `badge
+lobby` running on the laptop the badges are plugged into; badges running
+the same ROM meet in one room. A: ready; the host (the first badge in)
+picks SYNC with Left/Right (T+25 MS by default; RELAY for no waiting)
+and starts with Start once everyone is ready. Every badge then restarts
+the game linked, as Lynxes on a ComLynx cable. While linked there is no
+fast forward or scrubbing, the game runs on behind the menu, and the
+Party row reads Leave party.
+
 Fast forward: tap Select, then press it again within 200 ms and hold it.
 The game runs faster for as long as Select stays held, the d-pad and
 buttons still reaching it; letting go is 1x again and delivers nothing.

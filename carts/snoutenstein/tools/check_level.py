@@ -20,7 +20,12 @@ doors), which only print.
 
 Deathmatch arenas (M7) are the levels with spawn points (P): they need no
 S (the first P is the start), no exit and no keys, and at least four
-spawns, every one reachable.
+spawns, every one reachable. M9: at most 32 pickups (`state.max_match_pickups`,
+one respawn timer each), weapon pads (@) only in arenas, no spray cans ($,
+the spray is in the pad rotation), and every Debugger (&) hidden: it must
+not be reachable from the start with the secret walls (X) shut, and must be
+once they open. Every level: a secret wall wears the texture of the wall
+run it sits in, so both walls beside it along the run must match.
 """
 import os
 import sys
@@ -29,11 +34,13 @@ WALLS = set("#12345678")
 DOORS = {"D": "plain", "C": "coral", "I": "iris", "G": "gold", "E": "exit", "X": "secret"}
 LOCKS = {"C": "c", "I": "i", "G": "g"}
 PICKUPS = {"c": "key_coral", "i": "key_iris", "g": "key_gold", "+": "hotfix",
-           "%": "charge", "$": "spray_can", "*": "battery", "&": "debugger"}
+           "%": "charge", "$": "spray_can", "*": "battery", "&": "debugger",
+           "@": "pad"}
 ENEMIES = {"a": "gnat", "w": "wasp", "b": "beetle", "s": "spider", "H": "boss"}
 ARROWS = "><v^"
 SPAWN = "P"
 MIN_SPAWNS = 4
+MAX_MATCH_PICKUPS = 32
 MAX_ENEMIES, MAX_DOORS, MAX_PICKUPS = 40, 64, 256
 SOFT_MAX_ENEMIES = 25
 
@@ -105,6 +112,11 @@ def check(path):
                 ud = cell(grid, w, h, x, y - 1) in WALLS and cell(grid, w, h, x, y + 1) in WALLS
                 if lr == ud:
                     errors.append(f"door {ch} at {x},{y} is not in a one-cell gap between two walls")
+                elif ch == "X":
+                    a, b = ((cell(grid, w, h, x - 1, y), cell(grid, w, h, x + 1, y)) if lr
+                            else (cell(grid, w, h, x, y - 1), cell(grid, w, h, x, y + 1)))
+                    if a != b:
+                        errors.append(f"secret wall X at {x},{y} sits between {a!r} and {b!r}: it shows one, not both")
     n_enemies = sum(counts.get(k, 0) for k in ENEMIES)
     n_pickups = sum(counts.get(k, 0) for k in PICKUPS)
     if n_enemies > MAX_ENEMIES:
@@ -127,6 +139,12 @@ def check(path):
         for ch in "cigCIGE":
             if counts.get(ch):
                 errors.append(f"arena has {ch!r} (no keys, locks or exit in deathmatch)")
+        if counts.get("$"):
+            errors.append("arena has '$' (M9: spray cans became weapon pads '@', the spray is in their rotation)")
+        if n_pickups > MAX_MATCH_PICKUPS:
+            errors.append(f"arena has {n_pickups} pickups > {MAX_MATCH_PICKUPS} (one respawn timer each)")
+    elif counts.get("@"):
+        errors.append("weapon pads '@' are for deathmatch arenas only")
 
     # Key-aware flood fill.
     keys = set()
@@ -158,6 +176,22 @@ def check(path):
         if len(seen) == seen_before and len(keys) == keys_before:
             break
 
+    if arena and counts.get("&"):
+        shut = {(sx, sy)}
+        stack = [(sx, sy)]
+        while stack:
+            x, y = stack.pop()
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                c = cell(grid, w, h, nx, ny)
+                if (nx, ny) in shut or c in WALLS or c == "X":
+                    continue
+                shut.add((nx, ny))
+                stack.append((nx, ny))
+        for y in range(h):
+            for x in range(w):
+                if grid[y][x] == "&" and (x, y) in shut:
+                    errors.append(f"Debugger & at {x},{y} is in the open (M9: arenas hide it behind a secret wall X)")
+
     unreachable = []
     exit_ok = False
     exits = 0
@@ -182,7 +216,8 @@ def check(path):
           f" (missing {sorted(set(range(1, 9)) - textures)})"))
     print(f"  key order: {', '.join(order) or '-'}")
     if arena:
-        print(f"  arena: {len(spawns)} spawns; reachable {floor_seen}/{floor_total} open cells")
+        print(f"  arena: {len(spawns)} spawns, {counts.get('@', 0)} weapon pads, "
+              f"{counts.get('&', 0)} hidden Debuggers; reachable {floor_seen}/{floor_total} open cells")
     else:
         print(f"  reachable {floor_seen}/{floor_total} open cells; exit "
               f"{'reachable' if exit_ok else 'NOT reachable'}")

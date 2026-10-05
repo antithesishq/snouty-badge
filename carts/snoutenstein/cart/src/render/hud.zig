@@ -7,6 +7,7 @@ const gfx = @import("gfx");
 const state = @import("../state.zig");
 const blit = @import("blit.zig");
 const portrait = @import("portrait.zig");
+const fx = @import("fx.zig");
 
 pub const bar_y: i32 = 104;
 pub const bar_h: u32 = 24;
@@ -52,6 +53,10 @@ const max_rewind: u32 = 600;
 /// of `s.player.rewind_meter`, so the clock counts down the budget.
 pub var meter_override: ?u16 = null;
 
+/// Deathmatch (M9): the shown slot's ammo for an arsenal weapon
+/// (`arsenal.ammo`), set by the match frame; the Player holds none.
+pub var dm_ammo: ?u8 = null;
+
 /// Once per displayed tick: advances the portrait's render-only state.
 pub fn tick(s: *const state.GameState) void {
     portrait.tick(s);
@@ -73,19 +78,32 @@ pub fn draw_bar(s: *const state.GameState) void {
     const hp_color = if (hp > 60) green else if (hp > 25) coral else red;
     if (fill > 0) cart.rect(.{ .x = hp_bar_x, .y = row2_y, .width = fill, .height = hp_bar_h, .fill_color = hp_color });
 
-    // x 32..63: ammo icon + count (swatter: a dash).
+    // x 32..63: ammo icon + count (swatter and Garbage Collector: a dash;
+    // three digits move left so they clear the portrait frame at x 66).
     switch (p.weapon) {
-        .swatter => text_in("-", ammo_x, 32, mid_y, grey),
-        .zapper, .spray, .debugger => {
-            const icon: u32, const n: u8 = switch (p.weapon) {
-                .zapper => .{ icon_zapper, p.ammo_zapper },
-                .spray => .{ icon_spray, p.ammo_spray },
-                else => .{ icon_debugger, p.ammo_debugger },
+        .swatter, .gc => text_in("-", ammo_x, 32, mid_y, grey),
+        else => {
+            const n: u8 = switch (p.weapon) {
+                .zapper => p.ammo_zapper,
+                .spray => p.ammo_spray,
+                .debugger => p.ammo_debugger,
+                else => dm_ammo orelse 0,
             };
-            blit.cell(gfx.hud, 8, 8, icon, ammo_x + 3, mid_y, .{});
+            const dx: i32 = if (n >= 100) 2 else 0;
+            const k = @backingInt(p.weapon);
+            if (k >= 4) {
+                fx.screen(fx.icons[k - 4], ammo_x + 3 - dx, mid_y);
+            } else {
+                const icon: u32 = switch (p.weapon) {
+                    .zapper => icon_zapper,
+                    .spray => icon_spray,
+                    else => icon_debugger,
+                };
+                blit.cell(gfx.hud, 8, 8, icon, ammo_x + 3 - dx, mid_y, .{});
+            }
             var abuf: [4]u8 = undefined;
             const a = fmt(&abuf, "{d:>2}", .{n});
-            cart.text(.{ .str = a, .x = ammo_x + 13, .y = mid_y, .text_color = if (n == 0) red else anti_white });
+            cart.text(.{ .str = a, .x = ammo_x + 13 - 2 * dx, .y = mid_y, .text_color = if (n == 0) red else anti_white });
         },
     }
 

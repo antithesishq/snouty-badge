@@ -32,9 +32,7 @@ const levels = @import("levels.zig");
 const sim = @import("sim.zig");
 const match = @import("match.zig");
 const deathmatch = @import("deathmatch.zig");
-const view = @import("render/view.zig");
 const sprites = @import("render/sprites.zig");
-const weapon = @import("render/weapon.zig");
 const hud = @import("render/hud.zig");
 const scoreboard = @import("render/scoreboard.zig");
 const slots = @import("render/slots.zig");
@@ -569,16 +567,12 @@ pub fn draw_match(pad: Buttons) void {
     const dead = m.dead[me] > 0;
     sprites.show_enemies = m.bugs;
     sprites.set_rivals(m, me, &shown.player);
-    view.shade_override = if (dead or shown.hurt > 0) 5 else null;
-    view.draw(&shown, arena());
+    deathmatch.draw_view(m, me, &shown, pad);
     sprites.clear_rivals();
-    sprites.show_enemies = true;
-    if (!dead) weapon.draw(&shown, pad.up or pad.down or (pad.b and (pad.left or pad.right)));
-    hud.draw_bar(&shown);
     scoreboard.draw_rank(m, me);
     scoreboard.draw_kill_feed(m, me, names(), world.gs.tick);
     var buf: [24]u8 = undefined;
-    if (dead) band(fmt(&buf, "RESPAWN IN {d}", .{(@as(u32, m.dead[me]) + 59) / 60}), 46, hud.anti_white);
+    if (dead) deathmatch.draw_dead(m, me);
     if (notice_left > 0) {
         notice_left -= 1;
         var nbuf: [4]u8 = undefined;

@@ -47,7 +47,8 @@ test "Match is padding-free and sized for 16" {
     var n: usize = 0;
     inline for (@typeInfo(state.Match).@"struct".field_types) |ft| n += @sizeOf(ft);
     try testing.expectEqual(n, @sizeOf(state.Match));
-    try testing.expectEqual(@as(usize, 812), @sizeOf(state.Match));
+    // M8 812 B; M9 arsenal +752 (per-slot ammo/owned/spin, pad items, 32 DmShots).
+    try testing.expectEqual(@as(usize, 1564), @sizeOf(state.Match));
     try testing.expectEqual(@sizeOf(state.GameState) + @sizeOf(state.Match), @sizeOf(World));
     try testing.expectEqual(@as(usize, 16), @typeInfo(@TypeOf(@as(state.Match, undefined).players)).array.len);
     if (report) std.debug.print("\nMatch {d} B, World {d} B, GameState {d} B\n", .{ @sizeOf(state.Match), @sizeOf(World), @sizeOf(state.GameState) });

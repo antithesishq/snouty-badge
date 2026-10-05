@@ -28,6 +28,7 @@ render state.
 | `lib/tests/party_unit.zig` | COBS and every v1 message against byte vectors, the client, the relay model |
 | `lib/tests/lockstep_n_unit.zig` | 2 to 17 badges on the relay model (section 7) |
 | `tools/party_e2e/main.zig`, `tools/party_e2e.sh` | N badges in one process over the real `badge lobby` (section 7.1); `zig build party-e2e` builds it, never part of a cart build |
+| `lib/party_host.zig` | `party`, `party_virtual` and `cart_serial` as one module for a cart's host tests (party_virtual imports party.zig itself, so they cannot be two modules); carts on the badge import the files directly |
 | `carts/snoutenstein/cart/src/party_host.zig` | the party deathmatch's pure core as one module root for host programs (party_e2e) |
 
 Carts import one module, `lib/lockstep_n.zig`, and reach the client as
@@ -140,7 +141,10 @@ writes a frame whole or not at all. While no WELCOME comes, `LockstepN`
 says HELLO again every 2 s (`party.hello_retry_us`, as the fork's own
 `cart.lobby`): a host that opens a serial port flushes its input right
 after raising DTR (pyserial does), so a HELLO sent at once can be lost,
-and the end to end runs lost exactly that HELLO on a pty. Should both
+and the end to end runs lost exactly that HELLO on a pty. The fork now
+opens serial links with DTR low and raises it after the flush, and
+"until WELCOME, re-send HELLO every 2 s" is a spec rule for every cart
+(fork main after c1fe509). Should both
 arrive, the relay takes the second as a rejoin, which is harmless in the
 lobby.
 
@@ -321,7 +325,10 @@ same) and end to end (section 7.1).
 
 **Drain every frame, and sizing.** The relay (one thread, frames queued
 in arrival order) removes a player only when more than 64 KiB has waited
-for it for 1 s, or 1 MiB is waiting (`--queue-limit`, 16 times that); `lib/party_virtual.zig` models
+for it for 1 s, or 1 MiB is waiting (`--queue-limit`, 16 times that),
+and (fork main after c1fe509) any link with no write progress for 5 s
+(`dead_time`; SocketLink sets SO_SNDBUF to 4 KB, so a stopped simulator
+shows within 1-2 s more); `lib/party_virtual.zig` models the queue rules
 exactly that (`stuck_limit`, `stuck_us`, `hard_limit`; its queue holds
 256 KiB, so that is its hard limit, and tests scale the stuck limit down
 per port where they want a removal soon). A 16-badge race brings 15 x 6
@@ -349,7 +356,16 @@ way.
 who gets DATA(from = itself) at its place in the room's order). LockstepN
 does not use it (it applies its own byte locally and ignores DATA from
 itself); `party.Client.broadcast_echo` is there for carts that need a
-shared line, such as the Lynx ComLynx emulation.
+shared line. Finding from the Lynx ComLynx work
+(`carts/snouty-lynx/docs/COMLYNX.md`): a relay round trip is far too
+slow for a UART's own echo (Warbirds wants it within about 0.5 ms), so
+the Lynx echoes locally and sends only its GO through 0xFE. Self-echo is
+for control messages that must take their place in the room's order, not
+for per-byte traffic.
+
+End-to-end port ranges (fake simulator ports, never the real 7341-7356):
+Snoutenstein `tools/party_e2e.sh` 27341+, Genesis 27400-27449, Lynx
+`zig build lynx-e2e` 27500-27549.
 
 ## 6. Timing and the input delay
 
@@ -467,7 +483,8 @@ finish in sync. Input latency p50 0.13 ms, p99 4.6 ms.
 What the real relay showed that the model had not: a HELLO sent the
 moment a serial link opens can be lost (pyserial flushes input right
 after raising DTR), so the client now retries it every 2 s (section
-4.1); the relay never removes a stopped simulator over TCP (section 5);
+4.1); the relay never removed a stopped simulator over TCP (fixed in the
+fork by the 5 s `dead_time`, section 5);
 rooms count from 1 and a HELLO of another version leaves the room first
 (the model now does the same).
 
