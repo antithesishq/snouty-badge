@@ -9,12 +9,15 @@ Reads cart/src/tracks/*.track (SPEC section 7) and writes the files of
 PLAN.md "Generated data formats" into cart/src/gen/tracks/ (M3: embedded
 by track.zig with @embedFile, so a new track needs no build.zig entry):
 
-  <league>_tiles.bin   128 tiles x 8x8 palette indices (8192 bytes)
+  <league>_tiles.bin   128 tiles x 8x8 palette indices (8192 bytes), packed
+                       like the maps (track.zig unpacks them into a RAM slot)
   <league>_pal.bin     256 x u16 RGB565, entry 0 = fog/horizon colour
   <league>_horizon.bin front 512x32 4bpp, back 256x32 4bpp, 2 x 16 x u16
+                       (12352 bytes), packed like the maps
   <league>_attr.bin    128 attributes, one per tile index
   <track>_map.bin      128x128 tile indices, map[y][x], packed (below)
-  <track>_center.bin   256 samples x (x u16, y u16, tangent u16, half u8, flags u8)
+  <track>_center.bin   256 samples x 6 bytes: u32 (x bits 0..9, y 10..19, tangent
+                       >> 4 in 20..31), half u8, flags u8
                        flags: bit 0 wall, 1 open, 3 coolant, 4 bay, 5 vent,
                        6 ramp, 7 hill (of the sample's segment); bit 2 crates
                        (on one sample only: an RMA crate row there)
@@ -439,7 +442,7 @@ def build_track(trk, ts, lg, rng):
     # Cable ruts: short runs of worn grooves along the travel axis, scattered
     # over the plain surface (the league's RUT tiles; purely visual).
     for ty, tx in np.argwhere(surf):
-        if plain(ty, tx) and tmap[ty, tx] != SURF_DOT and rng.random() < 0.07:
+        if plain(ty, tx) and tmap[ty, tx] != SURF_DOT and rng.random() < 0.04:
             tmap[ty, tx] = RUT + axis_of(tturn(jmap[ty, tx]))
     surf_list = [tuple(p) for p in np.argwhere(surf)]
 
@@ -633,7 +636,8 @@ def center_bytes(trk):
         x, y = int(round(trk.dx[j])), int(round(trk.dy[j]))
         h = int(round(trk.dhalf[j]))
         f = int(trk.dflags[j]) | ((1 << CRATE_BIT) if k in trk.crate_rows else 0)
-        out += np.array([x, y, trk.turn[k]], "<u2").tobytes() + bytes([h, f])
+        t12 = ((int(trk.turn[k]) + 8) >> 4) & 4095
+        out += np.array([(x & 1023) | (y & 1023) << 10 | t12 << 20], "<u4").tobytes() + bytes([h, f])
     return bytes(out)
 
 
@@ -854,15 +858,27 @@ def write_preview(trk, tmap, ts, path):
     img.save(path, optimize=False)
 
 
+def packed_checked(raw, size):
+    """League art packed like a map, after checking its raw size and that it
+    round-trips."""
+    if len(raw) != size:
+        raise SystemExit(f"league art is {len(raw)} bytes, expected {size}")
+    p = pack_map(raw)
+    if unpack_map(p, size) != raw:
+        raise SystemExit("league art does not round-trip through the packer")
+    return p
+
+
 def write_league(name, lg, out, docs):
     ts = lg["tiles"](lg["pal"])
     rng = random.Random(zlib.crc32(name.encode()))
     f, b, fpal, bpal = lg["horizon"](lg["pal"].rgb[0], rng)
+    horizon = pack4(f) + pack4(b) + np.array([rgb565(c) for c in fpal], "<u2").tobytes() \
+        + np.array([rgb565(c) for c in bpal], "<u2").tobytes()
     files = {
-        out / f"{name}_tiles.bin": ts.tiles.tobytes(),
+        out / f"{name}_tiles.bin": packed_checked(ts.tiles.tobytes(), NTILES * 64),
         out / f"{name}_pal.bin": lg["pal"].table565().tobytes(),
-        out / f"{name}_horizon.bin": pack4(f) + pack4(b)
-        + np.array([rgb565(c) for c in fpal], "<u2").tobytes() + np.array([rgb565(c) for c in bpal], "<u2").tobytes(),
+        out / f"{name}_horizon.bin": packed_checked(horizon, 12352),
         out / f"{name}_attr.bin": ts.attr.tobytes(),
     }
     for p, data in files.items():
@@ -958,21 +974,21 @@ def main():
             errs.append(f"{trk.name}: map uses tile {tmap.max()}, over the {NTILES}-tile set")
         if r < 30:
             errs.append(f"{trk.name}: corner radius {r:.0f} px at ({rx:.0f},{ry:.0f}) under 30 px (the autopilot needs ~30)")
-    expect = {"tiles": NTILES * 64, "pal": 512, "horizon": 12352, "attr": NTILES, "center": 2048}
+    expect = {"pal": 512, "attr": NTILES, "center": 256 * 6}
     packed_total = 0
     for p, n in sorted(sizes.items()):
         kind = p.stem.rsplit("_", 1)[1]
-        if kind == "map":
+        if kind in ("map", "tiles", "horizon"):
             packed_total += n
             if n >= 8192:
-                errs.append(f"{p.name}: packed map is {n} bytes, budget under 8192")
+                errs.append(f"{p.name}: packed {kind} is {n} bytes, budget under 8192")
         elif kind == "feat":
             if n % HAZARD_RECORD:
                 errs.append(f"{p.name}: {n} bytes, not whole {HAZARD_RECORD}-byte records")
         elif expect[kind] != n:
             errs.append(f"{p.name}: {n} bytes, expected {expect[kind]}")
         print(f"  {p.relative_to(CART) if p.is_relative_to(CART) else p}: {n} bytes")
-    print(f"  packed maps: {packed_total} bytes")
+    print(f"  packed maps and league art: {packed_total} bytes")
     for e in errs:
         print("ERROR:", e, file=sys.stderr)
     sys.exit(1 if errs else 0)

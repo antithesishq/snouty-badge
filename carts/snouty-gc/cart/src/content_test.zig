@@ -546,28 +546,40 @@ test "GC with a human: the race ends only when one car is left" {
 
 // --- Attract -----------------------------------------------------------------------------
 
-test "attract: the last car gets a KERNEL PANIC in lap 2 and the leader is frozen by it" {
+test "attract: the car behind the leader gets a KERNEL PANIC in lap 2 and the leader is frozen by it" {
     var hits: u32 = 0;
-    for (0..4) |s| {
+    for (0..6) |s| {
         var w: World = undefined;
         sim.reset(&w, .{ .track = @intCast(s), .seed = @intCast(1000 + s), .mode = .attract });
         run_countdown(&w);
         var ticks: u32 = 0;
-        while (ticks < 60 * 60 and !w.scripted) : (ticks += 1) sim.simulate(&w, .{ 0, 0 });
+        var before: [world.car_count]world.Pickup = undefined;
+        while (ticks < 60 * 60 and !w.scripted) : (ticks += 1) {
+            for (w.cars, 0..) |c, i| before[i] = c.pickup;
+            sim.simulate(&w, .{ 0, 0 });
+        }
         try expect(w.scripted);
-        // Handed out in lap 2 (the leader's), to a car at the back.
+        // Handed out in lap 2 (the leader's), to the best-placed car behind
+        // the leader still racing (ahead of it only wrecked cars).
         var lead_lap: u8 = 0;
         var holder: u8 = no_car;
         for (w.cars, 0..) |c, i| {
             lead_lap = @max(lead_lap, c.lap);
-            if (c.pickup == .kernel_panic) holder = @intCast(i);
+            if (c.pickup == .kernel_panic and before[i] != .kernel_panic) holder = @intCast(i);
         }
+        if (report) std.debug.print("\nattract {d}: lead lap {d} holder {d} rank {d}", .{ s, lead_lap, holder, if (holder != no_car) w.cars[holder].rank else 0 });
         try expectEqual(@as(u8, 1), lead_lap);
-        try expect(holder != no_car and w.cars[holder].rank >= 4);
-        // Within 10 s a car near the front is frozen by a KERNEL PANIC.
+        // (A car that already held a KERNEL PANIC may have been the one.)
+        if (holder != no_car) {
+            try expect(w.cars[holder].rank >= 2);
+            for (w.cars) |c| {
+                if (c.rank > 1 and c.rank < w.cars[holder].rank) try expect(c.wreck != .none or c.frozen > 0 or c.finished);
+            }
+        }
+        // Within 5 s a car near the front is frozen by a KERNEL PANIC.
         var panicked = false;
         var n: u32 = 0;
-        while (n < 600 and !panicked) : (n += 1) {
+        while (n < 300 and !panicked) : (n += 1) {
             sim.simulate(&w, .{ 0, 0 });
             for (w.cars) |c| panicked = panicked or (c.frozen_by == .panic and c.rank <= 2);
         }
@@ -575,7 +587,7 @@ test "attract: the last car gets a KERNEL PANIC in lap 2 and the leader is froze
         if (panicked) hits += 1;
     }
     // The packet can miss (its target wrecks first); most runs land it.
-    try expect(hits >= 3);
+    try expect(hits >= 4);
 }
 
 // --- Determinism ------------------------------------------------------------------------

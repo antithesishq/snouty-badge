@@ -116,8 +116,10 @@ fn collect(w: *World, i: u8, cause: world.GcCause) void {
 }
 
 /// Attract (SPEC 8.2): once the leader is a quarter of the way into lap 2,
-/// the last car still racing gets a KERNEL PANIC, which every crew fires at
-/// once at the leader. Called each racing tick.
+/// the best-placed car behind it that is still racing gets a KERNEL PANIC,
+/// which every crew fires at once; the packet then runs to the leader. (From
+/// the back of the field it took 6 to 10 s to get there, and the leader was
+/// often wrecked first and the packet fizzled.) Called each racing tick.
 pub fn script(w: *World) void {
     if (w.mode != .attract or w.scripted or w.phase != .racing) return;
     var lead: i32 = std.math.minInt(i32);
@@ -125,15 +127,15 @@ pub fn script(w: *World) void {
         if (c.active) lead = @max(lead, sim.fine_progress(w, c));
     }
     if (lead < 65536 + tuning.attract_panic_sample * 256) return;
-    var last: u8 = no_car;
-    var worst: u8 = 0;
+    var pick: u8 = no_car;
+    var best: u8 = 255;
     for (&w.cars, 0..) |*c, i| {
-        if (!c.active or c.wreck != .none or c.finished or c.frozen > 0 or c.rank <= worst) continue;
-        worst = c.rank;
-        last = @intCast(i);
+        if (!c.active or c.wreck != .none or c.finished or c.frozen > 0 or c.rank < 2 or c.rank >= best) continue;
+        best = c.rank;
+        pick = @intCast(i);
     }
-    if (last == no_car or worst < 2) return;
-    const c = &w.cars[last];
+    if (pick == no_car) return;
+    const c = &w.cars[pick];
     c.pickup = .kernel_panic;
     c.roll_ticks = 0;
     c.b_was = false;
