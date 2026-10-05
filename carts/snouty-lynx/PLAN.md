@@ -731,6 +731,63 @@ clipping run, RMS, dominant frequency matches the register-derived one,
 no 60 Hz click); copy the WAVs to `out/` for Adrian to listen to on his
 Mac before flashing. Tag `snouty-lynx/m5`, merge to main, push.
 
+## M6 ComLynx: contract
+
+Written 2026-10-05. Everything multi-console that does not need the
+transport: another session builds multi-badge play over USB (the fork
+firmware's cart serial ring and "lobby protocol v1", a laptop relay; fork
+`/home/exedev/sycl-badge-fork` branch `feature/cart-serial`,
+`fork/CART_SERIAL.md`). Branch `lynx/comlynx` (worktree
+`/home/exedev/snouty-badge-lynx-comlynx`), one agent, small commits; not
+merged to main (the coordinator merges it into the shared `party` branch).
+docs/COMLYNX.md is the long form.
+
+1. **A real Mikey UART** (`core/uart.zig`, state in `Mikey.uart`, so in
+   `Lynx.Small`): SERCTL/SERDAT, timer 4 as the baud clock (bit = 8
+   timer-4 underflows; 62,500 baud at backup 1, 1 us), MTEST0 UARTturbo,
+   11-bit frames, PAREN/PAREVEN (calculated parity or a fixed 9th bit),
+   TXRDY/TXEMPTY/RXRDY, the two-deep receiver with the measured 800 us
+   overrun rule, PARERR/OVERRUN/FRAMERR/RXBRK and RESETERR, TXBRK, the
+   serial interrupt (INTSET bit 4) as a level latched into INTSET and
+   re-latched after INTRST while the level holds, and the echo of a
+   console's own frames (one wire). Sources: the Epyx appendix, cc65's
+   ComLynx driver, drhelius's lynx-tests uart/uart2/uart3/uart4 (MIT,
+   hardware-measured), Gearlynx (GPL) read for behaviour only, nothing
+   copied. Hardware rows to reach: lynx-tests uart, uart2, uart3 on one
+   console (the UART attached with nothing on the wire), uart4 on two.
+   **Unlinked (no port attached) stays the M1 stub byte for byte**
+   (SERCTL $A0, SERDAT 0, TXINTEN holds bit 4) and costs nothing: no new
+   work on the CPU fast path, timer 4 stays a quiet timer. Linked, the
+   UART is closed form: one Mikey event (`uart_event`) at the next bit
+   edge where an enabled interrupt level can rise, none while idle.
+2. **The bus seam** (`core/comlynx.zig`): `Port` (one console's side: the
+   frames it sent, stamped with emulated time, and the frames due on its
+   wire), attached as `Lynx.link` (a pointer, excluded from `Small`).
+   `VirtualBus` runs 2-8 consoles in one process, interleaved in time
+   slices (`Lynx.begin_frame` / `run_to` / `finish_frame`, which
+   `step_frame` is made of), in three modes: `wire` (local echo at once,
+   peers after latency + jitter, overlapping frames wired-AND: garbage
+   and framing errors as on the cable), `relay` (lobby v1 with self-echo:
+   one total order, the echo through the relay, no collisions, batched per
+   emulated frame or per burst) and `timestamped` (every console, sender
+   included, gets a frame at its sender's time T + D; a console never
+   runs past min(peer heartbeat) + D; identical wire timing everywhere).
+3. **Tests**: register unit tests; lynx-tests uart1-4 rows; cc65 token
+   rings (tests/comlynx/*.s, built by tools/make_comlynx_roms.sh, the
+   generated carts committed) for 4 and 8 consoles by interrupt and by
+   polling, swept over latency; Warbirds (Adrian's local dump,
+   `~/roms/lynx/Warbirds.lnx`) on 2 and 4 consoles into a networked game,
+   swept over relay latency and D up to 150 ms.
+4. **Frontend**: `frontend/linkport.zig` with `linked` (scrubber, chorded
+   rewind and fast forward off while linked, as Snouty Boy) and the
+   per-frame pump point the transport's poll goes in; no networking.
+5. **docs/COMLYNX.md**: what is built, UART semantics, the bus
+   interface, the latency tables, and the transport requirements.
+
+Gates: test-lynx all green with the golden and lynx-tests rows unchanged,
+both cart modes build, badge-bench m3_scrub / m2_play / hd_drive no
+regression against origin/main e21702ce (numbers in the status).
+
 ## Status
 
 - 2026-10-04: Chorded rewind done on `emu-ff-lynx` (Left during the
