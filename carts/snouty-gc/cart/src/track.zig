@@ -236,7 +236,7 @@ pub fn parse_props(t: *const Track, out: *[prop_max]Prop) u8 {
 // rules'), not the World's.
 
 pub const pack_base: u8 = 0x80;
-pub var pack_league: League = .{ .name = "", .tiles_packed = &.{}, .horizon_packed = &.{}, .pal = &dumps_pal_bytes };
+pub var pack_league: League = .{ .name = "", .tiles_packed = &.{}, .horizon_packed = &.{}, .pal = @embedFile("gen/tracks/dumps_pal.bin") };
 pub var pack_track: Track = .{ .name = "", .league = &pack_league, .map_packed = &.{}, .attr = dumps_attr, .center = @embedFile("gen/tracks/landfill_loop_center.bin") };
 /// The track whose map is in `map_ram` (null: none, or a failed load).
 pub var map_owner: ?*const Track = null;
@@ -244,7 +244,6 @@ pub var map_owner: ?*const Track = null;
 /// again (after a built-in track used them); false if the drive no longer
 /// gives the same pack.
 pub var pack_reload: ?*const fn () bool = null;
-const dumps_pal_bytes = @embedFile("gen/tracks/dumps_pal.bin").*;
 
 /// M7, breakable crust: show each crust region as its World state says
 /// (render side, once a frame: intact `crust_tile`, cracked + 1, broken

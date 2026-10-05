@@ -47,6 +47,11 @@ const standings = @import("standings.zig");
 const pickup_page = @import("pickup_page.zig");
 const battle_ui = @import("battle_ui.zig");
 const battle_text = @import("battle_text.zig");
+// M7 track packs (docs/PACKS.md): the drive scan and loader, the menus' rows.
+const pack = @import("pack.zig");
+const pack_rows = @import("pack_rows.zig");
+const romfs = @import("romfs");
+const gc_drive = @import("gc_drive");
 
 comptime {
     cart.export_start_code();
@@ -201,6 +206,7 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     lnk = Net.init(link.Badge.init(.{}, net.app_id, cart.rand()));
+    lnk.has = &pack_rows.has_rules;
     backdrop();
     go(.splash);
     if (gc_stress != 0) start_stress();
@@ -220,6 +226,58 @@ pub fn start() void {
         debug_start_circuit(racers.snouty);
         prix.cycles = 5000;
     }
+    if (gc_pack != 0) start_pack_bench();
+}
+
+// --- M7 track packs -----------------------------------------------------------------
+
+/// badge-bench `--poke gc_pack=N` (a drive image with TEST.GCP, or any
+/// pack, via --romfs): at boot the drive is scanned and checked, then
+/// 1: a Quick Race on the first pack's first track with SNOUTY on the
+/// autopilot; 2: the render stress scene there; 3: a BATTLE round on its
+/// arena (the autopilot, 3 lives, 3 min).
+export var gc_pack: u8 = 0;
+
+fn start_pack_bench() void {
+    packs_scan();
+    pack.check_all();
+    const base: u8 = track.tracks.len;
+    switch (gc_pack) {
+        1 => {
+            autopilot = true;
+            new_race(.quick, base);
+        },
+        2 => {
+            new_race(.quick, base);
+            mode = .stress;
+            stress.fill(&w, follow);
+            fx.begin(&w);
+        },
+        else => {
+            autopilot = true;
+            battle_ui.opts.arena = track.arenas.len;
+            new_race(.battle, 0);
+        },
+    }
+}
+
+/// List the drive's packs (the select, BATTLE's setup and the LINK lobby
+/// call it on entry; their frames run the CRCs, `pack.tick`, never a race
+/// or a save). The simulator's drive is `-Dgc-pack`'s image, if any.
+fn packs_scan() void {
+    if (cart.is_wasm) {
+        if (gc_drive.image.len == 0) return;
+        return pack.scan(romfs.Image.truncated_test(gc_drive.image));
+    }
+    pack.scan(romfs.Image.badge());
+}
+
+/// `Setup.track` for a select or setup row: a built-in index, or a pack's
+/// (loaded now; a pack that will not load races the first built-in track).
+fn row_track(battle: bool, row: u8) u8 {
+    const r = if (battle) pack_rows.arena_row(row) else pack_rows.race_row(row);
+    if (pack_rows.track_of(r, battle) == null) return 0;
+    return pack_rows.setup_track(r);
 }
 
 fn start_stress() void {
@@ -259,7 +317,7 @@ fn to_menu() void {
 fn new_race(m: Mode, t: u8) void {
     linked = false;
     seed = seed *% 1103515245 +% 12345 +% frame;
-    var setup = world.Setup{ .track = t, .seed = seed, .mode = switch (m) {
+    var setup = world.Setup{ .track = if (m == .quick or m == .gc) row_track(false, t) else t, .seed = seed, .mode = switch (m) {
         .gc => .gc,
         .attract => .attract,
         .battle => .battle,
@@ -268,7 +326,7 @@ fn new_race(m: Mode, t: u8) void {
     if (m == .quick or m == .gc or m == .battle) setup.humans[0] = player_racer;
     if (m == .battle) {
         const o = battle_ui.opts;
-        setup.track = o.arena % @as(u8, @intCast(track.arenas.len));
+        setup.track = row_track(true, o.arena);
         setup.lives = o.lives;
         setup.minutes = o.minutes;
         setup.crews = o.crews;
@@ -461,6 +519,7 @@ fn toggle_sound() void {
 }
 
 fn to_select() void {
+    packs_scan();
     select.link = null;
     select.circuit = race_mode == .circuit;
     select.battle = race_mode == .battle;
@@ -470,6 +529,7 @@ fn to_select() void {
 
 /// The racer select (select.zig): A picks and starts a Quick Race.
 fn select_frame() void {
+    _ = pack.tick();
     if (select.link != null) return link_select_frame();
     switch (select.update()) {
         .pick => {
@@ -504,7 +564,7 @@ fn select_frame() void {
 /// The setup over the arena's floor: the camera high over its middle,
 /// turning, as the menu's backdrop over Landfill Loop.
 fn arena_backdrop() void {
-    const t = track.arenas[battle_ui.opts.arena % track.arenas.len];
+    const t = battle_ui.arena();
     track.select(t);
     render.set_track(t);
     camera.init(528 << fixed.Q, 528 << fixed.Q, camera.cam.yaw);
@@ -523,6 +583,7 @@ fn to_setup() void {
 /// BATTLE's setup (battle_ui.zig): A fights on the arena and rules shown,
 /// B goes back to the racer select.
 fn setup_frame() void {
+    _ = pack.tick();
     const arena = battle_ui.opts.arena;
     switch (battle_ui.update()) {
         .start => {
@@ -1022,6 +1083,7 @@ fn lobby_view() link_ui.View {
 }
 
 fn to_lobby() void {
+    if (screen == .menu or screen == .title) packs_scan();
     if (screen != .menu and screen != .title) backdrop();
     select.link = null;
     link_ready = false;
@@ -1035,6 +1097,7 @@ fn to_lobby() void {
 /// later).
 fn lobby_frame() void {
     pump_top();
+    _ = pack.tick();
     if (lnk.take_started()) return start_link_race();
     draw_backdrop();
     const v = lobby_view();
@@ -1081,6 +1144,8 @@ fn link_info() select.Link {
         .peer = lnk.peer_pick(),
         .can_go = lnk.can_go(),
         .rules = lnk.rules(),
+        .lacks = lnk.lacks(),
+        .partner_lacks = lnk.ls.role == .host and lnk.partner_lacks(),
     };
 }
 
@@ -1144,6 +1209,20 @@ fn link_select_frame() void {
 /// race draws from the next frame (as a Quick Race's pick frame).
 fn start_link_race() void {
     const s = lnk.world_setup();
+    // M7: a pack track loads on both badges now (each checked it had the
+    // pack before GO); if this one cannot, it leaves cleanly (the partner
+    // sees it go) instead of racing on something else.
+    if (s.track >= track.pack_base) {
+        const r = lnk.race().rules;
+        const k = s.track - track.pack_base;
+        if (pack.load_id(r.pack, k) != .ok) {
+            lnk.leave(cart.micros_since_boot());
+            link_ready = false;
+            select.link = null;
+            to_lobby();
+            return;
+        }
+    }
     select.link = null;
     linked = true;
     link_ready = false;
@@ -1357,7 +1436,8 @@ comptime {
             "debug_battle_refill",    "debug_battle_out",    "debug_battle_leader",  "debug_battle_end",
             "debug_battle_set_lives", "debug_battle_kill",   "debug_battle_clock",   "debug_setup_row",
             "debug_battle_arena",     "debug_stunt",         "debug_safe",           "debug_lobby_rules",
-            "debug_battle_stress",    "debug_me_out",        "debug_feed",
+            "debug_battle_stress",    "debug_me_out",        "debug_feed",           "debug_pack_count",
+            "debug_pack_status",      "debug_pack_rows",     "debug_start_pack",     "debug_pack_arena",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1851,4 +1931,41 @@ fn present_wasm() void {
             dst.* = .from_color(.{ .r = c.b, .g = c.g, .b = c.r });
         }
     }
+}
+
+// --- M7 track packs (wasm, the simulator's `-Dgc-pack` drive) -------------------
+
+/// Packs on the drive, scanning it first; the status of pack i
+/// (pack_format.Refusal: 0 ok, 6 checking, ...); the race rows.
+fn debug_pack_count() callconv(.c) u32 {
+    packs_scan();
+    return pack.count;
+}
+fn debug_pack_status(i: u32) callconv(.c) u32 {
+    if (i >= pack.count) return 0xFF;
+    return @backingInt(pack.packs[i].status);
+}
+fn debug_pack_rows() callconv(.c) u32 {
+    return pack_rows.race_count();
+}
+/// A Quick Race (SNOUTY on the autopilot) on race row N (the first pack
+/// track is row 6), CRCs run first; returns the World's track byte.
+fn debug_start_pack(n: u32) callconv(.c) u32 {
+    if (pack.count == 0) packs_scan();
+    pack.check_all();
+    autopilot = true;
+    race_mode = .quick;
+    player_track = @intCast(n & 0xFF);
+    new_race(.quick, player_track);
+    return w.track;
+}
+/// A BATTLE round (the autopilot) on arena row N (1: the first pack's).
+fn debug_pack_arena(n: u32) callconv(.c) u32 {
+    if (pack.count == 0) packs_scan();
+    pack.check_all();
+    autopilot = true;
+    race_mode = .battle;
+    battle_ui.opts.arena = @intCast(n & 0xFF);
+    new_race(.battle, 0);
+    return w.track;
 }

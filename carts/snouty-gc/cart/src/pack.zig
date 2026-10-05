@@ -41,14 +41,14 @@ pub const Pack = struct {
     /// Its 8.3 name as listed (for a refused file's row).
     file: [12]u8 = @splat(' '),
     file_len: u8 = 0,
-    name: [fmt.name_len]u8 = @splat(' '),
     league: [fmt.name_len]u8 = @splat(' '),
     track_n: u8 = 0,
     arena_n: u8 = 0,
     /// The header's CRC of bytes 64.. (checked by `tick`).
     crc: u32 = 0,
     /// The link id: CRC-32 of header bytes 0..48 (the names and counts)
-    /// XOR the content CRC, so two badges agree on name and contents.
+    /// XOR the content CRC, low 24 bits (net.Rules carries 3 bytes), so two
+    /// badges agree on name and contents.
     id: u32 = 0,
 
     pub fn ok(p: *const Pack) bool {
@@ -67,7 +67,7 @@ var image: ?romfs.Image = null;
 var clusters: [fmt.file_max / romfs.sector_size]u16 = undefined;
 /// The background CRC: the pack being hashed and how far.
 var job_at: u32 = 0;
-var job_crc: std.hash.Crc32 = .init();
+var job_crc: u32 = 0xFFFFFFFF;
 var job_pack: u8 = 0xFF;
 
 /// What `load` last put in the slots (null: nothing, or it failed).
@@ -157,7 +157,28 @@ fn read_dir(m: *const romfs.Mapped, d: *fmt.Directory) Refusal {
 fn head_id(m: *const romfs.Mapped) u32 {
     var h: [48]u8 = undefined;
     copy(m, 0, &h);
-    return std.hash.Crc32.hash(&h);
+    return crc_update(0xFFFFFFFF, &h) ^ 0xFFFFFFFF;
+}
+
+/// CRC-32 (zlib's, reflected 0xEDB88320) a nibble at a time: a 64-byte
+/// table instead of std's kilobytes (RAM, PLAN M7). Start from
+/// 0xFFFFFFFF and XOR the end with it.
+pub fn crc_update(crc_in: u32, bytes: []const u8) u32 {
+    const t = [16]u32{
+        0x00000000, 0x1DB71064, 0x3B6E20C8, 0x26D930AC, 0x76DC4190, 0x6B6B51F4, 0x4DB26158, 0x5005713C,
+        0xEDB88320, 0xF00F9344, 0xD6D6A3E8, 0xCB61B38C, 0x9B64C2B0, 0x86D3D2D4, 0xA00AE278, 0xBDBDF21C,
+    };
+    var c = crc_in;
+    for (bytes) |b| {
+        c ^= b;
+        c = (c >> 4) ^ t[c & 15];
+        c = (c >> 4) ^ t[c & 15];
+    }
+    return c;
+}
+
+test "crc_update is zlib's CRC-32" {
+    try std.testing.expectEqual(std.hash.Crc32.hash("123456789"), crc_update(0xFFFFFFFF, "123456789") ^ 0xFFFFFFFF);
 }
 
 // --- The drive scan and the background CRC -----------------------------------
@@ -193,7 +214,6 @@ pub fn scan(img: romfs.Image) void {
             p.status = r;
             continue;
         }
-        p.name = d.name;
         p.league = d.league;
         p.track_n = d.track_n;
         p.arena_n = d.arena_n;
@@ -219,7 +239,7 @@ pub fn tick() bool {
     if (job_pack != i) {
         job_pack = @intCast(i);
         job_at = fmt.header_bytes;
-        job_crc = .init();
+        job_crc = 0xFFFFFFFF;
     }
     const m = map_pack(i) orelse {
         p.status = .bad_file;
@@ -231,16 +251,25 @@ pub fn tick() bool {
         // Cluster by cluster (a run of them when consecutive).
         const take = @min(end - job_at, romfs.sector_size - job_at % romfs.sector_size);
         const ptr = m.chunk(job_at, take) orelse break;
-        job_crc.update(ptr[0..take]);
+        job_crc = crc_update(job_crc, ptr[0..take]);
         job_at += take;
     }
     if (job_at >= m.size) {
-        const crc = job_crc.final();
+        const crc = job_crc ^ 0xFFFFFFFF;
         p.status = if (crc == p.crc) .ok else .damaged;
-        p.id ^= crc;
+        // The link id: 24 bits on the wire (net.Rules).
+        p.id = (p.id ^ crc) & 0xFFFFFF;
         job_pack = 0xFF;
     }
     return true;
+}
+
+/// Forget the drive (host tests: leave no packs behind for the next test).
+pub fn forget() void {
+    count = 0;
+    image = null;
+    bytes_src = null;
+    fail();
 }
 
 /// Run every pending CRC now (host tests, the bench pokes).
@@ -320,7 +349,6 @@ pub fn load_bytes(b: []const u8, k: u8) Refusal {
         return r;
     }
     packs[0].crc = d.crc;
-    packs[0].name = d.name;
     packs[0].league = d.league;
     packs[0].track_n = d.track_n;
     packs[0].arena_n = d.arena_n;

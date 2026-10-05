@@ -160,9 +160,6 @@ pub const Directory = struct {
     }
 };
 
-fn rd16(b: []const u8, o: usize) u16 {
-    return std.mem.readInt(u16, b[o..][0..2], .little);
-}
 fn rd32(b: []const u8, o: usize) u32 {
     return std.mem.readInt(u32, b[o..][0..4], .little);
 }
@@ -184,17 +181,14 @@ pub fn parse(head: []const u8, size: u32, out: *Directory) Refusal {
     if (head.len < 4 or !std.mem.eql(u8, head[0..4], magic)) return .not_a_pack;
     if (head.len < header_bytes) return .damaged;
     if (head[4] != version) return if (head[4] > version) .too_new else .damaged;
-    if (head[5] != header_bytes) return .damaged;
     if (size > file_max) return .too_big;
     const tn = head[6];
     const an = head[7];
-    if (tn < 1 or tn > track_max or an > arena_max) return .damaged;
-    const dir_len: u32 = header_bytes + league_bytes + @as(u32, tn + an) * record_bytes;
-    if (head.len < dir_len or size < dir_len) return .damaged;
-    if (rd32(head, 44) != size) return .damaged;
-    if (!zero(head[52..64])) return .damaged;
     const mask = head[8];
-    if (mask & 0x81 != 0) return .damaged;
+    if (head[5] != header_bytes or tn < 1 or tn > track_max or an > arena_max or mask & 0x81 != 0) return .damaged;
+    const dir_len: u32 = header_bytes + league_bytes + @as(u32, tn + an) * record_bytes;
+    if (head.len < dir_len or size < dir_len or rd32(head, 44) != size) return .damaged;
+    if (!zero(head[52..64]) or !zero(head[header_bytes + 48 .. header_bytes + 64])) return .damaged;
     if (mask & ~runs != 0) return .needs_newer_cart;
     out.track_n = tn;
     out.arena_n = an;
@@ -206,53 +200,46 @@ pub fn parse(head: []const u8, size: u32, out: *Directory) Refusal {
     @memcpy(&out.league, head[28..44]);
     out.size = size;
     out.crc = rd32(head, 48);
-    const L = header_bytes;
-    out.pal = .at(head, L);
-    out.tiles = .at(head, L + 8);
-    out.horizon = .at(head, L + 16);
-    out.attr = .at(head, L + 24);
-    out.cells = .at(head, L + 32);
-    out.cell_pal = .at(head, L + 40);
-    if (!zero(head[L + 48 .. L + 64])) return .damaged;
-    const league = [_]Section{ out.pal, out.tiles, out.horizon, out.attr, out.cells, out.cell_pal };
-    for (league) |s| if (!s.fits(dir_len, size)) return .damaged;
-    if (out.pal.len != pal_bytes or out.attr.len != attr_bytes) return .damaged;
-    if (out.tiles.len == 0 or out.tiles.len > tiles_bytes + tiles_bytes / 64 + 4) return .damaged;
-    if (out.horizon.len == 0 or out.horizon.len > horizon_bytes + horizon_bytes / 64 + 4) return .damaged;
-    // Props: none (all zero), or a cell size and count with the cells and
-    // their palette present at the right lengths.
-    if (out.cell_n == 0) {
-        if (out.cell_w != 0 or out.cell_h != 0 or out.cells.len != 0 or out.cell_pal.len != 0) return .damaged;
-    } else {
-        if (out.cell_w == 0 or out.cell_w % 2 != 0 or out.cell_w > cell_w_max) return .damaged;
-        if (out.cell_h == 0 or out.cell_h > cell_h_max or out.cell_n > cell_max) return .damaged;
-        if (out.cells.len != out.cell_bytes() * out.cell_n or out.cell_pal.len != cell_pal_bytes) return .damaged;
+    // Props: none (all zero), or a cell size and count.
+    const cw = out.cell_w;
+    const cn = out.cell_n;
+    if (if (cn == 0) cw != 0 or out.cell_h != 0 else cw == 0 or cw % 2 != 0 or cw > cell_w_max or out.cell_h == 0 or out.cell_h > cell_h_max or cn > cell_max) return .damaged;
+    const cells: u32 = out.cell_bytes() * cn;
+    const cpal: u32 = if (cn == 0) 0 else cell_pal_bytes;
+    // The six league sections, each in bounds and between its lengths.
+    const ls = [_]*Section{ &out.pal, &out.tiles, &out.horizon, &out.attr, &out.cells, &out.cell_pal };
+    const lmin = [_]u32{ pal_bytes, 1, 1, attr_bytes, cells, cpal };
+    const lmax = [_]u32{ pal_bytes, packed_max(tiles_bytes), packed_max(horizon_bytes), attr_bytes, cells, cpal };
+    for (ls, 0..) |sec, j| {
+        sec.* = .at(head, header_bytes + j * 8);
+        if (!sec.fits(dir_len, size) or sec.len < lmin[j] or sec.len > lmax[j]) return .damaged;
     }
     for (0..tn + an) |k| {
         const b = head[header_bytes + league_bytes + k * record_bytes ..][0..record_bytes];
         const t = &out.tracks[k];
         @memcpy(&t.name, b[0..16]);
         t.laps = b[16];
-        if (b[17] > 1 or b[18] != 0 or b[19] != 0 or !zero(b[60..64])) return .damaged;
-        t.kind = @enumFromInt(b[17]);
-        // Race tracks first, then the arena.
-        if ((k >= tn) != (t.kind == .arena)) return .damaged;
-        t.map = .at(b, 20);
-        t.center = .at(b, 28);
-        t.feat = .at(b, 36);
-        t.arena = .at(b, 44);
-        t.props = .at(b, 52);
-        for ([_]Section{ t.map, t.center, t.feat, t.arena, t.props }) |s| if (!s.fits(dir_len, size)) return .damaged;
-        if (t.kind == .race and (t.laps < 1 or t.laps > 9 or t.arena.len != 0)) return .damaged;
-        if (t.kind == .arena and (t.laps != 0 or t.arena.len < 8)) return .damaged;
-        if (t.map.len == 0 or t.map.len > map_bytes + map_bytes / 64 + 4) return .damaged;
-        if (t.center.len != center_bytes) return .damaged;
-        if (t.feat.len % feat_record != 0 or t.feat.len > feat_max * feat_record) return .damaged;
-        if (t.props.len % prop_record != 0 or t.props.len > prop_max * prop_record) return .damaged;
-        if (t.props.len != 0 and out.cell_n == 0) return .damaged;
+        // Race tracks first (laps 1..9), then the arena (laps 0).
+        const arena = k >= tn;
+        if (b[17] != @intFromBool(arena) or b[18] != 0 or b[19] != 0 or !zero(b[60..64])) return .damaged;
+        if (if (arena) t.laps != 0 else t.laps < 1 or t.laps > 9) return .damaged;
+        t.kind = if (arena) .arena else .race;
+        const ts = [_]*Section{ &t.map, &t.center, &t.feat, &t.arena, &t.props };
+        const tmin = [_]u32{ 1, center_bytes, 0, if (arena) 8 else 0, 0 };
+        const tmax = [_]u32{ packed_max(map_bytes), center_bytes, feat_max * feat_record, if (arena) file_max else 0, if (cn == 0) 0 else prop_max * prop_record };
+        for (ts, 0..) |sec, j| {
+            sec.* = .at(b, 20 + j * 8);
+            if (!sec.fits(dir_len, size) or sec.len < tmin[j] or sec.len > tmax[j]) return .damaged;
+        }
+        if (t.feat.len % feat_record != 0 or t.props.len % prop_record != 0) return .damaged;
     }
-    _ = rd16;
     return .ok;
+}
+
+/// The longest a packed stream of `n` bytes may be (the packer's worst
+/// case: a literal run marker every 128 bytes).
+fn packed_max(n: u32) u32 {
+    return n + n / 64 + 4;
 }
 
 /// The props cells a track uses (bit c = cell c): its props records'

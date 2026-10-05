@@ -124,10 +124,10 @@ def stage(d):
     shutil.copy(GEN / "landfill_loop_center.bin", d / "crust_center.bin")
     # Landfill Loop's Sweeper, drawn with props cell 0 (the monitor stack:
     # the mover's sprite is cell + 1 in the kind byte's high nibble), then
-    # the crust band: break 12 ticks after the first touch, broken for 300.
+    # the crust band: break 24 ticks after the first touch, broken for 300.
     feat = bytearray((GEN / "landfill_loop_feat.bin").read_bytes())
     feat[0] = (feat[0] & 15) | (1 << 4)
-    feat += bytes([4, 12, 0, 0]) + struct.pack("<7H", CRUST_X0, y0, CRUST_X1, y1, 300, 0, 0) + bytes([0, 0])
+    feat += bytes([4, 24, 0, 0]) + struct.pack("<7H", CRUST_X0, y0, CRUST_X1, y1, 300, 0, 0) + bytes([0, 0])
     (d / "crust_feat.bin").write_bytes(bytes(feat))
     draw_props(HERE / "props.png")
     shutil.copy(HERE / "props.png", d / "props.png")

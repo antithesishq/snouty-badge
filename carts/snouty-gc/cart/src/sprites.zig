@@ -288,8 +288,8 @@ pub const draw_cap = 64;
 const gather_cap = 224;
 
 const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck, claw, mover, vent, chip, prop };
+/// (M7: no copy of `p.zf` beside it: 4 B an entry, 896 B of RAM.)
 const Entry = struct {
-    z: i32,
     p: camera.Projected,
     kind: Kind,
     index: u8,
@@ -321,7 +321,7 @@ pub const View = struct {
 
 inline fn push(kind: Kind, index: usize, sub: usize, p: camera.Projected) void {
     if (count >= gather_cap) return;
-    list[count] = .{ .z = p.zf, .p = p, .kind = kind, .index = @intCast(index), .sub = @intCast(sub) };
+    list[count] = .{ .p = p, .kind = kind, .index = @intCast(index), .sub = @intCast(sub) };
     keys[count] = (@as(u32, @intCast(@max(p.zf, 0))) << 8) | @as(u32, @intCast(count));
     count += 1;
 }

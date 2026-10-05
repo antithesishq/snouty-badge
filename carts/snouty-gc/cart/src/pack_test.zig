@@ -18,6 +18,8 @@ const expectEqual = std.testing.expectEqual;
 
 test {
     _ = @import("pack_format.zig");
+    _ = @import("pack.zig");
+    _ = @import("pack_rows.zig");
     _ = @import("pack_content_test.zig");
 }
 
@@ -43,6 +45,7 @@ pub fn autopilot_race(seed: u32, limit: u32) World {
 }
 
 test "the test pack loads: its tracks and arena run through track.pack_track" {
+    defer pack.forget();
     try expectEqual(fmt.Refusal.ok, pack.load_bytes(test_pack, k_landfill));
     try std.testing.expectEqualStrings("LANDFILL TEST", track.pack_track.name);
     try std.testing.expectEqualStrings("TEST DUMPS", track.pack_track.league.name);
@@ -72,6 +75,7 @@ test "the test pack loads: its tracks and arena run through track.pack_track" {
 }
 
 test "a pack race with the autopilot finishes its 3 laps; a built-in race after it is unchanged" {
+    defer pack.forget();
     var ref: World = undefined;
     sim.reset(&ref, .{ .track = 0, .seed = 99, .humans = .{ racers.snouty, world.no_human } });
     try expectEqual(fmt.Refusal.ok, pack.load_bytes(test_pack, k_landfill));

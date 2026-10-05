@@ -148,6 +148,9 @@ const Badge = struct {
     leave_at: u32 = 0,
     /// Mutate the World once the lockstep tick reaches this (0: never).
     mutate_at: u32 = 0,
+    /// M7: at the race start this badge cannot load the pack (main.zig's
+    /// start_link_race): it leaves instead of racing.
+    refuse_start: bool = false,
 
     /// This frame's tick has run (or there is nothing to run).
     stepped: bool = true,
@@ -293,6 +296,11 @@ const Duo = struct {
             if (n.ls.role == .host and n.can_go()) _ = n.go(d.now);
         }
         if (n.take_started()) {
+            if (b.refuse_start) {
+                n.leave(d.now);
+                n.pump(d.now);
+                return;
+            }
             sim.reset(&b.w, n.world_setup());
             b.racing = true;
             logs[b.side][0] = net.world_hash(&b.w);
@@ -537,7 +545,7 @@ test "wire formats: rules, picks" {
         try std.testing.expect(std.meta.eql(rb, net.Rules.decode(rb.encode())));
     };
     // Bytes off the rows decode to the defaults; an unknown mode is a race.
-    const junk = net.Rules.decode(.{ 9, 1, 200, 4, 7 });
+    const junk = net.Rules.decode(.{ 9, 1, 200, 4, 7, 0, 0, 0 });
     try std.testing.expectEqual(world.Mode.race, junk.mode);
     try std.testing.expectEqual(@as(u8, 3), junk.lives);
     try std.testing.expectEqual(@as(u8, 3), junk.minutes);
@@ -546,6 +554,17 @@ test "wire formats: rules, picks" {
     try std.testing.expect(std.meta.eql(r, net.Rules.decode_v0(r.encode_v0())));
     const p = net.Pick{ .racer = 4, .ready = true };
     try std.testing.expect(std.meta.eql(p, net.Pick.decode(p.encode())));
+    // M7 (version 2): a pack track and its 24-bit id, the v1 bytes their
+    // first five; the pick's `lacks` bit.
+    const rp = net.Rules{ .mode = .battle, .track = @import("track.zig").pack_base + 3, .pack = 0xABCDEF };
+    try std.testing.expect(std.meta.eql(rp, net.Rules.decode(rp.encode())));
+    try std.testing.expectEqualSlices(u8, &rp.encode_v1(), rp.encode()[0..5]);
+    try std.testing.expectEqualSlices(u8, &.{ 0xEF, 0xCD, 0xAB }, rp.encode()[5..8]);
+    const pl = net.Pick{ .racer = 2, .lacks = true };
+    try std.testing.expectEqual(@as(u8, 2 | net.lacks_bit), pl.encode());
+    try std.testing.expect(std.meta.eql(pl, net.Pick.decode(pl.encode())));
+    try std.testing.expect(!net.Game.picks_ok(1, 2 | net.lacks_bit));
+    try std.testing.expect(net.Game.picks_ok(1, 2));
     try std.testing.expectEqual(net.no_racer, net.Pick.decode((net.Pick{}).encode()).racer);
 }
 
@@ -1023,4 +1042,80 @@ test "pump cost: port calls and packets per pump, idle and racing" {
         .{ idle_pumps, idle_gets, idle_gets / @max(idle_pumps, 1), idle_msgs, race_pumps, race_gets, race_gets / @max(race_pumps, 1), (race_gets * 100 / @max(race_pumps, 1)) % 100, race_puts, race_pkts, race_pkts * 100 / @max(race_pumps, 1) },
     );
     if (report) std.debug.print("@sizeOf(Net(link.Badge)) = {d} bytes, of which link.Badge {d}; @sizeOf(Net) on the virtual cable {d}\n", .{ @sizeOf(net.Net(link.Badge)), @sizeOf(link.Badge), @sizeOf(N) });
+}
+
+// --- M7: track packs over the link -------------------------------------------------
+
+const track = @import("track.zig");
+const pack = @import("pack.zig");
+const pack_test = @import("pack_test.zig");
+
+fn lacks_pack(_: net.Rules) bool {
+    return false;
+}
+
+/// The test pack's rules: its first track, or its arena.
+fn pack_rules(arena: bool) !net.Rules {
+    const k: u8 = if (arena) pack_test.k_arena else pack_test.k_landfill;
+    try std.testing.expectEqual(pack.Refusal.ok, pack.load_bytes(pack_test.test_pack, k));
+    var r = net.Rules{ .track = track.pack_base + k, .pack = pack.packs[0].id, .crews = 4 };
+    if (arena) r.mode = .battle;
+    return r;
+}
+
+test "M7: link races and a link battle on the test pack stay in sync to their end, clean and 1% loss" {
+    defer pack.forget();
+    var tally: Tally = .{};
+    const race = try pack_rules(false);
+    try synced_race(.{ .seed = 81, .rules = race, .picks = .{ racers.snouty, racers.rootkit } }, &tally);
+    try synced_race(.{ .seed = 82, .loss_ppm = 10_000, .rules = race, .picks = .{ racers.legacy, racers.kiddie } }, &tally);
+    var gc = race;
+    gc.mode = .gc;
+    try synced_race(.{ .seed = 83, .rules = gc, .picks = .{ racers.botnet, racers.sysadmin } }, &tally);
+    var arena = try pack_rules(true);
+    arena.lives = 1;
+    arena.minutes = 2;
+    try synced_race(.{ .seed = 84, .rules = arena, .picks = .{ racers.kiddie, racers.snouty } }, &tally);
+    try synced_race(.{ .seed = 85, .loss_ppm = 10_000, .rules = arena, .picks = .{ racers.rootkit, racers.legacy } }, &tally);
+    tally.print("M7 pack link races");
+}
+
+test "M7: a partner lacking the pack: no GO, the host sees PARTNER LACKS PACK; with it, they race" {
+    defer pack.forget();
+    const rules = try pack_rules(false);
+    for ([_]u32{ 91, 92, 93, 94 }) |seed| {
+        var d: Duo = undefined;
+        d.init(.{ .seed = seed, .rules = rules });
+        d.b[1].net.has = &lacks_pack;
+        d.run_for(6_000_000);
+        for (&d.b) |*b| try std.testing.expect(!b.racing);
+        try std.testing.expect(d.b[1].net.lacks() or d.b[1].net.ls.role == .host);
+        if (d.b[0].net.ls.role == .host) try std.testing.expect(d.b[0].net.partner_lacks());
+        try std.testing.expect(!d.b[0].net.can_go() and !d.b[1].net.can_go());
+        // A built-in track: the same pair races.
+        d.opts.rules = .{ .crews = 2 };
+        try d.run(20_000_000, {}, done_started);
+    }
+}
+
+test "M7: a pack that will not load on one badge at GO: it leaves, the other races on, no desync" {
+    defer pack.forget();
+    const rules = try pack_rules(false);
+    var d: Duo = undefined;
+    d.init(.{ .seed = 95, .rules = rules, .picks = .{ racers.snouty, racers.botnet } });
+    d.b[1].refuse_start = true;
+    const Q = struct {
+        fn f(dd: *Duo, _: void) bool {
+            return dd.b[0].racing and dd.b[0].net.state() == .peer_left;
+        }
+    };
+    try d.run(30_000_000, {}, Q.f);
+    try std.testing.expect(!d.b[1].racing);
+    const Fin = struct {
+        fn f(dd: *Duo, _: void) bool {
+            return dd.b[0].w.phase == .finished;
+        }
+    };
+    try d.run(400_000_000, {}, Fin.f);
+    for (&d.b) |*b| try std.testing.expect(b.net.state() != .desync);
 }

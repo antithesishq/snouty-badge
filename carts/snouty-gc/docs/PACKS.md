@@ -152,12 +152,19 @@ phase u16, push u8, speed u8 (1/32 px/tick). Up to 4 per track.
 
 **Crust record** (kind 4): `x0, y0` to `x1, y1` is the region's rectangle
 in world px (x1, y1 exclusive; whole tiles); `warn` the ticks from the
-first touch of a car on the ground to the break (the cracked tile shows
-meanwhile; default 12, so the car that cracks it gets across); `period`
-the ticks it stays broken (default 300), then it heals. While broken, a
-car on the ground over one of its crust tiles falls, as into a pit (a
-wreck; kill credit as for a pit). Airborne cars never touch it. size,
-damage, on, phase, push and speed are 0.
+first touch of a car on the ground (its centre on a crust tile of the
+region) to the break, while the cracked tile shows; `period` the ticks it
+stays broken (300 is a good value), then it heals. While broken, a car on
+the ground whose four footprint corners are all on broken crust (or off
+the track) falls, as into a pit (a wreck; kill credit as for a pit).
+Airborne cars never touch it. size, damage, on, phase, push and speed
+are 0.
+
+`warn` must let the car that cracked the region get off it: at least
+(band depth along the travel + 24 px of car) / its slowest speed there,
+in px per tick. A 16 px band crossed at 1.7 px/tick needs 24 ticks; use
+24 or more (Track B's packs and the test pack use 24; 12 let the cracking
+car fall through its own crack, PLAN L131).
 
 ## Binary format, version 1
 
