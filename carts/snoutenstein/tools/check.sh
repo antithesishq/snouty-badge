@@ -15,11 +15,13 @@ git diff --exit-code -- cart/src/levels/gen.zig || { echo "check: cart/src/level
 # first so the default build below is what lands in zig-out/.
 (cd "$repo" && zig build -Dcart=snoutenstein -Dneopixels=true)
 # The PARTY row (-Dstein_party=true, the fork firmware's cart serial port)
-# must keep compiling whatever the default; keep its wasm for the M8 title
-# check below.
+# must keep compiling whatever the default (off on main, on on the party
+# branch); keep both wasms for the M8 title checks below.
 mkdir -p out
 (cd "$repo" && zig build -Dcart=snoutenstein -Dstein_party=true)
 cp "$repo/zig-out/bin/snoutenstein.wasm" out/snoutenstein-party.wasm
+(cd "$repo" && zig build -Dcart=snoutenstein -Dstein_party=false)
+cp "$repo/zig-out/bin/snoutenstein.wasm" out/snoutenstein-noparty.wasm
 (cd "$repo" && zig build -Dcart=snoutenstein)
 size -A "$repo/zig-out/firmware/snoutenstein.elf" | grep -E "^\.text|^\.data|^\.bss"
 zig test cart/src/sim.zig
@@ -161,7 +163,7 @@ node ../../tools/preview.mjs out/snoutenstein-party.wasm --frames 40 --quiet --o
   --dump-exports debug_mode,debug_title_cursor,debug_level \
   --at "10 debug_title_cursor == 2" --at "19 debug_mode == 0" --at "20 debug_title_cursor == 0" \
   --expect "debug_mode == 1" --expect "debug_level == 0"
-node ../../tools/preview.mjs $W --frames 40 --quiet --out out/m8_title_noparty --script tools/scripts/m8_title.json \
+node ../../tools/preview.mjs out/snoutenstein-noparty.wasm --frames 40 --quiet --out out/m8_title_noparty --script tools/scripts/m8_title.json \
   --dump-exports debug_mode,debug_title_cursor,debug_level \
   --at "10 debug_title_cursor == 0" --at "16 debug_mode == 1" \
   --expect "debug_mode == 1" --expect "debug_level == 0"
