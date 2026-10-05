@@ -74,6 +74,8 @@ fn bot_answer(g: *const G.Game, r: *std.Random.DefaultPrng, slow: bool) G.Answer
 test "engine: bot plays 10000 seeded games to game over" {
     var g: G.Game = .{};
     var outcomes = std.EnumArray(G.Outcome, u32).initFill(0);
+    var max_lines: usize = 0;
+    var max_text: usize = 0;
     var seed: u64 = 0;
     while (seed < 10000) : (seed += 1) {
         var r = std.Random.DefaultPrng.init(seed ^ 0xA5A5);
@@ -83,12 +85,20 @@ test "engine: bot plays 10000 seeded games to game over" {
         var steps: u32 = 0;
         while (g.prompt.kind != .game_over) : (steps += 1) {
             try check_prompt(&g);
+            max_lines = @max(max_lines, g.n_lines);
+            max_text = @max(max_text, g.text_len);
             try std.testing.expect(steps < 5000);
             G.answer(&g, bot_answer(&g, &r, slow));
         }
         try check_prompt(&g);
+        max_lines = @max(max_lines, g.n_lines);
+        max_text = @max(max_text, g.text_len);
         outcomes.getPtr(g.prompt.outcome).* += 1;
     }
+    // The instructions page is the longest stretch (54 lines, ~2.5 KB);
+    // keep at least a third of each buffer spare.
+    try std.testing.expect(max_lines * 3 <= G.max_lines * 2);
+    try std.testing.expect(max_text * 3 <= G.text_bytes * 2);
     // Every ending happens somewhere in 10000 random games. Pneumonia is
     // never the outcome: 5120 is reached only from 5080 and 5110 (which
     // name their own cause) and from the wolves at 4400 (K8=1, injuries).
