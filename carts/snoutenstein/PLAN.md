@@ -1209,6 +1209,181 @@ built; RUNNING.md section 7 has the two-badge hardware check.
 - **Open**: the two-badge hardware check (RUNNING.md section 7); feel
   (damage, strafe speed, respawn time) on the badge.
 
+## M8 Party deathmatch (up to 16 badges, planned 2026-10-05)
+
+Adrian, 2026-10-05: "prepare to implement 4 or more player multiplayer
+in snoutenstein. Our OS stack will be able to support up to 16 players,
+let's support as many up to that as are technically feasible and
+reasonable." Another session is building the multi-badge transport in
+the OS (USB; a laptop or hub joins the badges); it messages session
+`exedev-64 [5dbf8e]` when it ships. Everything in this milestone that
+does not need that transport is built now, against a virtual bus in the
+host tests; wiring the real transport is M8.1. Defaults taken (Adrian:
+keep building).
+
+### How many players: 16
+
+16 is feasible on every axis, so the cap is the OS's 16:
+
+| Axis | 2 (M7) | 16 | Verdict |
+|---|---|---|---|
+| Wire | 1 byte/player/tick | 16 bytes/tick received, 1 sent, about 1 KB/s each way at 60 Hz | trivial for USB |
+| `state.Match` | 236 B | about 1 KB (per-player arrays x16) | bss 96 KB of the 120 KB budget |
+| Sim per tick | 2 player passes | 16 passes, hit tests O(n^2) = 240 pairs of a cheap circle test | bench gate below |
+| Render | 1 rival sprite | up to 15 rivals; `render/sprites.zig` holds 64 | the worst frame is many rivals close up: bench gate |
+| Arena | Server Room 28x20, 6 spawns | needs room: a new 48x48 arena with 16 spawns | `levels.max_spawns` is 16 already |
+| Lockstep | the slowest of 2 badges | the slowest of 16 sets the pace; one stalled badge stalls all | stall-drop rule below |
+
+The real limit is fun per square metre, so the lobby suggests the arena
+by head count (Server Room up to 6, Build Farm DM up to 8, Data Hall
+any), and the host can still pick any.
+
+### The transport: cart serial + lobby protocol v1
+
+The OS session's fork (`/home/exedev/sycl-badge-fork`, branch
+`feature/cart-serial`, `fork/CART_SERIAL.md`, M0 = de77fc1) defines it:
+each badge's USB gets a second CDC port for the running cart; the cart
+publishes a `CartSerialRings` struct (address at `ipc_data.cart_serial`
+0x200350F4, `os_flags` bit 1 = supported), and the laptop's `badge
+lobby` relays COBS frames between badges: HELLO (game id, name,
+max_players up to 16) -> WELCOME (player id) + ROSTER on every join and
+leave; SEND(to 0xFF) -> DATA(from) to everyone else, in the order
+received. Reliable, ordered, lossless; no echo to the sender. Simulators
+join over TCP 7341-7356, so a party works on one laptop without badges.
+
+Our carts build against the pinned SDK, so they use the documented ring
+ABI directly ("Cart ABI for other SDKs"), through our own lib, not the
+fork's `cart.lobby`. What the lockstep relies on (to confirm with the OS
+session when it ships, `docs/LOCKSTEP_N.md` section "Transport
+requirements"):
+
+1. The relay forwards each frame to all recipients before the next one,
+   so every badge sees the other badges' frames in one global order, and
+   a ROSTER removing a player comes after every frame that player sent.
+   That makes a leave deterministic with no extra message: the leaver's
+   last tick is the last input of theirs anyone received.
+2. Lossless (USB, and TCP for the planned network hub).
+3. 16 badges x 60 input frames a second through the relay (about 1,000
+   frames in and 15,000 out a second). If the Python relay cannot keep
+   up, the fallback is two ticks per frame (30 Hz frames, one more tick
+   of input delay); measure with 16 simulators.
+4. The OS stops the rings at cart exit (it zeroes `cart_serial`).
+
+### Design
+
+- **Shared libs** (Snoutenstein first; the Genesis 4-player work in
+  `exedev-64 [01b6e6]` needs the same and is told): `lib/cart_serial.zig`
+  (the ring ABI, pinned-SDK safe, a virtual port for tests),
+  `lib/party.zig` (lobby protocol v1 client: COBS, HELLO, WELCOME,
+  ROSTER, SEND/DATA, PING), `lib/lockstep_n.zig` (`LockstepN(B, G)` over
+  any bus giving slot, roster and ordered broadcast; G as in
+  `docs/LOCKSTEP.md` but `simulate(w, in: *const [16]u8, present: u16)`
+  and `hand_over(w, slot)` for each leaver). Lobby: roster, host = lowest
+  present id, host rules (`rules_len` 1-8), per-slot pick + ready, GO
+  with a seed and a start tick; race: each badge broadcasts
+  `INPUT(tick, byte)` (several ticks per frame allowed), a tick runs when
+  every present slot's byte for it is in; hash check every 32 ticks
+  (each slot broadcasts its hash; any mismatch = DESYNC everywhere);
+  pause bit as M7.
+- **Stall-drop**: a slot silent for 3 s while the others wait is
+  dropped by the host: `DROP(slot, tick)` with `tick` one past the last
+  byte the host has from it; by rule 1 everyone else has exactly those
+  bytes too. All apply its bytes up to there and hand it over from
+  there. A dropped badge that comes back sees itself dropped and returns
+  to its lobby ("DROPPED").
+- **Leaver = bot.** `hand_over` puts `bot.zig` on the slot (it reads only
+  the World, so it is deterministic): the frags stay, the match goes on.
+  A match ends at the frag limit, or when one human is left (a forfeit
+  win as M7).
+- **No mid-match join.** A badge that joins during a match waits on the
+  lobby screen ("MATCH IN PROGRESS, n/16"); it joins the next one.
+- **The 2-badge cable stays.** M7's `lib/lockstep.zig` path over the J4
+  cable is untouched and still the DEATHMATCH entry when a cable partner
+  is found; the N-player path is a PARTY entry, greyed "NEEDS PARTY FIRMWARE" when `os_flags`
+  bit 1 is clear, "START BADGE LOBBY ON THE LAPTOP" while the port is
+  not connected. Both drive the
+  same `match.zig`: the 2-player `G` becomes a thin adapter.
+- **Rules (host)**: arena, frag limit (5/10/15/20/25), BUGS ON/OFF, TEAMS
+  (FFA / 2 teams / 4 teams), input delay (3/4/6). 2 bytes.
+- **Teams**: team = slot mod team count by default, the lobby lets each
+  player change their team with Left/Right before ready. No friendly
+  fire (team kills do nothing, self-damage from the Debugger still
+  counts as a suicide). Team frags = sum; the limit is per team.
+- **Spawns**: the spawn whose distance to the nearest living opponent is
+  largest (M7's "farthest from the opponent" generalised); ties to the
+  lowest index. Starting positions: slots dealt round-robin over the
+  spawns from a seeded offset.
+- **Look**: each player's rival Snouty is tinted by slot (16 colours
+  from the badge palette, a palette remap at blit time, no extra sheets);
+  in team modes by team. A slot number floats over the head when nearer
+  than 6 cells. HUD: rank and frags (`#3/12  7`), the leader's frags;
+  hold Select = scoreboard (16 rows of 7 px fit the 128 px screen).
+  Kill feed: one line, "FRAGGED P7" / "P7 FRAGGED P3", 2 s.
+- **Results**: all players sorted by frags (team totals first in team
+  modes), with deaths and accuracy; your row highlighted.
+
+### Work, three Opus tracks (disjoint files; agents do not commit)
+
+- **Track A, party libs (shared)**: `lib/cart_serial.zig`,
+  `lib/party.zig`, `lib/lockstep_n.zig`, `lib/party_virtual.zig` (a
+  model of `badge lobby`: rooms, ids, ROSTER, in-order fan-out, per-port
+  latency and jitter, a port that stalls or unplugs, the badge's rx ring
+  filling up), `lib/tests/party_unit.zig`, `lib/tests/lockstep_n_unit.zig`,
+  `docs/LOCKSTEP_N.md` (API table as LOCKSTEP.md + "Transport
+  requirements" = the four points above, for the OS session). Game id
+  "SNOUTDM1". Tests: COBS and every v1 message against byte vectors
+  from the fork's `lobby.py` / `lobby.zig`; 2, 4, 8 and 16 badges with a
+  toy World reach 10,000 ticks in sync with jitter; a leave mid-race
+  lands on the same tick everywhere; a stalled badge is dropped the same
+  way; a hash mismatch is found on all; pause on the same tick; a join
+  during a race waits.
+- **Track B, the N-player sim**: `state.zig` (`max_players = 16`,
+  `Match` arrays sized to it, `present`, `team`, `bot` masks, padding-
+  free), `match.zig` (N-player `step`, spawns, teams, hand-over to bot,
+  frag limit and end rules; the M7 two-player `G` kept as an adapter
+  over the new core), `bot.zig` (nearest visible opponent instead of
+  "the other one"), `ai.zig` / `sim.zig` / `projectiles.zig` only where
+  "the other player" is assumed. Tests: 16 bots to the frag limit in
+  FFA and in 4 teams; teams have no friendly fire; spawn choice; hand
+  over; `dm_net_test.zig` (the M7 cable tests) passes unchanged; the
+  campaign is bit-identical (DEMO OK, every existing test).
+- **Track C, arena and look**: `levels/data_hall.txt` (48x48, 16
+  spawns, loops, 4 weapon alcoves, a central rack maze; gen.zig
+  regenerated), `levels.zig` arena table; `render/sprites.zig` slot
+  tint remap and the head number; `render/hud.zig` rank line, kill
+  feed, scoreboard; results drawing helpers. Works against Track B's
+  `state.Match` contract below (B lands the struct first, within its
+  first hour, and the lead hands it on).
+
+`state.Match` contract (B owns it; C reads it): `players`, `frags`,
+`deaths`, `shots`, `hits`, `dead`, `hurt`, `last_hit` as
+`[max_players]` arrays; `present: u16`, `bots: u16`, `team: [max_players]u8`,
+`teams: u8` (0 = FFA, 2 or 4), `team_frags: [4]i16`, `victim`, `killer`,
+`kill_tick`, `arena`, `frag_limit`, `bugs`, `over`, `winner` (a slot, or
+`0x80 | team`, or `no_one`), `forfeit`, timers as M7. `by_bug` moves to
+`0xFE`.
+
+Lead, after the tracks: `deathmatch.zig` (PARTY menu entry, the N-slot
+lobby, the bus pump: top of `update` then to 14 ms while busy, results),
+`main.zig` hook, `tools/bench_m8.sh` (16 bots on Data Hall, BUGS ON;
+8 bots crowding one room on Server Room for the render worst case),
+`tools/check.sh`, SPEC.md section 20, RUNNING.md, preview GIF from three
+of the bots' views.
+
+Done when:
+- `zig build`, `zig build test` and `tools/check.sh` pass;
+- the campaign bench is unchanged and the M7 cable tests pass;
+- the 16-bot bench stays under 12 ms worst (knobs if not: rival sprite
+  LOD beyond 10 cells, bug count capped by player count);
+- RAM inside the 140 KB / 120 KB budgets;
+- `docs/LOCKSTEP_N.md` transport requirements are ready to hand to the
+  OS session.
+
+M8.1 (when the OS session says the transport shipped): re-check the ABI
+and protocol against what merged, run 2 then 16 simulators on one
+`badge lobby`, then badges (RUNNING.md hardware check), tune the input
+delay and the stall-drop time.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
@@ -1415,3 +1590,6 @@ render check). check.sh now reads the demo level from the data file.
   demo hash and rewind pools unchanged. `docs/preview_m7.gif`: title,
   host and guest lobby, a frag from player 0's view, one from player
   1's, the results. Next: the two-badge hardware check (RUNNING.md 7).
+- 2026-10-05: M8 party deathmatch (up to 16 badges) planned; the OS
+  transport is in progress elsewhere; three tracks launched on the
+  transport-free parts (branch `stein/mp`).
