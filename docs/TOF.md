@@ -284,6 +284,15 @@ the three dots top right show which).
    two LIVE shows NO SENSOR (DIAG: `absent`, `ERR lost`); plug it back:
    it boots again (`D` goes up by one) and measures.
 
+7. **Theremin and Morph.** With the breakout still plugged in, start
+   `snouty-theremin.uf2`: the top-left source label turns SENSOR and a
+   hand 5-50 cm over the sensor plays (closer is higher); Left/Right pick
+   1 HAND / 2 HAND (2 HAND uses the wide SPAD map). Then
+   `snouty-morph.uf2`: the label turns HAND and the mesh follows your
+   hand; push toward it to bulge, jab for the shockwave. Say whether left
+   and right come out mirrored in either cart (their orientation
+   constants follow the LIVE photo).
+
 Send the photos of LIVE (hand in a corner + which corner), HIST CH0 and
 CH5, and DIAG after boot, after the 1 MHz reload, and of anything that
 went wrong.
