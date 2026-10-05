@@ -174,6 +174,28 @@ test "CREWS: the AI cars past the count stay off the grid; the default keeps all
     }
 }
 
+test "after the finish no input reaches the World (a link race runs it on alone)" {
+    for ([_]world.Mode{ .race, .gc }) |mode| {
+        var a: World = undefined;
+        sim.reset(&a, .{ .seed = 23, .humans = .{ racers.rootkit, racers.botnet }, .mode = mode });
+        var guard: u32 = 0;
+        while (a.phase != .finished and guard < 30_000) : (guard += 1) {
+            sim.simulate(&a, .{ ai.drive(&a, racers.rootkit).byte(), ai.drive(&a, racers.botnet).byte() });
+        }
+        try std.testing.expectEqual(world.Phase.finished, a.phase);
+        var b = a;
+        var r: u32 = 0x2545_F491;
+        for (0..900) |_| {
+            r ^= r << 13;
+            r ^= r >> 17;
+            r ^= r << 5;
+            sim.simulate(&a, .{ @truncate(r), @truncate(r >> 8) });
+            sim.simulate(&b, .{ 0, 0 });
+        }
+        try std.testing.expect(sim.worlds_equal(&a, &b));
+    }
+}
+
 test "auto-throttle: with no input the car drives to its top speed" {
     var w: World = undefined;
     sim.reset(&w, solo(1));

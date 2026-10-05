@@ -55,6 +55,22 @@ pub var hills_on: bool = false;
 /// BIT FLIP on the followed car (M2, SPEC 10): every floor row slides 0 or
 /// 1 px sideways, a pattern that changes every frame. Set by main.
 pub var row_jitter: bool = false;
+/// M4 link race: called through the draw (every `tuning.link_pump_rows`
+/// floor rows, every 16 horizon columns, after the row tables), so the
+/// link's 8-byte receive FIFO is emptied during the draw and no gap
+/// between two calls is longer than a packet's wire time (80 us) on the
+/// floor (docs/NET.md section 3, PLAN M4 status). Null outside a link race.
+pub var band_hook: ?*const fn () void = null;
+/// Where the last `pump_at` was (main's gap probe reports by site).
+pub const Site = enum(u8) { top, sim, horizon, floor, lines, sprites, hud, after };
+pub var site: Site = .top;
+
+pub inline fn pump_at(s: Site) void {
+    if (band_hook) |h| {
+        site = s;
+        h();
+    }
+}
 /// Front palette entry 15 as drawn (`led_on`), swapped with entry 14 every 8 ticks (SPEC 6.4).
 var led_on: cart.Pixel = undefined;
 var led_off: cart.Pixel = undefined;
@@ -162,6 +178,7 @@ pub fn draw() void {
     const cam = camera.cam;
     if (hills_on and hills.any) build_rows_hills(cam.height) else if (cam.height != rows_height) build_rows(cam.height);
     front_pal[15] = if ((frame / 8) % 2 == 0) led_on else led_off;
+    pump_at(.horizon);
     draw_horizon(cam.yaw);
     draw_floor(cam);
 }
@@ -190,6 +207,7 @@ fn draw_horizon(yaw: fixed.Turn) void {
             }
         }
         col[@intCast(horizon_y)] = fog_pixel;
+        if (x & 15 == 15) pump_at(.horizon);
     }
 }
 
@@ -224,6 +242,7 @@ fn floor_rows() void {
     const tiles = tiles_art;
     var y: usize = floor_y0;
     while (y < 128) : (y += 1) {
+        if (y % tuning.link_pump_rows == 0) pump_at(.floor);
         var wx: u32 = @bitCast(row_x0[y]);
         var wy: u32 = @bitCast(row_y0[y]);
         const dx: u32 = @bitCast(row_dx[y]);

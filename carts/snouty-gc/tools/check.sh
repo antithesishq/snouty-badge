@@ -36,7 +36,11 @@
 #              the floor and nothing under it is drawn);
 #            - the M2 gags (docs/preview_m2.gif's run): a CAPTCHA forced on
 #              SNOUTY is solved by A presses on its lit cells, a KERNEL PANIC
-#              shows the blue screen (frozen > 60), a FORK BOMB ahead forks.
+#              shows the blue screen (frozen > 60), a FORK BOMB ahead forks;
+#            - LINK (M4): the simulator's link is offline (A on LINK stays on
+#              the menu), the made-up LINK screens (debug_link_view) open the
+#              lobby and the link select, and a Quick Race after them is a
+#              single-player race (debug_linked 0).
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
 #            once plain and once with --lcd, and the render stress scene
 #            (--poke gc_stress=1, tools/scripts/m1_render_stress.json) plain
@@ -46,7 +50,11 @@
 #            m3_gc_race.json (3,600 frames of a GARBAGE COLLECTION race on
 #            Monitor Dunes: marks, claws, the Sweeper), each plain and
 #            --lcd: worst `busy ms` <= BENCH_MAX_MS (default 8, SPEC
-#            13.1), no crash, no neopixel warning.
+#            13.1), no crash, no neopixel warning. M4: the stress scene and
+#            m3_gc_race.json once more with `--poke gc_pump_probe=1` (every
+#            link pump point runs, the link searching: a link race's draw
+#            cost) under the same limit, and the worst gap between two pumps
+#            by site from their traces (informational, PLAN M4 status).
 #
 # Output under out/check (gitignored). Exit 0 when every step passes, else 1.
 set -uo pipefail
@@ -158,6 +166,12 @@ if want preview; then
         --call-at '1413 debug_effect:1' --press A:1307-1307,A:1312-1312,A:1332-1332,A:1337-1337 \
         --at '1301 debug_captcha > 100' --at '1360 debug_captcha == 0' --at '1420 debug_frozen > 60' \
         --at '1480 debug_forks >= 2' --dump-exports debug_forks || st=1
+    run_preview link --frames 200 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:20-20 \
+        --at '30 debug_screen == 6' --at '30 debug_link_state == 0' --call-at '40 debug_link_view:2' --at '50 debug_screen == 7' \
+        --press RIGHT:60-60 --call-at '70 debug_link_view:5' --at '80 debug_screen == 2' --press A:90-90 \
+        --call-at '100 debug_link_view:0' --at '110 debug_screen == 7' --press B:120-120 --at '130 debug_screen == 6' \
+        --press UP:140-140,UP:142-142 --press A:150-150 --press A:170-170 \
+        --expect 'debug_screen == 3' --expect 'debug_linked == 0' --dump-exports debug_screen,debug_linked || st=1
     run_preview stress --frames 200 --call debug_stress:1 --expect 'debug_mode == 2' --expect 'debug_drawn == 64' \
         --expect 'debug_gathered > 64' --dump-exports debug_drawn,debug_gathered || st=1
     result preview "$st"
@@ -191,7 +205,14 @@ if want bench; then
     p9=$!
     "$bench" "$elf" --json --lcd "${m3g[@]}" --out "$out/bench-m3-gc-lcd" > "$out/bench-m3-gc-lcd.txt" 2>&1 &
     p10=$!
+    probe=(--poke gc_pump_probe=1)
+    "$bench" "$elf" --json "${probe[@]}" "${stress[@]}" --out "$out/bench-probe-stress" > "$out/bench-probe-stress.txt" 2>&1 &
+    p11=$!
+    "$bench" "$elf" --json "${probe[@]}" "${m3g[@]}" --out "$out/bench-probe-gc" > "$out/bench-probe-gc.txt" 2>&1 &
+    p12=$!
     st=0
+    wait $p11 || st=1
+    wait $p12 || st=1
     wait $p1 || st=1
     wait $p2 || st=1
     wait $p3 || st=1
@@ -205,7 +226,8 @@ if want bench; then
     for j in "$out/bench/bench.json" "$out/bench-lcd/bench.json" "$out/bench-stress/bench.json" "$out/bench-stress-lcd/bench.json" \
              "$out/bench-m2/bench.json" "$out/bench-m2-lcd/bench.json" \
              "$out/bench-m3-outflow/bench.json" "$out/bench-m3-outflow-lcd/bench.json" \
-             "$out/bench-m3-gc/bench.json" "$out/bench-m3-gc-lcd/bench.json"; do
+             "$out/bench-m3-gc/bench.json" "$out/bench-m3-gc-lcd/bench.json" \
+             "$out/bench-probe-stress/bench.json" "$out/bench-probe-gc/bench.json"; do
         [ -f "$j" ] || { echo "FAIL no $j"; st=1; continue; }
         python3 - "$j" "$max_ms" <<'EOF' || st=1
 import json, sys
@@ -219,6 +241,20 @@ print("%s %s: mean %.2f ms, worst %.2f ms at frame %d, p95 %.2f, %d frames; limi
 for w in j.get("warnings", []):
     print("     warning:", w)
 sys.exit(0 if ok else 1)
+EOF
+    done
+    for j in "$out/bench-probe-stress/bench.json" "$out/bench-probe-gc/bench.json"; do
+        [ -f "$j" ] || continue
+        python3 - "$j" <<'EOF'
+import json, sys
+j = json.load(open(sys.argv[1]))
+rows = [[int(x) for x in t.split("gc gaps:")[1].split()] for t in
+        (t["text"] if isinstance(t, dict) else t for t in j.get("traces", [])) if "gc gaps:" in t]
+if rows:
+    names = ["top", "sim", "horizon", "floor", "lines", "sprites", "hud", "after"]
+    worst = [max(r[i] for r in rows) for i in range(len(names))]
+    print("     %s pump gaps (us, worst by site): %s" % (sys.argv[1].split("/")[-2],
+          ", ".join("%s %d" % (n, g) for n, g in zip(names[1:], worst[1:]))))
 EOF
     done
     result bench "$st"

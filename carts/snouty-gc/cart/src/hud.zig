@@ -36,6 +36,13 @@ const sprites = @import("sprites.zig");
 const fx = @import("fx.zig");
 const assets = @import("assets");
 const gc_mode = @import("gc_mode.zig");
+const render = @import("render.zig");
+
+/// M4 link race: pump the link between the HUD's passes (render.band_hook,
+/// null outside a link race; docs/NET.md section 3).
+inline fn pump() void {
+    render.pump_at(.hud);
+}
 
 pub const white = cart.DisplayColor.rgb(0xFCFBF9);
 pub const coral = cart.DisplayColor.rgb(0xF18271);
@@ -235,6 +242,7 @@ pub const Options = struct {
 pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     const c = &w.cars[follow % world.car_count];
     draw_markers(w, c, follow, o.frame);
+    pump();
     // Top row: LAP n/N (GARBAGE COLLECTION: SWEEP n) left, the rank in the
     // middle, the pickup box right.
     if (w.mode == .gc) {
@@ -250,8 +258,10 @@ pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     draw_pickup_box(c, follow, o.frame, o.look_back or o.spectate);
     if (o.look_back) centered("BEHIND", behind_y, coral);
     if (o.spectate and c.active) centered(name_of(c.racer), behind_y, livery(c.racer));
+    pump();
     const two_line = draw_feed();
     if (!o.spectate) draw_popup(if (two_line) 9 else 0);
+    pump();
     if (o.collected) {
         // Bottom left, where the badge's own armor bar was (the watched
         // car's MARKED tag sits higher).
@@ -259,10 +269,15 @@ pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     } else if (!o.spectate) {
         draw_bottom_left(w, c, follow, o.frame);
     }
+    pump();
     draw_minimap(w, follow, o.frame);
+    pump();
     if (!draw_message(w, c, o.spectate) and o.press_start and (o.frame / 30) % 2 == 0) centered("PRESS START", bar_y + 4, white);
     if (c.bit_flip > 0 and c.wreck == .none) draw_bit_flip(o.frame);
-    if (captcha_up(c)) draw_captcha(c, o.frame);
+    if (captcha_up(c)) {
+        pump();
+        draw_captcha(c, o.frame);
+    }
 }
 
 // --- The pickup box (SPEC 6.3) ---------------------------------------------------
@@ -675,13 +690,23 @@ pub fn fill_rect(x: i32, y: i32, w: anytype, h: anytype, color: cart.DisplayColo
 /// cells and the cursor on `captcha_cursor`, with the wait bar and
 /// `PRESS A` (`TRY AGAIN` after a miss).
 fn draw_captcha(c: *const world.Car, frame: u32) void {
-    fill_rect(cap_x, cap_y, cap_w, cap_h, cap_edge);
-    fill_rect(cap_x + 1, cap_y + 1, cap_w - 2, cap_h - 2, cap_card);
+    // The card's 1 px edge, then its face in two halves (the link race
+    // pumps between them: a full-card fill is about 0.6 ms).
+    fill_rect(cap_x, cap_y, cap_w, 1, cap_edge);
+    fill_rect(cap_x, cap_y + cap_h - 1, cap_w, 1, cap_edge);
+    fill_rect(cap_x, cap_y + 1, 1, cap_h - 2, cap_edge);
+    fill_rect(cap_x + cap_w - 1, cap_y + 1, 1, cap_h - 2, cap_edge);
+    const half: i32 = @divTrunc(cap_w - 2, 2);
+    fill_rect(cap_x + 1, cap_y + 1, half, cap_h - 2, cap_card);
+    pump();
+    fill_rect(cap_x + 1 + half, cap_y + 1, cap_w - 2 - half, cap_h - 2, cap_card);
+    pump();
     // The header: SELECT ALL / SQUARES WITH / TRAFFIC LIGHTS.
     fill_rect(cap_x + 3, cap_y + 3, cap_w - 6, 28, cap_blue);
     font.draw("SELECT ALL", 80 - 40, cap_y + 5, .from_color(white), null);
     font.draw("SQUARES WITH", 80 - 48, cap_y + 13, .from_color(white), null);
     font.draw("TRAFFIC LIGHTS", 80 - 56, cap_y + 21, .from_color(white), .from_color(anti_black));
+    pump();
     // The grid on a dark gutter.
     fill_rect(grid_x, grid_y, 3 * cap_cell + 4, 3 * cap_cell + 4, white);
     var k: u32 = 0;
@@ -703,6 +728,7 @@ fn draw_captcha(c: *const world.Car, frame: u32) void {
         } else {
             draw_scene(k, lit, cx, cy, cap_cell);
         }
+        pump();
     }
     // The cursor: a yellow frame sweeping the cells.
     const cur: u32 = c.captcha_cursor % 9;
@@ -866,6 +892,7 @@ pub fn draw_after(frame: u32) void {
                 for (0..160) |x| row[x] = cart.framebuffer[x][y];
                 for (0..160) |x| cart.framebuffer[x][y] = row[(x + shift) % 160];
             }
+            pump();
         }
     }
 }

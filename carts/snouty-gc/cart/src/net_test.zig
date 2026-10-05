@@ -149,6 +149,13 @@ const Badge = struct {
 
     /// This frame's tick has run (or there is nothing to run).
     stepped: bool = true,
+    /// main.zig's pause (M4 Track B): while `paused` only the Start bit
+    /// is submitted, and RESUME (picked on frame `resume_frame`) sends a
+    /// Start edge: nothing for a frame if the last byte held Start.
+    main_pause: bool = false,
+    resume_frame: u64 = 0,
+    resume_pending: bool = false,
+    last_byte: u8 = 0,
 
     fn done(b: *const Badge) bool {
         return b.stop_at_finish and b.w.phase == .finished;
@@ -279,7 +286,22 @@ const Duo = struct {
                 n.pump(d.now);
                 return;
             }
-            n.submit(d.now, b.script_byte());
+            var byte = b.script_byte();
+            if (b.main_pause and n.paused) {
+                byte &= 0x40;
+                if (b.resume_frame != 0 and b.frames >= b.resume_frame) {
+                    b.resume_pending = true;
+                    b.resume_frame = 0;
+                }
+                if (b.resume_pending) {
+                    if (b.last_byte & 0x40 != 0) byte = 0 else {
+                        byte = 0x40;
+                        b.resume_pending = false;
+                    }
+                }
+            }
+            b.last_byte = byte;
+            n.submit(d.now, byte);
             b.stepped = false;
             d.try_step(b);
         } else b.stepped = true;
@@ -666,6 +688,37 @@ test "Start pauses both badges on the same tick, the other's Start resumes" {
             return dd.b[0].pause_off != null and dd.b[1].pause_off != null;
         }
     };
+    try d.run(10_000_000, {}, Off.f);
+    try std.testing.expectEqual(d.b[0].pause_off.?, d.b[1].pause_off.?);
+    try d.run(400_000_000, {}, done_finished);
+    try std.testing.expect(sim.worlds_equal(&d.b[0].w, &d.b[1].w));
+    _ = try expect_logs_equal(&d);
+}
+
+test "main's pause: menu presses masked, RESUME's injected Start edge resumes both on one tick" {
+    var d: Duo = undefined;
+    d.init(.{ .seed = 14, .loss_ppm = 2_000, .loop_until = 14_000 });
+    for (&d.b) |*b| b.main_pause = true;
+    try d.run(20_000_000, {}, done_started);
+    try d.run(60_000_000, @as(u32, 700), done_tick);
+    // Badge 1 pauses with Start held 3 frames and picks RESUME while it may
+    // still hold it (the edge waits a frame).
+    d.b[1].press_start_at = d.b[1].frames + 1;
+    d.b[1].resume_frame = d.b[1].frames + 4;
+    const Off = struct {
+        fn f(dd: *Duo, _: void) bool {
+            return dd.b[0].pause_off != null and dd.b[1].pause_off != null;
+        }
+    };
+    try d.run(10_000_000, {}, Off.f);
+    try std.testing.expectEqual(d.b[0].pause_on.?, d.b[1].pause_on.?);
+    try std.testing.expectEqual(d.b[0].pause_off.?, d.b[1].pause_off.?);
+    try std.testing.expect(d.b[0].pause_off.? > d.b[0].pause_on.?);
+    // Badge 0 pauses, then badge 1 resumes from its menu.
+    d.b[0].press_start_at = d.b[0].frames + 1;
+    d.b[1].resume_frame = d.b[1].frames + 40;
+    d.b[0].pause_off = null;
+    d.b[1].pause_off = null;
     try d.run(10_000_000, {}, Off.f);
     try std.testing.expectEqual(d.b[0].pause_off.?, d.b[1].pause_off.?);
     try d.run(400_000_000, {}, done_finished);

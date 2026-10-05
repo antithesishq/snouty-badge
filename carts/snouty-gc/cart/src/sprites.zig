@@ -425,6 +425,7 @@ pub fn draw_world(w: *const world.World, v: View) void {
         }
     }
     last_gathered = @intCast(count);
+    render.pump_at(.sprites);
     // Insertion sort, far first (the list is mostly in pool order, so small).
     var i: usize = 1;
     while (i < count) : (i += 1) {
@@ -437,12 +438,14 @@ pub fn draw_world(w: *const world.World, v: View) void {
     // car (six at most), so the race itself always shows.
     var cull: usize = if (count > draw_cap) count - draw_cap else 0;
     last_drawn = @intCast(count - cull);
-    for (keys[0..count]) |key| {
+    for (keys[0..count], 0..) |key, k| {
         const e = &list[key & 0xFF];
         if (cull > 0 and e.kind != .car) {
             cull -= 1;
             continue;
         }
+        // M4 link race: pump the link between objects (docs/NET.md).
+        if (k != 0) render.pump_at(.sprites);
         switch (e.kind) {
             .car => draw_car(&w.cars[e.index], e.index, e.index == v.follow, e.index == w.gc.marked, e.p, v.frame),
             .proj => draw_proj(&w.projs[e.index], e.p, v.frame),
