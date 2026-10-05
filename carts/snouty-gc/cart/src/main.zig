@@ -975,7 +975,17 @@ fn chooser_frame() void {
             prix_on = true;
             player_racer = prix.racer;
             race_mode = .circuit;
-            return resume_career();
+            switch (csave.resume_at(&prix)) {
+                .garage => return to_garage(),
+                // The standings of a league whose third race was saved
+                // before it closed, or the end card: they draw from the
+                // next frame (this one shows the chooser once more).
+                .standings => go(.standings),
+                .end => {
+                    card = .end;
+                    go(.card);
+                },
+            }
         },
         .new_career => {
             race_mode = .circuit;
@@ -984,23 +994,6 @@ fn chooser_frame() void {
         },
     }
     save_ui.draw_chooser(can, if (session) &prix else null);
-}
-
-/// A continued career: the garage, or the standings of a league whose
-/// third race was saved before it closed, or the end card.
-fn resume_career() void {
-    switch (csave.resume_at(&prix)) {
-        .garage => to_garage(),
-        .standings => {
-            go(.standings);
-            standings.draw_standings(&prix, screen_frames);
-        },
-        .end => {
-            card = .end;
-            go(.card);
-            standings.draw_end(&prix, screen_frames);
-        },
-    }
 }
 
 // --- Link (M4: SPEC 7, docs/NET.md section 3) ---------------------------------------

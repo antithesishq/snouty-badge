@@ -83,91 +83,109 @@ fn fnv1a(bytes: []const u8) u32 {
     return h;
 }
 
-const Writer = struct {
+/// One pass over the payload's fields for both directions (one copy of
+/// the field list in the cart, so encode and decode cannot drift): a
+/// field is written from the Career, or read into it.
+const Io = struct {
     buf: []u8,
     n: usize = 0,
-    fn u8_(w: *Writer, v: u8) void {
-        w.buf[w.n] = v;
-        w.n += 1;
+    reading: bool,
+
+    fn b8(io: *Io, p: *u8) void {
+        if (io.reading) p.* = io.buf[io.n] else io.buf[io.n] = p.*;
+        io.n += 1;
     }
-    fn u16_(w: *Writer, v: u16) void {
-        w.u8_(@truncate(v));
-        w.u8_(@truncate(v >> 8));
+    fn b16(io: *Io, p: *u16) void {
+        var lo: u8 = @truncate(p.*);
+        var hi: u8 = @truncate(p.* >> 8);
+        io.b8(&lo);
+        io.b8(&hi);
+        p.* = lo | @as(u16, hi) << 8;
     }
-    fn u32_(w: *Writer, v: u32) void {
-        w.u16_(@truncate(v));
-        w.u16_(@truncate(v >> 16));
+    fn b32(io: *Io, p: *u32) void {
+        var lo: u16 = @truncate(p.*);
+        var hi: u16 = @truncate(p.* >> 16);
+        io.b16(&lo);
+        io.b16(&hi);
+        p.* = lo | @as(u32, hi) << 16;
+    }
+    /// An optional gun: its number, or `own_gun` for the racer's own.
+    /// Reading keeps the raw byte for `decode` to check (`bad`).
+    fn gun(io: *Io, comptime T: type, p: *?T, bad: *bool) void {
+        var v: u8 = if (p.*) |g| @backingInt(g) else own_gun;
+        io.b8(&v);
+        if (v != own_gun and v >= 4) {
+            bad.* = true;
+            v = own_gun;
+        }
+        p.* = if (v == own_gun) null else @as(T, @fromBackingInt(v));
+    }
+    fn flag(io: *Io, p: *bool, bad: *bool) void {
+        var v: u8 = @intFromBool(p.*);
+        io.b8(&v);
+        if (v > 1) bad.* = true;
+        p.* = v == 1;
     }
 };
 
-const Reader = struct {
-    buf: []const u8,
-    n: usize = 0,
-    fn u8_(r: *Reader) u8 {
-        const v = r.buf[r.n];
-        r.n += 1;
-        return v;
+/// The payload's fields, in order. Returns whether a read found a gun,
+/// the outcome or a flag out of range (the other ranges `decode` checks).
+fn xfer(c: *career.Career, io: *Io) bool {
+    var bad = false;
+    io.b8(&c.racer);
+    io.b8(&c.league);
+    io.b8(&c.race);
+    io.b8(&c.open);
+    io.b8(&c.tries);
+    io.b32(&c.cycles);
+    for (&c.points) |*p| io.b16(p);
+    for (&c.loadouts) |*lo| {
+        io.gun(world.Front, &lo.front, &bad);
+        io.gun(world.Rear, &lo.rear, &bad);
+        for ([_]*u8{ &lo.front_level, &lo.rear_level, &lo.plating, &lo.clock, &lo.traction, &lo.burst, &lo.watchdog }) |f| io.b8(f);
     }
-    fn u16_(r: *Reader) u16 {
-        const lo = r.u8_();
-        return lo | @as(u16, r.u8_()) << 8;
+    for (&c.earned) |*v| io.b32(v);
+    for (&c.spent) |*v| io.b32(v);
+    for (&c.plan) |*v| io.b8(v);
+    io.b16(&c.races);
+    io.b16(&c.kills);
+    io.b16(&c.wins);
+    const a = &c.last;
+    io.b8(&a.place);
+    io.b16(&a.place_cycles);
+    io.b8(&a.kills);
+    io.b16(&a.kill_cycles);
+    io.b8(&a.chips);
+    io.b16(&a.chip_cycles);
+    io.b32(&a.total);
+    for (&a.places) |*v| io.b8(v);
+    for (&a.points) |*v| io.b8(v);
+    var outcome: u8 = @backingInt(c.outcome);
+    io.b8(&outcome);
+    if (outcome > 2) {
+        bad = true;
+        outcome = 0;
     }
-    fn u32_(r: *Reader) u32 {
-        const lo = r.u16_();
-        return lo | @as(u32, r.u16_()) << 16;
-    }
-};
+    c.outcome = @fromBackingInt(outcome);
+    io.b8(&c.champion);
+    io.b8(&c.league_place);
+    io.flag(&c.unlocked, &bad);
+    io.flag(&c.done, &bad);
+    std.debug.assert(io.n == payload_len);
+    return bad;
+}
 
 /// The blob for `c` in `out` (`blob_len` bytes).
 pub fn encode(c: *const career.Career, out: *[blob_len]u8) void {
-    var w = Writer{ .buf = out[header_len..] };
-    w.u8_(c.racer);
-    w.u8_(c.league);
-    w.u8_(c.race);
-    w.u8_(c.open);
-    w.u8_(c.tries);
-    w.u32_(c.cycles);
-    for (c.points) |p| w.u16_(p);
-    for (&c.loadouts) |*lo| {
-        w.u8_(if (lo.front) |f| @backingInt(f) else own_gun);
-        w.u8_(if (lo.rear) |r| @backingInt(r) else own_gun);
-        w.u8_(lo.front_level);
-        w.u8_(lo.rear_level);
-        w.u8_(lo.plating);
-        w.u8_(lo.clock);
-        w.u8_(lo.traction);
-        w.u8_(lo.burst);
-        w.u8_(lo.watchdog);
-    }
-    for (c.earned) |v| w.u32_(v);
-    for (c.spent) |v| w.u32_(v);
-    for (c.plan) |v| w.u8_(v);
-    w.u16_(c.races);
-    w.u16_(c.kills);
-    w.u16_(c.wins);
-    const a = &c.last;
-    w.u8_(a.place);
-    w.u16_(a.place_cycles);
-    w.u8_(a.kills);
-    w.u16_(a.kill_cycles);
-    w.u8_(a.chips);
-    w.u16_(a.chip_cycles);
-    w.u32_(a.total);
-    for (a.places) |v| w.u8_(v);
-    for (a.points) |v| w.u8_(v);
-    w.u8_(@backingInt(c.outcome));
-    w.u8_(c.champion);
-    w.u8_(c.league_place);
-    w.u8_(@intFromBool(c.unlocked));
-    w.u8_(@intFromBool(c.done));
-    std.debug.assert(w.n == payload_len);
-
-    var h = Writer{ .buf = out[0..header_len] };
-    for (magic) |b| h.u8_(b);
-    h.u8_(version);
-    for (guard) |b| h.u8_(b);
-    h.u16_(payload_len);
-    h.u32_(fnv1a(out[header_len..]));
+    var copy = c.*;
+    var io = Io{ .buf = out[header_len..], .reading = false };
+    _ = xfer(&copy, &io);
+    @memcpy(out[0..4], magic);
+    out[4] = version;
+    @memcpy(out[5..10], &guard);
+    out[10] = @truncate(payload_len);
+    out[11] = @truncate(payload_len >> 8);
+    std.mem.writeInt(u32, out[12..16], fnv1a(out[header_len..]), .little);
 }
 
 pub const DecodeError = error{ Old, Damaged };
@@ -176,77 +194,31 @@ pub const DecodeError = error{ Old, Damaged };
 /// (magic, version, guard, length), `error.Damaged` for a bad sum or a
 /// field out of range.
 pub fn decode(blob: []const u8) DecodeError!career.Career {
-    if (blob.len < header_len) return error.Old;
-    var h = Reader{ .buf = blob[0..header_len] };
-    for (magic) |b| if (h.u8_() != b) return error.Old;
-    if (h.u8_() != version) return error.Old;
-    for (guard) |b| if (h.u8_() != b) return error.Old;
-    if (h.u16_() != payload_len or blob.len != blob_len) return error.Old;
-    if (h.u32_() != fnv1a(blob[header_len..])) return error.Damaged;
+    if (blob.len != blob_len) return error.Old;
+    if (!std.mem.eql(u8, blob[0..4], magic) or blob[4] != version) return error.Old;
+    if (!std.mem.eql(u8, blob[5..10], &guard)) return error.Old;
+    if (blob[10] != @as(u8, @truncate(payload_len)) or blob[11] != payload_len >> 8) return error.Old;
+    var payload: [payload_len]u8 = blob[header_len..][0..payload_len].*;
+    if (std.mem.readInt(u32, blob[12..16], .little) != fnv1a(&payload)) return error.Damaged;
 
-    var r = Reader{ .buf = blob[header_len..] };
     var c = career.Career.init(0);
-    c.racer = r.u8_();
-    c.league = r.u8_();
-    c.race = r.u8_();
-    c.open = r.u8_();
-    c.tries = r.u8_();
-    c.cycles = r.u32_();
-    for (&c.points) |*p| p.* = r.u16_();
+    var io = Io{ .buf = &payload, .reading = true };
+    if (xfer(&c, &io)) return error.Damaged;
     for (&c.loadouts) |*lo| {
-        const f = r.u8_();
-        const rr = r.u8_();
-        if (f != own_gun and f >= 4) return error.Damaged;
-        if (rr != own_gun and rr >= 4) return error.Damaged;
-        lo.front = if (f == own_gun) null else @as(world.Front, @fromBackingInt(f));
-        lo.rear = if (rr == own_gun) null else @as(world.Rear, @fromBackingInt(rr));
-        lo.front_level = r.u8_();
-        lo.rear_level = r.u8_();
-        lo.plating = r.u8_();
-        lo.clock = r.u8_();
-        lo.traction = r.u8_();
-        lo.burst = r.u8_();
-        lo.watchdog = r.u8_();
         if (lo.front_level < 1 or lo.front_level > tuning.level_max) return error.Damaged;
         if (lo.rear_level < 1 or lo.rear_level > tuning.level_max) return error.Damaged;
         for ([_]u8{ lo.plating, lo.clock, lo.traction, lo.burst, lo.watchdog }) |v| {
             if (v > tuning.level_max) return error.Damaged;
         }
     }
-    for (&c.earned) |*v| v.* = r.u32_();
-    for (&c.spent) |*v| v.* = r.u32_();
-    for (&c.plan, 0..) |*v, i| {
-        // A later build may shorten a plan: the AI then has bought it all.
-        v.* = @min(r.u8_(), @as(u8, @intCast(career.plans[i].len)));
-    }
-    c.races = r.u16_();
-    c.kills = r.u16_();
-    c.wins = r.u16_();
+    // A later build may shorten a plan: the AI then has bought it all.
+    for (&c.plan, 0..) |*v, i| v.* = @min(v.*, @as(u8, @intCast(career.plans[i].len)));
     const a = &c.last;
-    a.place = r.u8_();
-    a.place_cycles = r.u16_();
-    a.kills = r.u8_();
-    a.kill_cycles = r.u16_();
-    a.chips = r.u8_();
-    a.chip_cycles = r.u16_();
-    a.total = r.u32_();
-    for (&a.places) |*v| v.* = r.u8_();
-    for (&a.points) |*v| v.* = r.u8_();
-    const outcome = r.u8_();
-    c.champion = r.u8_();
-    c.league_place = r.u8_();
-    const unlocked = r.u8_();
-    const done = r.u8_();
-    std.debug.assert(r.n == payload_len);
-
     if (c.racer >= racers.count or c.league >= track.leagues.len) return error.Damaged;
     if (c.race > track.tracks_per_league or c.open < c.league + 1 or c.open > track.leagues.len) return error.Damaged;
-    if (c.tries == 0 or outcome > 2 or unlocked > 1 or done > 1) return error.Damaged;
+    if (c.tries == 0) return error.Damaged;
     if (c.champion >= racers.count or c.league_place > racers.count or a.place > racers.count) return error.Damaged;
     for (a.places) |p| if (p > racers.count) return error.Damaged;
-    c.outcome = @fromBackingInt(outcome);
-    c.unlocked = unlocked == 1;
-    c.done = done == 1;
     return c;
 }
 

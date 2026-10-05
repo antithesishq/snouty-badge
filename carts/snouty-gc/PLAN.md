@@ -1701,6 +1701,89 @@ then origin/main (lockstep `wants_pump`, bf037753).
   the stack (M5: 50,408 by the sum).
 - `docs/preview_pickups.gif` re-recorded with the new menu (three Downs).
 
+### Saves (branch `saves/gcp`, the cart saves project's Track F)
+
+**2026-10-05, branch `saves/gcp`** (worktree
+`/home/exedev/snouty-badge-saves-gcp`, off gc/present f4c0eceb + the
+saves library `saves/m1`, then origin/main 894b1b76 = M6 merged in).
+Not on main: saves need the patched OS (root `docs/SAVES.md`). Supersedes
+L28 on this branch. For the GC session to adopt: merge `saves/gcp`, keep
+the hook lines below where they are, and rerun `tools/check_saves.sh`.
+
+- **What**: one key `gcp/career`, 181 B (16-byte header: `GCPC`,
+  version 1, a 5-byte layout guard of racers / leagues / tracks a league /
+  garage slots / top level, payload length, FNV-1a 32 of the payload; then
+  165 B: every field of `career.Career` in a fixed order, little-endian,
+  one field list for both directions, `career_save.xfer`). Bump
+  `career_save.version` when `Career`'s fields change; a save of another
+  version, guard or length reads as OLD SAVE: UNUSABLE, a bad sum or
+  range as SAVE IS DAMAGED, and either way NEW CAREER starts fresh and
+  replaces it. Nothing outside the career is saved (SOUND, BATTLE's
+  options and the lobby stay per boot): no `gcp/settings`.
+- **When**: the race booked (results to standings), B from the garage to
+  the menu, the end card left (the key is deleted: the circuit is over),
+  and the OS's Exit cart (`watchExit` / `exitRequested` once an update /
+  `exitReady`). Only if the career's bytes changed (an FNV of what the
+  store holds, no second copy). The SAVING mark is drawn into the frame
+  before the write; the write runs at the top of the next update, outside
+  any race frame. A league is closed on the standings with no save of its
+  own: `close_league` is pure, so a career saved after the third race
+  resumes on the standings and closes the same way. Purchases ride on the
+  next save point (power off before it undoes them, CYCLES refunded).
+- **Link**: `link_session()` (linked, the lobby, the link select, or
+  `lnk.wants_pump()`; LINK RACE, GC and BATTLE alike) blocks every write
+  and delete, the exit hook's too (it then only answers `exitReady`). A
+  CIRCUIT never runs over the link, so no request is made in one.
+- **Probe**: `save.supported()` once, on update 1 of the splash or
+  title; stock firmware times out there (250 ms, the splash held). With
+  it false nothing shows or runs: CIRCUIT behaves as at M5.
+- **UI**: CIRCUIT in the main menu, when saves work and a career exists
+  (saved or in the session), opens CONTINUE CAREER / NEW CAREER (the
+  menu's panel and hint bar; the hint names the league and race, e.g.
+  `THE DUMPS, RACE 2`); NEW CAREER asks (`NO, KEEP IT` first). Up/Down,
+  A or Start, B back; nothing displaced, but the in-session resume of M5
+  (CIRCUIT straight to the garage) now takes one more press.
+- **Errors**: RateLimited is retried at the next save point; any other
+  shows once in a red line at the top (menus only), later points retry.
+- **Files**: new `cart/src/career_save.zig` (format, saver, chooser; no
+  cart API), `career_save_test.zig` (11 tests), `save_ui.zig` (the one
+  saver and chooser, the SAVING mark, the error line, the chooser panel),
+  `tools/check_saves.sh`, `tools/scripts/saves_circuit_race.json` and
+  `saves_continue.json`; hooks: `main.zig` (2 imports, 2 lines in
+  `update`, 1 in `menu_frame`, 1 in the CIRCUIT row, 1 each after
+  `finish_race`, on the garage's B and on the end card, and a block of
+  four functions after `show_league`), `build.zig` (the `save` module
+  for the cart and the tests), `host_tests.zig` (1 line).
+- **Gates**: `zig build test-gc` 193 pass (M6's 182 + 11 in
+  `career_save_test.zig`: the blob and its round trip, a store round trip
+  mid-career over a closed league and purchases, a save after a league's
+  third race resuming on the standings, refusals, stock firmware, the
+  exit hook, link sessions, RateLimited / NoSpace, the end-card delete,
+  the chooser, every line in 18 characters). `tools/check.sh` PASS, the
+  four golden checksums and every bench as at M6 (`m0_race` 3.62 / 5.19,
+  stress 4.99 / 6.14, `m5_circuit_race` 3.49 / 4.62, `m6_battle` 3.43 /
+  5.27, ...): the probe answers at once in the bench and no check.sh run
+  reaches a save point. `tools/check_saves.sh` PASS: the recorded
+  CIRCUIT race (`saves_circuit_race.json`, 6,100 frames) writes
+  `gcp/career` once, `[save 110 ms]` at update 5,981 (the standings came
+  up on 5,980), every other frame under 8 ms (5.76 worst, the garage's B
+  encoding the career to find it unchanged: +0.07 ms); the next boot
+  reads it, CONTINUE CAREER, a purchase, Exit cart at update 100 writes
+  once and the cart is ready before 101; `--no-saves` writes nothing,
+  update 1 takes 252 ms (the probe) and the race frames cost the same as
+  with saves (3.454 ms mean both, at most 16 cycles apart).
+- **RAM**: `size -A` .text 190,152 + .data 8,104 + .bss 52,948 (+ 2,152
+  exidx/extab): **5,128 B** more than M6 (894b1b76), so **20,780 B free**
+  (M6: 25,908). The saver keeps one 181 B blob (the stored career until
+  CONTINUE decodes it, then the write buffer) and an FNV of what the store
+  holds; no second Career. lib/save.zig's badge backend is about 0.7 KB
+  of it, the chooser frame 1 KB, the format 1.1 KB.
+- **Unverified**: never run on a badge with the saves OS (the probe, the
+  ~110 ms park, the exit hook); with sound on, a tone playing when a save
+  parks the cart stops for the stall. The saves scripts press Down three
+  times for CIRCUIT (M6's menu): a menu change moves them like
+  `m5_circuit_race.json`.
+
 ## M6 Battle (KILL -9)
 
 Goal: SPEC 8.3 and 16 M6 (decision 16). A BATTLE round on The Sandbox:
@@ -2522,7 +2605,10 @@ L28. **No saves** (SPEC 17.6): the SNOUTY GCP lives in RAM for the
     session. B in the garage keeps it (CIRCUIT resumes it in the garage);
     switching the badge off loses it. A new Prix starts only after the
     end card (there is no "abandon"). A flash save would be a small blob
-    (`career.Career` is plain data) if Adrian wants one.
+    (`career.Career` is plain data) if Adrian wants one. **Superseded on
+    branch `saves/gcp`** (M5 "Saves"): with the patched saves OS the Prix
+    is saved as `gcp/career`, and NEW CAREER is the abandon; stock
+    firmware keeps L28 as written.
 L29. **Gun swaps** reset the gun to L1, and the old gun's levels are gone
     (swapping back costs 800 again). AIs never swap; their plans level
     their own guns.

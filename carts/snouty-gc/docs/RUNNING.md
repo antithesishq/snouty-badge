@@ -522,13 +522,13 @@ against lib/save.zig's fake store. Bench (the recorded CIRCUIT race to its
 standings, `tools/scripts/saves_circuit_race.json`):
 
 ```sh
-badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 7420 \
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 6100 \
     --script carts/snouty-gc/tools/scripts/saves_circuit_race.json --saves /tmp/gcp.json
 # the next boot: CIRCUIT, CONTINUE CAREER, the garage; then Exit cart
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 120 \
     --script carts/snouty-gc/tools/scripts/saves_continue.json --saves /tmp/gcp.json --exit-at 100
 # stock firmware: the same race, no save request answered, no SAVING
-badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 7420 \
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 6100 \
     --script carts/snouty-gc/tools/scripts/saves_circuit_race.json --no-saves
 ```
 
