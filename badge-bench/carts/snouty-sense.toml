@@ -1,8 +1,9 @@
 # snouty-sense: time-of-flight probe cart, 60 fps, .no_copy_full_frame.
 # The normal ELF benches the "no sensor" path (os_fake's I2C0 NACKs every
 # address); a -Dtof-fake=true ELF runs the driver against the virtual
-# TMF8820 on the badge: boot, firmware download, measuring, histograms.
+# TMF8820 on the badge: boot, firmware download, measuring, histograms,
+# user SPAD masks.
 budget_ms = 16.7
-frames = 900
+frames = 1800
 script = "carts/snouty-sense/tools/scripts/bench.json"
-note = "M0: LIVE 0..299 (boot, download, frames), HIST 300..599 (histogram dumps, 6 ms bus budget), DIAG 600..899 (bus scan, log); carts/snouty-sense/PLAN.md has the numbers"
+note = "M2: LIVE 0..299 (boot, download, frames), HIST 300..599 (histogram dumps, 6 ms bus budget), EYES 600..899 (waterfall; A at 660 turns the wavetable sound on, streamed from then on), DEPTH 900..1499 (user SPAD masks, 6 ms budget; Select at 1100 the fine pass, A at 1200 CLOUD, at 1350 MASK), DIAG 1500..1799 (bus scan, log); carts/snouty-sense/PLAN.md has the numbers"

@@ -11,6 +11,9 @@ test {
     _ = @import("tof.zig");
     _ = @import("tof_pose.zig");
     _ = @import("tof_synth.zig");
+    _ = @import("tof_spad.zig");
+    _ = @import("tof_scene.zig");
+    _ = @import("tof_depth.zig");
     _ = @import("tests/romfs_unit.zig");
     _ = @import("tests/link_unit.zig");
     _ = @import("tests/tof_unit.zig");
