@@ -593,12 +593,18 @@ inline fn nb(comptime wr: bool, at: u16, comptime k: usize) u16 {
     };
 }
 
-/// `nb` for the current World, k known at run time (cold paths).
-fn nbr(at: u16, k: usize) u16 {
+/// `nb` with k known at run time.
+inline fn nbk(comptime wr: bool, at: u16, k: usize) u16 {
+    if (!wr) return at +% off[k];
     return switch (k) {
-        inline 0...3 => |kk| if (wrapping) nb(true, at, kk) else nb(false, at, kk),
+        inline 0...3 => |kk| nb(true, at, kk),
         else => unreachable,
     };
+}
+
+/// `nb` for the current World, k known at run time (cold paths).
+fn nbr(at: u16, k: usize) u16 {
+    return if (wrapping) nbk(true, at, k) else nbk(false, at, k);
 }
 
 /// Signed offset from a to b along an axis of `size` cells: the short way
@@ -1773,20 +1779,24 @@ fn colour_at(x: u8, y: u8) u1 {
 /// parity-bounded chamber leaves; moves tried hugging walls first, so
 /// ties go to the wall. Out of units: the deepest finished answer.
 fn fill_search(w: *const sim.World, i: usize, first: sim.Dir) sim.Dir {
+    return if (wrapping) fill_search_t(true, w, i, first) else fill_search_t(false, w, i, first);
+}
+
+fn fill_search_t(comptime wr: bool, w: *const sim.World, i: usize, first: sim.Dir) sim.Dir {
     const c = &w.cycles[i];
     copy_view(w);
     const at = sim.index(c.x, c.y);
     var order: [4]u8 = undefined;
-    const n = hug_order(at, &order);
+    const n = hug_order(wr, at, &order);
     var best = first;
     var depth: u8 = 2;
     while (depth <= tuning.max_fill_depth) : (depth += 1) {
         var bv: i32 = -1;
         var bd: ?u8 = null;
         for (order[0..n]) |k| {
-            const m = nbr(at, k);
+            const m = nbk(wr, at, k);
             work[m] = mark_me;
-            const v = fill_dfs(m, depth - 1) catch {
+            const v = fill_dfs(wr, m, depth - 1) catch {
                 work[m] = sim.empty;
                 return best;
             };
@@ -1808,15 +1818,16 @@ fn fill_search(w: *const sim.World, i: usize, first: sim.Dir) sim.Dir {
 const mark_me: u8 = 0x44;
 
 /// Free neighbours of `at`, fewest free neighbours of their own first.
-fn hug_order(at: u16, out: *[4]u8) usize {
+fn hug_order(comptime wr: bool, at: u16, out: *[4]u8) usize {
     var n: usize = 0;
     var key: [4]u32 = undefined;
-    for (0..4) |k| {
-        const m = nbr(at, k);
-        if (wall(&work, m)) continue;
-        out[n] = @intCast(k);
-        key[n] = free4(&work, m);
-        n += 1;
+    inline for (0..4) |k| {
+        const m = nb(wr, at, k);
+        if (!wall(&work, m)) {
+            out[n] = @intCast(k);
+            key[n] = free4_t(wr, &work, m);
+            n += 1;
+        }
     }
     // Insertion sort, stable.
     var a: usize = 1;
@@ -1830,18 +1841,18 @@ fn hug_order(at: u16, out: *[4]u8) usize {
     return n;
 }
 
-fn fill_dfs(at: u16, depth: u8) Err!i32 {
+fn fill_dfs(comptime wr: bool, at: u16, depth: u8) Err!i32 {
     units_left -= 1;
     if (units_left < 0) return error.OutOfBudget;
-    if (depth == 0) return 1 + @as(i32, @intCast(try chamber_space(&work, at, 0xFFFF_FFFF)));
+    if (depth == 0) return 1 + @as(i32, @intCast(try chamber_space_t(wr, &work, at, 0xFFFF_FFFF)));
     var order: [4]u8 = undefined;
-    const n = hug_order(at, &order);
+    const n = hug_order(wr, at, &order);
     var best: i32 = 1;
     for (order[0..n]) |k| {
-        const m = nbr(at, k);
+        const m = nbk(wr, at, k);
         work[m] = mark_me;
         defer work[m] = sim.empty;
-        best = @max(best, 1 + try fill_dfs(m, depth - 1));
+        best = @max(best, 1 + try fill_dfs(wr, m, depth - 1));
     }
     return best;
 }

@@ -1112,7 +1112,8 @@ inline fn on_edge(x: u8, y: u8) bool {
 /// (WRAP's dashed border), no wall beside it.
 fn bare_floor(w: *const sim.World, x: u8, y: u8) bool {
     const i = sim.index(x, y);
-    if (w.grid[i] != sim.empty or on_edge(x, y)) return false;
+    // With a rim an empty cell is never on the edge.
+    if (w.grid[i] != sim.empty or (w.cfg.wrap and on_edge(x, y))) return false;
     return w.grid[i - sim.grid_w] | w.grid[i + sim.grid_w] | w.grid[i - 1] | w.grid[i + 1] == 0;
 }
 
@@ -1211,13 +1212,24 @@ pub fn cell_colors(w: *const sim.World, x: u8, y: u8) [4]u16 {
     if (v == sim.empty) {
         var c = floor_cells[@as(u32, @intFromBool(x & 3 == 0)) * 2 + @intFromBool(y & 3 == 0)];
         // Glow on the pixels that face a wall. An empty cell on the screen
-        // edge (WRAP: no rim) has no glow from beyond the edge.
-        const edge = on_edge(x, y);
-        const nu = if (y > 0) w.grid[i - sim.grid_w] else sim.empty;
-        const nd = if (y < sim.grid_h - 1) w.grid[i + sim.grid_w] else sim.empty;
-        const nl = if (x > 0) w.grid[i - 1] else sim.empty;
-        const nr = if (x < sim.grid_w - 1) w.grid[i + 1] else sim.empty;
-        if (nu | nd | nl | nr == 0 and !edge) return c;
+        // edge (only in WRAP: no rim) has no glow from beyond the edge.
+        const edge = w.cfg.wrap and on_edge(x, y);
+        var nu: u8 = sim.empty;
+        var nd: u8 = sim.empty;
+        var nl: u8 = sim.empty;
+        var nr: u8 = sim.empty;
+        if (!edge) {
+            nu = w.grid[i - sim.grid_w];
+            nd = w.grid[i + sim.grid_w];
+            nl = w.grid[i - 1];
+            nr = w.grid[i + 1];
+            if (nu | nd | nl | nr == 0) return c;
+        } else {
+            if (y > 0) nu = w.grid[i - sim.grid_w];
+            if (y < sim.grid_h - 1) nd = w.grid[i + sim.grid_w];
+            if (x > 0) nl = w.grid[i - 1];
+            if (x < sim.grid_w - 1) nr = w.grid[i + 1];
+        }
         const xx: u32 = x;
         const yy: u32 = y;
         const up = glow_of(w, nu, xx, yy -% 1);
