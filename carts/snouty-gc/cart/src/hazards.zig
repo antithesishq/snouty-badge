@@ -4,8 +4,9 @@
 //! (`track.HazardSpec`, one per `World.hazards` slot), so a data-only track
 //! pack (M7) can place them with its own numbers: a timed blast across the
 //! track (the Runoff's exhaust vents) and a crossing mover shuttling over
-//! it (the Dumps' Sweeper). Turrets and breakable crust are reserved kinds
-//! and stay idle here.
+//! it (the Dumps' Sweeper), and since M7 breakable crust (a pack's
+//! region that cracks, breaks and heals). Turrets are reserved and stay
+//! idle here.
 //!
 //! Part of `sim.simulate`, so pure in the World: no cart API, no clock, no
 //! floats, no globals written (the spec cache `track.hazard_specs` is the
@@ -130,40 +131,63 @@ pub fn update(w: *World) void {
     service(w);
 }
 
-// --- Breakable crust (M7, SPEC 19.4) ---------------------------------------------
+// --- Breakable crust (M7, SPEC 19.4; M9.1 the rule that bites) ------------------
 //
 // A crust hazard's World slot: `state` idle (intact), warn (cracked: a car
 // on the ground touched one of its crust tiles; `timer` counts to the
 // spec's `warn`), active (broken: `timer` counts to `period`, then it is
 // intact again). `x`, `y` hold the region's centre (Q16) for the fx.
+// `hit` (M9.1): the cars crossing the region when it broke, bit i = car i;
+// a bit clears once that car's centre is out of the region. Those cars
+// get across (SPEC 19.4: a car that crosses cracking crust is fine); a car
+// that drives onto the broken crust afterwards falls in.
 
 /// Is (x, y) world px inside a broken crust region? (Its tiles' attribute
-/// is `crust`; the caller has read that.)
+/// is `crust`; the caller has read that.) For the respawn and the AI.
 pub fn crust_broken(w: *const World, x: i32, y: i32) bool {
+    return crust_takes(w, world.car_count, x, y);
+}
+
+/// Is the crust at (x, y) world px (a tile with attribute `crust`) a hole
+/// for car `i`? Broken, unless the car was on the region when it broke and
+/// is still moving across it (at `tuning.crust_cross_min` or more: a car
+/// parked on thin ice goes through). `i` = `world.car_count`: for any car.
+pub fn crust_takes(w: *const World, i: usize, x: i32, y: i32) bool {
     const px = x & 1023;
     const py = y & 1023;
     for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
-        if (h.kind != .crust or w.hazards[k].state != .active) continue;
-        if (px >= h.x0 and px < h.x1 and py >= h.y0 and py < h.y1) return true;
+        const hz = &w.hazards[k];
+        if (h.kind != .crust or hz.state != .active) continue;
+        if (px < h.x0 or px >= h.x1 or py < h.y0 or py >= h.y1) continue;
+        if (i < world.car_count and (hz.hit >> @intCast(i)) & 1 != 0 and sim.speed(&w.cars[i]) >= tuning.crust_cross_min) continue;
+        return true;
     }
     return false;
 }
 
+/// Car `c`'s centre in region `h`'s rectangle.
+fn in_rect(h: *const HazardSpec, c: *const Car) bool {
+    const cx = c.x >> fixed.Q;
+    const cy = c.y >> fixed.Q;
+    return cx >= h.x0 and cx < h.x1 and cy >= h.y0 and cy < h.y1;
+}
+
+/// Car `c`'s centre on a crust tile of region `h`.
+fn on_region(t: *const track.Track, h: *const HazardSpec, c: *const Car) bool {
+    return in_rect(h, c) and t.attr_at(c.x >> fixed.Q, c.y >> fixed.Q) == .crust;
+}
+
 fn crust_update(w: *World, k: usize, h: *const HazardSpec) void {
     const hz = &w.hazards[k];
+    const t = sim.track_of(w);
     hz.x = ((h.x0 + h.x1) >> 1) << fixed.Q;
     hz.y = ((h.y0 + h.y1) >> 1) << fixed.Q;
     switch (hz.state) {
         .idle => {
             // The first car on the ground with its centre on a crust tile
             // of the region cracks it.
-            const t = sim.track_of(w);
             for (&w.cars) |*c| {
-                if (!reachable(c)) continue;
-                const cx = c.x >> fixed.Q;
-                const cy = c.y >> fixed.Q;
-                if (cx < h.x0 or cx >= h.x1 or cy < h.y0 or cy >= h.y1) continue;
-                if (t.attr_at(cx, cy) != .crust) continue;
+                if (!reachable(c) or !on_region(t, h, c)) continue;
                 hz.state = .warn;
                 hz.timer = 0;
                 break;
@@ -174,14 +198,25 @@ fn crust_update(w: *World, k: usize, h: *const HazardSpec) void {
             if (hz.timer >= h.warn) {
                 hz.state = .active;
                 hz.timer = 0;
+                // The cars on it now are crossing: they get across.
+                hz.hit = 0;
+                for (&w.cars, 0..) |*c, i| {
+                    if (reachable(c) and on_region(t, h, c)) hz.hit |= @as(u8, 1) << @intCast(i);
+                }
                 weapons.emit(w, .blast, @intCast(k), @backingInt(h.kind), 0, hz.x, hz.y);
             }
         },
         .active => {
+            // A crossing car whose centre has left the region's rectangle
+            // (or that is out of the race) is a car like any other now.
+            for (&w.cars, 0..) |*c, i| {
+                if (!reachable(c) or !in_rect(h, c)) hz.hit &= ~(@as(u8, 1) << @intCast(i));
+            }
             hz.timer +|= 1;
             if (hz.timer >= h.period) {
                 hz.state = .idle;
                 hz.timer = 0;
+                hz.hit = 0;
             }
         },
     }

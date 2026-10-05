@@ -432,6 +432,22 @@ pub const ai_hazard_min_q8: i32 = 40;
 /// Braking distance per px/tick of speed to shed (the brake takes about
 /// 4% a tick against the throttle).
 pub const ai_hazard_brake_px: i32 = 20;
+/// M9.1, breakable crust (docs/PACKS.md): a car on a region when it breaks
+/// gets across while it moves at least this fast (Q16 px/tick); slower, it
+/// goes through as any car that drives onto the broken crust.
+pub const crust_cross_min: i32 = fixed_half;
+const fixed_half: i32 = 1 << 15;
+/// The AI's crust sense: pass this far (px) outside a broken band's crust
+/// tiles; plan to reach a band that spans the road this many ticks after
+/// it heals; ticks of slack on its break and heal times.
+pub const ai_crust_clear: i32 = 10;
+pub const ai_crust_margin: u32 = 8;
+/// Look for crust this many centerline samples ahead at most (about 14 px
+/// each).
+pub const ai_crust_samples: u8 = 16;
+/// Steering round a band: for the gap at its near edge until this close
+/// (px), then for a point this far beyond its far edge.
+pub const ai_crust_near: i32 = 16;
 
 // --- Link race (M4, docs/NET.md section 3) ---------------------------------------
 

@@ -31,6 +31,15 @@ proves its wire is M4's byte for byte; sections 2.1 and 2.2 below
 describe that version-0 form, which the paged form replaces only in
 SETUP and GO.
 
+**M7: version 2; M9.1: version 3.** M7 added the pack's 24-bit id after
+the five bytes (eight rules bytes) and 4-bit picks (bit 3 `lacks`: this
+badge does not have the rules' pack), HELLO byte 0x21. M9.1 keeps that
+wire but changes what `simulate` does on a pack track with breakable
+crust (the fall rule and the AI's crust sense, docs/PACKS.md), so it is
+version 3 (HELLO 0x31): a v2 and a v3 badge would desync on a crust
+track, so they see `WRONG VERSION` instead. `net.GameV2` and `GameV1`
+keep the older games for net_compat_test.zig.
+
 ## 1. Files
 
 | File | What |
