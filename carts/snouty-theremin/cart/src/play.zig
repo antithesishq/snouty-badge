@@ -33,6 +33,9 @@ pub const Settings = struct {
     wave: voice.Wave = .sine,
     /// Two-hand: pitch on the left column.
     pitch_left: bool = false,
+    /// Mirror the grid left/right (`Orientation.flip_x`): for a breakout
+    /// held the other way round on its cable.
+    mirror: bool = false,
 
     pub const min_octave = 2;
     pub const max_octave = 5;
