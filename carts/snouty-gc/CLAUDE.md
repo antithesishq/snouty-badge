@@ -1,7 +1,9 @@
-# Snouty GC (cart notes)
+# Snouty GCP (cart notes)
 
-Mode 7 combat racer (subtitle GARBAGE COLLECTION) forked by copy from the
-Snouty Zero engine. `SPEC.md` is the design, `PLAN.md` the milestone
+Snouty GCP (Snouty Garbage Collection Prix; the cart, binary and tags
+stay `snouty-gc`): a Mode 7 combat racer forked by copy from the Snouty
+Zero engine. GARBAGE COLLECTION is still the name of its elimination
+mode. `SPEC.md` is the design, `PLAN.md` the milestone
 contract and status; read both before changing anything. The repository
 rules are in the root `CLAUDE.md`. Never edit `carts/snouty-zero/` from
 here: every forked file names its Zero source and commit on its first line.
@@ -94,7 +96,12 @@ here: every forked file names its Zero source and commit on its first line.
   hazard hits, the KERNEL PANIC victim the attract camera cuts to.
 - `select.zig` (the racer select, SPEC 8.1; M3 the track row's panel;
   M4 `select.link`: the link select's `TAKEN`, ready marks and rules panel),
-  `menu.zig` (splash, title, main menu, the pause list), `roster_text.zig` (bios,
+  `menu.zig` (splash, title, main menu, the pause list; its hint lines and
+  the menu's geometry, built for M6's 7 rows, in `menu_text.zig`), `pickup_page.zig` (the menu's PICKUPS page: the
+  pickups' icons by tier, a cursor, what each does; screen `pickups`) and
+  `pickup_text.zig` (that page's words and grid moves, host-tested; keep
+  them true to `pickups.zig` and `tuning.zig` when a pickup changes),
+  `roster_text.zig` (bios,
   taunts, wrecked lines, weapon and pickup names, HUD liveries, stat
   bars), `stress.zig` (the render stress scene: `gc_stress` /
   `debug_stress`; `force_effect` behind the wasm `debug_effect`).
@@ -111,7 +118,10 @@ here: every forked file names its Zero source and commit on its first line.
   combat, the 20-race combat soak), `pickups_test.zig` (roll odds,
   crates, a scenario per pickup, AI policies, the pickup soak),
   `content_test.zig` (M3: hazards, bays, the AI's hazard sense, every
-  track's soak, GARBAGE COLLECTION and its soak, attract), `net_test.zig`
+  track's soak, GARBAGE COLLECTION and its soak, attract),
+  `panel_text_test.zig` (every menu hint and PICKUPS line fits the 152 px
+  panel: 18 characters; the menu's layout fits 7 rows; the page's grid,
+  cursor and odds lines), `net_test.zig`
   (M4: two `Net`s and Worlds on `lib/link_virtual.zig`: link races in
   sync, loss, unplug, desync, pause, quit and rematch, CREWS),
   `career_test.zig` (M5: the M0-M4 races' recorded fingerprints, each

@@ -44,6 +44,7 @@ const link_ui = @import("link_ui.zig");
 const career = @import("career.zig");
 const garage = @import("garage.zig");
 const standings = @import("standings.zig");
+const pickup_page = @import("pickup_page.zig");
 
 comptime {
     cart.export_start_code();
@@ -52,8 +53,9 @@ comptime {
 /// Screens (SPEC 8.1; the numbers are debug_screen's, `menu` came in M3,
 /// `lobby` (the LINK screen) in M4; the link race's racer select is
 /// `select` with `select.link` set; M5 the CIRCUIT's `garage`,
-/// `standings` and `card` (the league, unlock and end cards)).
-pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby, garage, standings, card };
+/// `standings` and `card` (the league, unlock and end cards); `pickups`
+/// (the menu's PICKUPS page) came with gc/menu-fix after them).
+pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby, garage, standings, card, pickups };
 var screen: Screen = .splash;
 /// Why the race runs: a Quick Race, the attract demo, the render stress
 /// scene, GARBAGE COLLECTION (M3), a CIRCUIT race (M5; race rules, the
@@ -282,6 +284,7 @@ pub fn update() void {
         .garage => garage_frame(),
         .standings => standings_frame(),
         .card => card_frame(),
+        .pickups => pickups_frame(),
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -363,6 +366,13 @@ fn menu_frame() void {
                 select.draw(frame);
                 return;
             },
+            // The PICKUPS reference page (pickup_page.zig).
+            .pickups => {
+                sound.menu_confirm();
+                go(.pickups);
+                pickup_page.draw(frame);
+                return;
+            },
             // M4: the link cable (greyed in the simulator: it only says so).
             .link => if (link_ok()) {
                 sound.menu_confirm();
@@ -380,6 +390,18 @@ fn menu_frame() void {
         }
     }
     menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+}
+
+/// The menu's PICKUPS page (pickup_page.zig): the arrows browse, B goes
+/// back to the menu on its PICKUPS row.
+fn pickups_frame() void {
+    if (pickup_page.update() == .back) {
+        to_menu();
+        draw_backdrop();
+        menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+        return;
+    }
+    pickup_page.draw(frame);
 }
 
 fn menu_nav(list: *menu.List) void {
@@ -1254,7 +1276,8 @@ comptime {
             "debug_me",             "debug_link_view",     "debug_link_notice",    "debug_link_state",
             "debug_linked",         "debug_start_circuit", "debug_prix_skip",      "debug_prix_cycles",
             "debug_prix_give",      "debug_prix_league",   "debug_prix_race",      "debug_prix_done",
-            "debug_card",           "debug_garage_row",
+            "debug_card",           "debug_garage_row",    "debug_pickup_cursor",  "debug_menu_battle",
+            "debug_menu_row",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1305,7 +1328,7 @@ fn debug_rank() callconv(.c) u32 {
 }
 /// 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 the
 /// main menu, 7 the LINK lobby; M5: 8 the garage, 9 the standings, 10 a
-/// CIRCUIT card (`debug_card`).
+/// CIRCUIT card (`debug_card`); 11 the PICKUPS page.
 fn debug_screen() callconv(.c) u32 {
     return @backingInt(screen);
 }
@@ -1505,6 +1528,19 @@ fn debug_drawn() callconv(.c) u32 {
 }
 fn debug_gathered() callconv(.c) u32 {
     return sprites.last_gathered;
+}
+/// --call debug_menu_battle:1 draws the main menu with a made-up BATTLE
+/// row (the 7-row layout M6 needs; menu.preview_battle), 0 without.
+fn debug_menu_battle(v: u32) callconv(.c) void {
+    menu.preview_battle = v != 0;
+}
+/// The main menu's cursor (a menu.Item value).
+fn debug_menu_row() callconv(.c) u32 {
+    return main_list.cursor;
+}
+/// The PICKUPS page's cursor (a world.Pickup value).
+fn debug_pickup_cursor() callconv(.c) u32 {
+    return pickup_page.cursor;
 }
 /// The racer the select shows.
 fn debug_select_racer() callconv(.c) u32 {

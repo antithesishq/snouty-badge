@@ -66,7 +66,7 @@ pub fn draw_lobby(v: *const View, cursor: u8, frame: u32) void {
             hud.centered("WRONG CART", y0, hud.coral);
             hud.centered("THE OTHER BADGE", y0 + pitch, hud.white);
             hud.centered("RUNS ANOTHER CART", y0 + 2 * pitch, hud.white);
-            hud.centered("START SNOUTY GC", y0 + 3 * pitch, hud.grey);
+            hud.centered("START SNOUTY GCP", y0 + 3 * pitch, hud.grey);
             hud.centered("THEN LINK ON IT", 96, hud.grey);
             return hud.centered("B BACK", 116, hud.dim);
         },
