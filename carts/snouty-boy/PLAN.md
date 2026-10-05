@@ -864,3 +864,81 @@ Preview: `tools/scripts/rewind_rex.json` on a Rex Runner wasm,
 Open: Adrian on the badge. A step back to live can take a few refreshes
 in heavy games (as in the menu); capping that replay would be a change to
 `rewind.step` for both paths.
+
+## Battery saves (2026-10-05, branch `saves/boy`)
+
+Contract: root `docs/SAVES.md` and `lib/save.zig` (branch `saves/m1`,
+Track D of the cart-saves project). Stays on branches: the saves OS is
+patched (sycl-badge `cart-saves`). User side: docs/RUNNING.md section 11.
+
+- Core: MBC2 (0x05/0x06): 512 x 4-bit RAM inside the controller
+  (`mmu.cart_ram_len` 512, `Mbc.ram_fill` 0xF0 ORed into every write so
+  the upper nibble reads 1s, address bit 8 picks RAM enable or the 4-bit
+  ROM bank, mirrored over A000..BFFF); it ran as "mapper?" before.
+  `mmu.has_battery`, `mmu.kind_for`. `Gb.sram_dirty` (not console state)
+  is set by every cart RAM write that lands: one store on the rare cart
+  RAM write, nothing on the read path. `Gb.keep_cart_ram` makes `reset` a
+  power cycle with a battery (the menu's Reset with saves on).
+- `cart/src/frontend/battery.zig` (no cart-api; host-tested): key
+  `boy/<title>/<checksum hex>`, blob = 16-byte header + cart RAM,
+  contiguous in the arena (`rewind.layout` puts a header slot before the
+  cart RAM: no second 32 KB buffer); load before the first frame and
+  keyframe; `.sav` import from the drive (`romsrc` collects `.sav` entries
+  in its one directory walk); flush policy (`note_writes`, `auto_due`: 1 s
+  quiet, 30 s apart, 10 s after RateLimited; menu/rewind open; exit hook;
+  Save now); errors (RateLimited silent, NoSpace "SAVE FULL", others
+  "SAVE ERROR" once); scrub replays ignored (`ignore_replays` on close).
+- `main.zig`: probe + `watchExit` in `start()` (before the first frame);
+  `save_top` at the top of each update (exit request: save, `exitReady`,
+  then idle; or the save drawn last frame); "SAVING" strip on the bottom
+  rows of the frame that decides a save (every screen redraws them), the
+  write at the top of the next update with the stream ramped out
+  (`audio.fast_forward`). No automatic or menu-open save while linked.
+- Menu: "Save: <state>" row above About and 9 px rows (8 rows) only when
+  `battery.live.active`; the Save page (key, size and result, Save now,
+  Delete save with a second A, Back); About with saves supported: key and
+  save line, version in the footer. Stock firmware: menu and About as
+  before. No binding displaced.
+- Tests: `tests/battery_unit.zig`, 12 tests (keys, MBC2 nibbles/banking/
+  dirty/keep, stock firmware, no battery/too big/no RAM, save + load +
+  mismatches + CRC failure, auto timing, rate limit/full/errors, exit
+  hook, replays ignored, delete, `.sav` import incl. a fragmented file,
+  MBC3 clock trailer and MBC2 nibbles) against `save.fake` and
+  `tests/fixtures/saves.img` (make_romfs.py, 22 KB). `zig build test`:
+  70/70 steps, 470/472 tests pass (2 skipped, as before).
+- Size (fast, default build): .text 97,660 -> 110,848, .bss 28,128 ->
+  28,924, UF2 255,488 -> 284,672. The arena is 14.4 KB smaller: keyframe
+  slots 21 -> 18 (2 KB RAM), 20 -> 16 (8 KB), 14 -> 10 (32 KB). Biggest
+  pieces: battery.zig ~4.7 KB, the menu's Save page and About ~2 KB,
+  `save.badge.submit_masked` 1 KB, scan's `.sav` split and the exit/flush
+  glue in `update` ~3 KB.
+
+badge-bench, calibrated busy ms mean / p95 / max, saves/m1 (84153b33)
+baseline -> this branch with `--no-saves` (stock firmware) and with saves
+served (the default; the one save frame excluded from the mean):
+
+| Run | saves/m1 | `--no-saves` | saves (save frame excluded) | save frame |
+|---|---:|---:|---:|---|
+| 2048 (`snouty-boy.toml`, one.img) | 4.04 / 5.91 / 9.15 | 4.04 / 5.89 / 9.12 | 4.04 / 5.89 / 9.12 | 321: 115.75 ms, `[save 110 ms]` (2 KB) |
+| Tetris DX (CGB, 1800) | 4.30 / 5.15 / 11.62 | 4.29 / 5.13 / 11.58 | 4.29 / 5.13 / 11.58 | 113: 224.57 ms, `[save 220 ms]` (8 KB) |
+| Tetris (DMG, 1800) | 8.44 / 9.17 / 13.18 | 8.43 / 9.17 / 13.12 | 8.43 / 9.17 / 13.12 | none (no battery) |
+| Rex Runner (CGB, 900) | 3.87 / 7.84 / 9.98 | 3.86 / 7.84 / 9.98 | 3.86 / 7.85 / 9.98 | 146: 223.79 ms, `[save 220 ms]` (8 KB) |
+
+Presses: 2048 the toml's; Tetris and Tetris DX the sound-section script;
+Rex Runner `START:30-31, START:200-202` and A every 50 updates from 400
+to 700. Tetris DX saves at 113 because it initialises its RAM at boot.
+The dirty flag costs nothing measurable (within 0.01 ms). `--no-saves`
+start-up is 250 ms longer (the probe timing out, before the first frame);
+with saves it is 1.9 ms (21 ms for the 512 KB Tetris DX CRC, as before).
+Mooneye `ram_256kb` (MBC1, 32 KB): `[save 550 ms]` at update 136. Menu
+open after 2048's moves: `[save 110 ms]`; Save now with nothing changed:
+no commit; `--exit-at`: "cart ready before frame N+1"; a second run on the
+same `--saves` file reads the blob back ("2 KB loaded"); a drive with
+`2048.SAV` imports it at start (start-up 112 ms, one 2,064 B commit).
+
+Open: the patched OS on a badge (real flash times, the audio stream and
+the link across a save, the exit hook); Adrian on the 9 px menu rows; the
+header's extra 4 KB block (drop it or fold it into the key if 50 ms and a
+block per 32 KB game matter); the arena cost (a comptime switch could build
+saves out for stock-firmware UF2s).
+

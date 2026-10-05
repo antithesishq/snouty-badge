@@ -62,6 +62,7 @@ const core = @import("core");
 const video = @import("video.zig");
 const debug = @import("debug.zig");
 const tuning = @import("tuning.zig");
+const battery = @import("battery.zig");
 const Gb = core.Gb;
 const kstore = core.kstore;
 
@@ -122,17 +123,22 @@ pub const Layout = struct {
     /// The console's cart RAM, `mmu.cart_ram_len` bytes, word aligned (the
     /// store compares and copies words).
     cart_ram: []u8,
+    /// The battery save's blob: a `battery.header_len` slot right before
+    /// `cart_ram`, then `cart_ram` itself (frontend/battery.zig), so a save
+    /// is one contiguous buffer without a copy of the RAM.
+    save_blob: []u8,
 };
 
-/// Lay out the arena for `rom`: the live console, its cart RAM, then the
-/// page store. Returns null when fewer than two keyframes fit (the cart then
+/// Lay out the arena for `rom`: the live console, the battery save's header
+/// slot, its cart RAM, then the page store. Returns null when fewer than two keyframes fit (the cart then
 /// refuses to start; see main.zig). Call once, before `Gb.init` and `reset`.
 pub fn layout(rom: *const core.Rom) ?Layout {
     arena = find_arena();
     const base = std.mem.alignForward(usize, @intFromPtr(arena.ptr), @alignOf(Gb));
     const gb_end = base - @intFromPtr(arena.ptr) + std.mem.alignForward(usize, @sizeOf(Gb), 4);
     const ram_len = core.mmu.cart_ram_len(rom);
-    const ram_end = gb_end + std.mem.alignForward(usize, ram_len, 4);
+    const ram_start = gb_end + battery.header_len;
+    const ram_end = ram_start + std.mem.alignForward(usize, ram_len, 4);
     if (arena.len < ram_end) return null;
     const rest: []align(4) u8 = @alignCast(arena[ram_end..]);
     const pages = kstore.pages_for(page_size, .{ @sizeOf(Gb.Small), 0x4000, 0x8000, ram_len });
@@ -150,7 +156,11 @@ pub fn layout(rom: *const core.Rom) ?Layout {
     if (pool < pages / 2) return null;
     store = Store.init(rest, pool, keyframes, pages);
     ring = R.init(keyframes);
-    return .{ .gb = @ptrFromInt(base), .cart_ram = arena[gb_end..][0..ram_len] };
+    return .{
+        .gb = @ptrFromInt(base),
+        .cart_ram = arena[ram_start..][0..ram_len],
+        .save_blob = arena[gb_end..][0 .. battery.header_len + ram_len],
+    };
 }
 
 /// Arena bytes (0 before `layout`).

@@ -77,6 +77,18 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .optimize = test_optimize,
         .imports = &.{.{ .name = "core", .module = core_host }},
     });
+    // The battery save (cart/src/frontend/battery.zig, no cart-api) against
+    // lib/save.zig's host fake and the romfs reader, for tests/battery_unit.zig.
+    const battery_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/battery.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "save", .module = b.createModule(.{ .root_source_file = b.path("lib/save.zig"), .target = b.graph.host, .optimize = test_optimize }) },
+            .{ .name = "romfs", .module = b.createModule(.{ .root_source_file = b.path("lib/romfs.zig"), .target = b.graph.host, .optimize = test_optimize }) },
+        },
+    });
     const test_filter = opts.test_filter;
     const tests = b.addTest(.{
         .filters = if (test_filter) |f| &.{f} else &.{},
@@ -87,6 +99,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .imports = &.{
                 .{ .name = "core", .module = core_host },
                 .{ .name = "flow", .module = flow_host },
+                .{ .name = "battery", .module = battery_host },
             },
         }),
     });
@@ -105,7 +118,7 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds the `core`, `romfs`, `iris`, `hint`, `audio_feed`, `rom` and `build_options` modules to the cart. `rom.data` is the
+/// Adds the `core`, `romfs`, `iris`, `hint`, `save`, `audio_feed`, `rom` and `build_options` modules to the cart. `rom.data` is the
 /// embedded ROM (the file is copied next to a generated rom.zig so @embedFile
 /// can see it), `rom.name` its file name for the About screen, `rom.source`
 /// the `-Drom-source` choice. The same module serves the badge and the wasm
@@ -125,6 +138,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
     // The badge-to-badge link (docs/LINK.md): the Game Boy link cable.
     cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
+    // Cart saves (root docs/SAVES.md): the battery RAM, frontend/battery.zig.
+    cart.addImport("save", b.createModule(.{ .root_source_file = b.path("lib/save.zig") }));
     // The streaming-audio feed shared with Gear and Genesis (docs/EMU_SOUND.md).
     cart.addImport("audio_feed", b.createModule(.{ .root_source_file = b.path("lib/audio_feed.zig") }));
 
