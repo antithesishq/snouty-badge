@@ -89,6 +89,10 @@ interface is its own `art.zig` (L and U do not touch it). U calls it in M2.
 
 - 2026-10-05: SPEC + PLAN + interface skeleton (plan commit). Tracks L, O,
   U, A starting.
+- 2026-10-05: U's M1 UI on trail/ui with the real engine: gate green
+  (oracle PASS, previews: a game, plain presses, a starvation, an arrival,
+  8 shots; bench worst 2.11 ms / mean 1.21 ms busy over five autoplayed
+  3000-frame runs; size 67.6 KB). docs/preview_m1.gif.
 
 ## Deferred questions (defaults taken)
 

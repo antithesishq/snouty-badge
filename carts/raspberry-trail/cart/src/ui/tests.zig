@@ -370,12 +370,20 @@ test "flow: the number prompt answers the spinner's value" {
     // The echo row shows the amount.
     var found = false;
     var i = app.log.oldest();
-    var buf: [16]u8 = undefined;
-    const echo = try std.fmt.bufPrint(&buf, "> ${d}", .{want});
+    var buf: [64]u8 = undefined;
+    var qb: [64]u8 = undefined;
+    const echo = try std.fmt.bufPrint(&buf, "> {s} ${d}", .{ app_mod.short_question(p.question, &qb), want });
     while (i < app.log.total) : (i += 1) {
         if (std.mem.eql(u8, app.log.get(i).str(), echo)) found = true;
     }
     try std.testing.expect(found);
+}
+
+test "echo: the short question" {
+    var qb: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("OXEN", app_mod.short_question("SPEND ON OXEN?", &qb));
+    try std.testing.expectEqualStrings("FORT: AMMUNITION", app_mod.short_question("FORT: SPEND ON AMMUNITION?", &qb));
+    try std.testing.expectEqualStrings("A FANCY FUNERAL", app_mod.short_question("A FANCY FUNERAL?", &qb));
 }
 
 // -- autoplay ----------------------------------------------------------------

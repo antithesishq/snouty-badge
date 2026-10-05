@@ -103,9 +103,13 @@ pub const Log = struct {
         if (l.last_kind() == .gap) l.total -= 1;
         var r: Row = .{ .kind = .rule };
         var buf: [64]u8 = undefined;
-        const sq = text.squeeze(label, &buf);
-        r.len = @intCast(@min(sq.text.len, cols));
-        @memcpy(r.buf[0..r.len], sq.text[0..r.len]);
+        var t = text.squeeze(label, &buf).text;
+        // "MONDAY APRIL 12 1847" -> "APRIL 12 1847" (every turn is a Monday).
+        if (std.mem.indexOfScalar(u8, t, ' ')) |sp| {
+            if (std.mem.endsWith(u8, t[0..sp], "DAY")) t = t[sp + 1 ..];
+        }
+        r.len = @intCast(@min(t.len, cols));
+        @memcpy(r.buf[0..r.len], t[0..r.len]);
         l.append(r);
     }
 
@@ -205,7 +209,7 @@ test "log: wrap, hanging indent, gaps, rules" {
     l.rule("MONDAY APRIL 12 1847");
     try std.testing.expectEqual(@as(u32, 8), l.total);
     try std.testing.expectEqual(Kind.rule, l.get(7).kind);
-    try std.testing.expectEqualStrings("MONDAY APRIL 12 1847", l.get(7).str());
+    try std.testing.expectEqualStrings("APRIL 12 1847", l.get(7).str());
 }
 
 test "log: the ring keeps the last cap rows" {

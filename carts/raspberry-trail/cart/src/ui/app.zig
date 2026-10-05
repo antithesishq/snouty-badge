@@ -519,11 +519,12 @@ pub const App = struct {
 
     fn echo(app: *App, a: G.Answer) void {
         const p = app.prompt();
-        var buf: [40]u8 = undefined;
+        var buf: [80]u8 = undefined;
+        var qb: [64]u8 = undefined;
         const s: []const u8 = switch (a) {
-            .yes_no => |y| if (y) "> YES" else "> NO",
+            .yes_no => |y| std.fmt.bufPrint(&buf, "> {s}: {s}", .{ short_question(p.question, &qb), if (y) "YES" else "NO" }) catch "",
             .choice => |c| std.fmt.bufPrint(&buf, "> {s}", .{p.options[c - 1]}) catch "",
-            .number => |v| std.fmt.bufPrint(&buf, "> ${d}", .{v}) catch "",
+            .number => |v| std.fmt.bufPrint(&buf, "> {s} ${d}", .{ short_question(p.question, &qb), v }) catch "",
             .shoot => blk: {
                 const sh = app.shot;
                 const w = p.word.text();
@@ -644,6 +645,25 @@ pub const App = struct {
         return @intCast((@as(u64, r) * n) >> 32);
     }
 };
+
+/// The prompt's question for the log's echo of the answer: without the
+/// question mark and "SPEND ON " ("SPEND ON OXEN?" -> "OXEN").
+pub fn short_question(q: []const u8, buf: []u8) []const u8 {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < q.len) {
+        if (std.mem.startsWith(u8, q[i..], "SPEND ON ")) {
+            i += "SPEND ON ".len;
+            continue;
+        }
+        if (q[i] != '?' and n < buf.len) {
+            buf[n] = q[i];
+            n += 1;
+        }
+        i += 1;
+    }
+    return std.mem.trim(u8, buf[0..n], " ");
+}
 
 fn edges(now: Buttons, prev: Buttons) Buttons {
     const n: u8 = @bitCast(now);

@@ -11,6 +11,15 @@ is the game's specification: never edit it.
 - `cart/src/game/` (the `game` module): the engine, a resumable port of
   the listing. No cart API; host tested. `game.zig` is the interface.
 - `cart/src/main.zig`, `cart/src/ui/`: the cart shell and the UI.
+  `ui/app.zig` is the state machine (no cart API, host tested in
+  `ui/tests.zig`): title, paging, prompts, the spinner, the shooting cue,
+  the log history; its `knobs` hold the timings (`shot_time_scale`).
+  `ui/log.zig` (the wrapped rows, a 256-row ring), `ui/layout.zig` (pixel
+  layout; paging needs the prompt box height), `ui/render.zig` and
+  `ui/draw.zig` (the cart API side), `ui/autoplay.zig` (plays whole games
+  through the buttons: previews and badge-bench), `ui/font.zig` +
+  `ui/gen/font5x7.zig` (from `tools/gen_font.py`). Run instructions,
+  controls, debug exports and pokes: `docs/RUNNING.md`.
 - `cart/src/art/`: generated pictures plus a draw API (from
   `tools/gen_art.py`).
 - `tools/oracle/`: a BASIC interpreter that runs the unmodified listing,
