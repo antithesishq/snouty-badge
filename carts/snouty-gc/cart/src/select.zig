@@ -99,7 +99,7 @@ fn plinth(cx: i32, cy: i32, rx: i32, ry: i32, color: cart.DisplayColor) void {
         const t = ry * ry - dy * dy;
         var hw: i32 = 0;
         while ((hw + 1) * (hw + 1) * ry * ry <= t * rx * rx) hw += 1;
-        cart.rect(.{ .x = cx - hw, .y = cy + dy, .width = @intCast(2 * hw + 1), .height = 1, .fill_color = color });
+        hud.fill_rect(cx - hw, cy + dy, 2 * hw + 1, 1, color);
     }
 }
 
@@ -109,9 +109,9 @@ pub fn draw(frame: u32) void {
     const txt = roster_text.roster[r];
     const st = roster_text.stats[r];
     const liv = hud.livery(r);
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = bg });
+    hud.fill_rect(0, 0, 160, 128, bg);
     // Portrait in a livery frame.
-    cart.rect(.{ .x = 4, .y = 4, .width = 50, .height = 50, .fill_color = liv });
+    hud.fill_rect(4, 4, 50, 50, liv);
     sprites.blit_at(&sprites.portraits[r], 0, 5, 5, .{});
     // Name and car.
     plain(ro.name, 58, 5, liv);
@@ -128,7 +128,7 @@ pub fn draw(frame: u32) void {
         plain(lab, 96, y, dim);
         var j: i32 = 0;
         while (j < 8) : (j += 1) {
-            cart.rect(.{ .x = 121 + j * 4, .y = y + 1, .width = 3, .height = 6, .fill_color = if (j < val) liv else rule });
+            hud.fill_rect(121 + j * 4, y + 1, 3, 6, if (j < val) liv else rule);
         }
     }
     // Weapons: A fires the front gun, Down+A drops the rear one.
@@ -137,7 +137,7 @@ pub fn draw(frame: u32) void {
     hud.down_arrow(4, 67, liv);
     plain("A", 11, 66, liv);
     plain(roster_text.rear_name(ro.rear), 24, 66, ink);
-    cart.rect(.{ .x = 4, .y = 76, .width = 152, .height = 1, .fill_color = rule });
+    hud.fill_rect(4, 76, 152, 1, rule);
     if (row == 1) {
         draw_track_panel();
     } else {

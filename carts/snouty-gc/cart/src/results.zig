@@ -64,13 +64,13 @@ fn put(out: []u8, v: u8) usize {
 /// Winner's card.
 pub fn draw_winner(w: *const world.World, follow: u8, frame: u32) void {
     if (w.mode == .gc) return draw_survivor(w, follow, frame);
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = hud.anti_black });
+    hud.fill_rect(0, 0, 160, 128, hud.anti_black);
     const wi = car_of_rank(w, 1) orelse follow;
     const win = &w.cars[wi];
     const r = win.racer % racers.count;
     const liv = hud.livery(r);
     hud.centered("WINNER", 4, hud.cyan);
-    cart.rect(.{ .x = 4, .y = 16, .width = 50, .height = 50, .fill_color = liv });
+    hud.fill_rect(4, 16, 50, 50, liv);
     sprites.blit_at(&sprites.portraits[r], 0, 5, 17, .{});
     hud.text(racers.roster[r].name, 60, 18, liv);
     hud.text(racers.roster[r].car, 60, 28, hud.white);
@@ -125,14 +125,14 @@ fn quote(r: u8, y: i32) void {
 /// GARBAGE COLLECTION (SPEC 8.2): the last car running, full portrait,
 /// `LAST PROCESS RUNNING`, its taunt; the player's own place under it.
 fn draw_survivor(w: *const world.World, follow: u8, frame: u32) void {
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = hud.anti_black });
+    hud.fill_rect(0, 0, 160, 128, hud.anti_black);
     const wi: usize = if (w.gc.survivor < world.car_count) w.gc.survivor else car_of_rank(w, 1) orelse follow;
     const win = &w.cars[wi];
     const r = win.racer % racers.count;
     const liv = hud.livery(r);
     hud.centered("LAST PROCESS", 4, hud.cyan);
     hud.centered("RUNNING", 13, if ((frame / 20) % 2 == 0) hud.cyan else hud.white);
-    cart.rect(.{ .x = 4, .y = 24, .width = 50, .height = 50, .fill_color = liv });
+    hud.fill_rect(4, 24, 50, 50, liv);
     sprites.blit_at(&sprites.portraits[r], 0, 5, 25, .{});
     hud.text(racers.roster[r].name, 60, 26, liv);
     hud.text(racers.roster[r].car, 60, 36, hud.white);
@@ -157,7 +157,7 @@ fn draw_survivor(w: *const world.World, follow: u8, frame: u32) void {
 /// The field by rank.
 pub fn draw_table(w: *const world.World, follow: u8, frame: u32) void {
     _ = frame;
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = hud.anti_black });
+    hud.fill_rect(0, 0, 160, 128, hud.anti_black);
     hud.centered("RESULTS", 4, hud.cyan);
     var r: u8 = 1;
     while (r <= world.car_count) : (r += 1) {
@@ -165,7 +165,7 @@ pub fn draw_table(w: *const world.World, follow: u8, frame: u32) void {
         const c = &w.cars[i];
         const racer = c.racer % racers.count;
         const y: i32 = 14 + @as(i32, r - 1) * 18;
-        if (i == follow) cart.rect(.{ .x = 4, .y = y - 1, .width = 152, .height = 18, .fill_color = panel });
+        if (i == follow) hud.fill_rect(4, y - 1, 152, 18, panel);
         var pos: [1]u8 = .{'0' + r};
         hud.text(&pos, 4, y + 4, if (r == 1) hud.cyan else hud.white);
         // Half scale: rows 8..39 of the 48x48 portrait into 24x16.

@@ -29,14 +29,14 @@ pub const List = struct {
 };
 
 pub fn clear() void {
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = hud.anti_black });
+    hud.fill_rect(0, 0, 160, 128, hud.anti_black);
 }
 
 /// Splash (SPEC 8.1): Snouty's eyepatched portrait at 2x in his livery
 /// frame, the title and subtitle under it.
 pub fn draw_splash(frame: u32) void {
     clear();
-    cart.rect(.{ .x = 31, .y = 4, .width = 98, .height = 98, .fill_color = hud.livery(0) });
+    hud.fill_rect(31, 4, 98, 98, hud.livery(0));
     sprites.blit_cell(&sprites.portraits[0], 0, 32, 5, 96, 96, .{});
     hud.centered(title_str, 104, hud.white);
     hud.text(title_str, 80 - @as(i32, title_str.len) * 4 + 1, 104, hud.white); // bold
@@ -59,7 +59,7 @@ const row_y: i32 = 96;
 /// the top): the title band, PRESS START blinking, and the six racers'
 /// portraits along the bottom, one stepping up at a time.
 pub fn draw_title(frame: u32) void {
-    cart.rect(.{ .x = 0, .y = 34, .width = 160, .height = 56, .fill_color = hud.anti_black });
+    hud.fill_rect(0, 34, 160, 56, hud.anti_black);
     big_title(38);
     hud.centered(subtitle, 60, hud.coral);
     if ((frame / 30) % 2 == 0) hud.centered("PRESS START", 76, hud.white);
@@ -67,9 +67,9 @@ pub fn draw_title(frame: u32) void {
     for (0..racers.count) |k| {
         const x = row_x0 + @as(i32, @intCast(k)) * 25;
         const up: i32 = if (k == lit) 2 else 0;
-        cart.rect(.{ .x = x - 1, .y = row_y - 1 - up, .width = 26, .height = 26, .fill_color = hud.anti_black });
+        hud.fill_rect(x - 1, row_y - 1 - up, 26, 26, hud.anti_black);
         sprites.blit_rect(&sprites.portraits[k], 0, 0, 48, 48, x, row_y - up, 24, 24, .{});
-        cart.rect(.{ .x = x, .y = row_y + 25 - up, .width = 24, .height = 2, .fill_color = hud.livery(@intCast(k)) });
+        hud.fill_rect(x, row_y + 25 - up, 24, 2, hud.livery(@intCast(k)));
     }
 }
 
@@ -98,7 +98,7 @@ pub fn draw_main(list: *const List, sound_on: bool, link_note: u32, frame: u32) 
     for (items, 0..) |item, i| {
         const y = y0 + @as(i32, @intCast(i)) * pitch;
         const sel = i == list.cursor;
-        if (sel) cart.rect(.{ .x = 6, .y = y - 2, .width = 148, .height = 11, .fill_color = panel_hi });
+        if (sel) hud.fill_rect(6, y - 2, 148, 11, panel_hi);
         const greyed = i == @intFromEnum(Item.link);
         const color = if (greyed) hud.dim else if (sel) hud.coral else hud.white;
         hud.text(item, x, y, color);
@@ -113,7 +113,7 @@ pub fn draw_main(list: *const List, sound_on: bool, link_note: u32, frame: u32) 
     };
     const note_on = link_note > 0 and (link_note / 6) % 2 == 0;
     const about_color = if (list.cursor == @intFromEnum(Item.link)) (if (note_on) hud.coral else hud.grey) else hud.grey;
-    cart.rect(.{ .x = 4, .y = 92, .width = 152, .height = 32, .fill_color = hud.anti_black });
+    hud.fill_rect(4, 92, 152, 32, hud.anti_black);
     hud.centered(about, 96, about_color);
     if (list.cursor == @intFromEnum(Item.gc)) hud.centered("MARK AND SWEEP", 106, hud.dim);
     hud.centered("A SELECT  B BACK", 116, hud.dim);

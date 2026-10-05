@@ -52,7 +52,7 @@ pub const Projected = struct {
 /// Camera-space coordinates of a world point (Q16.16 in): forward and
 /// right, world px.
 const Local = struct { zf: i32, xl: i32 };
-fn local(wx: i32, wy: i32) Local {
+inline fn local(wx: i32, wy: i32) Local {
     var dx = (wx -% cam.x) & world_mask;
     var dy = (wy -% cam.y) & world_mask;
     // Shortest wrap: to -512..511 world px.
@@ -101,7 +101,7 @@ pub fn look_back(mx: i32, my: i32) void {
     cam.y = (my -% fixed.sin(cam.yaw) * tuning.cam_behind) & world_mask;
 }
 
-fn finish(zf: i32, xl: i32) Projected {
+inline fn finish(zf: i32, xl: i32) Projected {
     const h = hills.height_ahead(zf, tuning.cam_behind);
     const sy = tuning.horizon_y + @max(1, @divTrunc((cam.height - h) * tuning.focal, zf));
     const sx = 80 + @divTrunc(xl * tuning.focal, zf);

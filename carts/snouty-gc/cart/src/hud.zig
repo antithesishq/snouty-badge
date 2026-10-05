@@ -118,10 +118,10 @@ pub fn name_of(racer: u8) []const u8 {
 
 /// The down arrow of the `Down+A` glyph (the font has none): 5x6 at (x, y).
 pub fn down_arrow(x: i32, y: i32, color: cart.DisplayColor) void {
-    cart.rect(.{ .x = x + 2, .y = y, .width = 1, .height = 4, .fill_color = color });
-    cart.rect(.{ .x = x, .y = y + 3, .width = 5, .height = 1, .fill_color = color });
-    cart.rect(.{ .x = x + 1, .y = y + 4, .width = 3, .height = 1, .fill_color = color });
-    cart.rect(.{ .x = x + 2, .y = y + 5, .width = 1, .height = 1, .fill_color = color });
+    fill_rect(x + 2, y, 1, 4, color);
+    fill_rect(x, y + 3, 5, 1, color);
+    fill_rect(x + 1, y + 4, 3, 1, color);
+    fill_rect(x + 2, y + 5, 1, 1, color);
 }
 
 /// Minimap (SPEC 10): the track outline drawn once per race from the
@@ -260,7 +260,7 @@ pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     draw_minimap(w, follow, o.frame);
     if (!draw_message(w, c, o.spectate) and o.press_start and (o.frame / 30) % 2 == 0) centered("PRESS START", bar_y + 4, white);
     if (c.bit_flip > 0 and c.wreck == .none) draw_bit_flip(o.frame);
-    if (c.captcha > 0 and c.human != world.no_human and c.wreck == .none) draw_captcha(c, o.frame);
+    if (captcha_up(c)) draw_captcha(c, o.frame);
 }
 
 // --- The pickup box (SPEC 6.3) ---------------------------------------------------
@@ -439,8 +439,8 @@ fn draw_sweep(w: *const world.World) void {
     const from = if (w.gc.sweeps == 0) 0 else gc_mode.sweep_at(w.gc.sweeps - 1);
     const span = @max(1, to - from);
     const fill: i32 = @max(0, @min(40, @divTrunc((lead - from) * 40, span)));
-    cart.rect(.{ .x = margin, .y = top_y + 9, .width = 40, .height = 2, .fill_color = dim });
-    if (fill > 0) cart.rect(.{ .x = margin, .y = top_y + 9, .width = @intCast(fill), .height = 2, .fill_color = if (fill > 32) red else coral });
+    fill_rect(margin, top_y + 9, 40, 2, dim);
+    if (fill > 0) fill_rect(margin, top_y + 9, fill, 2, if (fill > 32) red else coral);
 }
 
 /// Taunt pop-up (SPEC 5.3, 10): the racer's half-scale portrait in a
@@ -510,7 +510,7 @@ fn draw_bottom_left(w: *const world.World, c: *const world.Car, follow: u8, fram
     const flash = fx.armor_flash > 0 and (fx.armor_flash / 2) % 2 == 0;
     const color = if (flash) white else if (pct > 60) green else if (pct > 30) yellow else red;
     cart.rect(.{ .x = margin, .y = armor_y, .width = 42, .height = 6, .stroke_color = grey, .fill_color = anti_black });
-    if (fill > 0) cart.rect(.{ .x = margin + 1, .y = armor_y + 1, .width = fill, .height = 4, .fill_color = color });
+    if (fill > 0) fill_rect(margin + 1, armor_y + 1, fill, 4, color);
 }
 
 fn message_text(msg: world.Message) []const u8 {
@@ -572,7 +572,7 @@ fn draw_message(w: *const world.World, c: *const world.Car, spectate: bool) bool
         color = if (msg == .fall) coral else if (msg == .go or msg == .finished) cyan else white;
     }
     if (str.len == 0) return false;
-    cart.rect(.{ .x = 0, .y = bar_y, .width = cart.screen_width, .height = bar_h, .fill_color = anti_black });
+    fill_rect(0, bar_y, cart.screen_width, bar_h, anti_black);
     centered(str, bar_y + 4, color);
     return true;
 }
@@ -619,7 +619,7 @@ const purple = cart.DisplayColor.rgb(0xB070FF);
 fn draw_bit_flip(frame: u32) void {
     const mirrored = (frame / 8) % 2 == 1;
     const x0: i32 = 80 - 4 * 14;
-    cart.rect(.{ .x = x0 - 2, .y = flip_y - 1, .width = 14 * 8 + 3, .height = 10, .fill_color = anti_black });
+    fill_rect(x0 - 2, flip_y - 1, 14 * 8 + 3, 10, anti_black);
     text("<R", x0, flip_y, white);
     glyph_text("BIT FLIP", x0 + 24, flip_y, 1, mirrored, if (mirrored) purple else cyan);
     text("L>", x0 + 96, flip_y, white);
@@ -651,8 +651,18 @@ const tick_blue = cart.DisplayColor.rgb(0x1A73E8);
 /// Seconds of the human's longest wait (the sim frees the car at 120).
 const captcha_wait: u32 = 120;
 
-pub fn fill_rect(x: i32, y: i32, w: i32, h: i32, color: cart.DisplayColor) void {
-    cart.rect(.{ .x = x, .y = y, .width = @intCast(w), .height = @intCast(h), .fill_color = color });
+/// A filled rectangle written straight into the framebuffer, clipped
+/// (M3: the API's `rect` was 9% of a stress frame under ReleaseSmall).
+pub fn fill_rect(x: i32, y: i32, w: anytype, h: anytype, color: cart.DisplayColor) void {
+    const px: cart.Pixel = .from_color(color);
+    const xa: i32 = @max(0, x);
+    const xb: i32 = @min(160, x + @as(i32, @intCast(w)));
+    const ya: usize = @intCast(@max(0, y));
+    const yb: i32 = @min(128, y + @as(i32, @intCast(h)));
+    if (xa >= xb or @as(i32, @intCast(ya)) >= yb) return;
+    const n: usize = @intCast(yb - @as(i32, @intCast(ya)));
+    var cx = xa;
+    while (cx < xb) : (cx += 1) @memset(cart.framebuffer[@intCast(cx)][ya..][0..n], px);
 }
 
 /// SPEC 6.3: "you play it". The sim runs the game from this badge's
@@ -681,11 +691,11 @@ fn draw_captcha(c: *const world.Car, frame: u32) void {
             // Ticked: the picture shrinks inside a white rim, a blue tick on it.
             draw_scene(k, lit, cx + 2, cy + 2, cap_cell - 4);
             fill_rect(cx, cy, 7, 7, tick_blue);
-            cart.rect(.{ .x = cx + 1, .y = cy + 3, .width = 1, .height = 2, .fill_color = white });
-            cart.rect(.{ .x = cx + 2, .y = cy + 4, .width = 1, .height = 1, .fill_color = white });
-            cart.rect(.{ .x = cx + 3, .y = cy + 3, .width = 1, .height = 1, .fill_color = white });
-            cart.rect(.{ .x = cx + 4, .y = cy + 2, .width = 1, .height = 1, .fill_color = white });
-            cart.rect(.{ .x = cx + 5, .y = cy + 1, .width = 1, .height = 1, .fill_color = white });
+            fill_rect(cx + 1, cy + 3, 1, 2, white);
+            fill_rect(cx + 2, cy + 4, 1, 1, white);
+            fill_rect(cx + 3, cy + 3, 1, 1, white);
+            fill_rect(cx + 4, cy + 2, 1, 1, white);
+            fill_rect(cx + 5, cy + 1, 1, 1, white);
         } else {
             draw_scene(k, lit, cx, cy, cap_cell);
         }
@@ -698,7 +708,7 @@ fn draw_captcha(c: *const world.Car, frame: u32) void {
     cart.rect(.{ .x = ux, .y = uy, .width = cap_cell + 2, .height = cap_cell + 2, .stroke_color = yellow });
     // The wait bar under the header: the sim lets go after `captcha_wait`.
     const left: u32 = @min(@as(u32, c.captcha), captcha_wait);
-    fill_rect(cap_x + 3, cap_y + 32, @intCast(left * @as(u32, cap_w - 6) / captcha_wait), 1, cap_blue);
+    fill_rect(cap_x + 3, cap_y + 32, left * @as(u32, cap_w - 6) / captcha_wait, 1, cap_blue);
     // The footer: PRESS A (blinking), or TRY AGAIN after a miss.
     const fy = grid_y + 3 * cap_cell + 4 + 3;
     if (fx.captcha_fail > 0) {
@@ -754,6 +764,11 @@ fn draw_scene(k: u32, lit: bool, x: i32, y: i32, size: i32) void {
 const bsod_blue = cart.DisplayColor.rgb(0x0A64C8);
 /// The blue screen is the first 30 of the 90 frozen ticks (`frozen > 60`).
 const panic_blue_from: u8 = 60;
+
+/// The followed car's CAPTCHA card is up (a human plays it).
+pub fn captcha_up(c: *const world.Car) bool {
+    return c.captcha > 0 and c.human != world.no_human and c.wreck == .none;
+}
 
 /// The followed car is showing the KERNEL PANIC blue screen.
 pub fn bluescreen_on(c: *const world.Car) bool {

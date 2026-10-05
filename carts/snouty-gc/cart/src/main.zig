@@ -328,9 +328,16 @@ fn draw_race(look: bool) void {
     }
     render.row_jitter = c.bit_flip > 0 and c.wreck == .none;
     render.draw();
-    sprites.draw_floor_lines(&w, frame);
-    sprites.draw_world(&w, .{ .follow = follow, .look_back = look, .frame = frame });
-    fx.draw_beams(&w);
+    // This badge's CAPTCHA card covers the floor (x 4..156, y 25..124):
+    // nothing under it is drawn (M3: the card frames were the stress
+    // scene's worst).
+    if (!watching and hud.captcha_up(c)) {
+        sprites.car_screen = @splat(.{});
+    } else {
+        sprites.draw_floor_lines(&w, frame);
+        sprites.draw_world(&w, .{ .follow = follow, .look_back = look, .frame = frame });
+        fx.draw_beams(&w);
+    }
     hud.draw(&w, follow, .{
         .frame = frame,
         .look_back = look,
@@ -518,7 +525,7 @@ fn engine_cue() void {
 
 fn pause_frame() void {
     draw_race(false);
-    cart.rect(.{ .x = 24, .y = 30, .width = 112, .height = 70, .fill_color = hud.anti_black });
+    hud.fill_rect(24, 30, 112, 70, hud.anti_black);
     menu_nav(&pause_list);
     const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
     menu.draw_list("PAUSED", &.{ "RESUME", "RESTART", "QUIT", sound_item }, &pause_list, 34);
