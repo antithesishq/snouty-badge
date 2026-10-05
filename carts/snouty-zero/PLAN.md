@@ -610,6 +610,62 @@ wreck in the headless preview.
   about 15 KB free below the stack. `zig build test` (all carts) and
   check-float pass.
 
+## M6 Link race (two badges)
+
+2026-10-05. Adrian asked for two-player Snouty Zero over the badge link
+cable (root `docs/LINK.md` M2; the Game Boy link in Snouty Boy is verified
+on two badges). Lockstep comes from the shared `lib/lockstep.zig`
+(extracted from Snouty GC's M4 net code, also used by Snouty Cycles; root
+`docs/LOCKSTEP.md`). Zero's app id is 'Z'. Defaults taken:
+
+- **Menu.** A LINK RACE row in the main menu. In the simulator it is
+  greyed, "NO LINK IN SIMULATOR". The lockstep's common wording is
+  "PLUG IN THE CABLE", "WRONG CART: <name>", "WAITING FOR PEER" and
+  "PEER LEFT, AI DRIVING".
+- **Lobby.** The host (higher link nonce) picks the track: any track of
+  any league, one rules byte. Both pick a machine (`ai.player_machines`,
+  3 bits; both may pick the same one) and ready up. The host's Start goes.
+  The guest sees the host's track live.
+- **Race.** One race on that track: the usual rivals and traffic, with the
+  host's human in machine 0 and the guest's in machine 1 (a rival slot),
+  side by side in the back grid row. Each badge follows and shows the HUD
+  for its own machine. KOs, overclock and thermal work as in solo play,
+  and credit goes to whichever human did it. The results show both
+  humans' places and times. No GP points. A then returns both badges to
+  the lobby.
+- **Lockstep.** The input byte has A, B, Up, Down, Left, Right and Start
+  (bits 0-6, never 0xC0/0xDB). Start is the lockstep pause bit, so both
+  badges pause on the same tick. There is no rewind, scrub or attract in
+  a link race. The hash is `lockstep.hash_fields` over the World. If the
+  partner leaves, the AI drives its machine to the finish. A desync ends
+  the race with a DESYNC band, then the lobby.
+- **Pumping.** At the top of `update`, then loop to 14 ms into the frame
+  while `busy()`. Zero's worst frame is 4.8 ms, so no in-draw hooks.
+  Solo play never touches the link (it starts when LINK RACE opens), so
+  solo frames are unchanged.
+
+Work, one track:
+
+- `world.zig`, `sim.zig`: a second human. `World.humans: [2]u8` holds
+  machine indices, or none. `simulate(w, inputs: [2]Buttons-or-byte)`
+  stays pure. Every `world.player` use that means "a human" or "the
+  credited human" becomes per-human. The renderer, HUD, camera and sound
+  take a `view` machine index instead of the constant. Solo play is
+  bit-identical: existing tests, rewind and history unchanged, keyframe
+  World still under 640 B.
+- `net` glue (`link_race.zig`): `Lockstep(link.Badge, G)` with G = Zero's
+  World/simulate/hash/hand_over, the lobby screens and the race loop as
+  in `docs/LOCKSTEP.md`.
+- Host tests: two Worlds over `lib/link_virtual.zig` with loss race a
+  whole track to the finish in sync; peer left (AI takes over, both
+  finish); desync detected; pause on the same tick; solo determinism and
+  the old tests unchanged.
+
+Done when `zig build`, `zig build test` and `zig build check-float` pass,
+the solo bench worst frame stays within M5.5 (4.81 ms), RAM still fits,
+and a preview shows the lobby (debug view) and a two-human race from each
+badge's view.
+
 ## Hand-off
 
 All milestones are built, tested and on `origin/main` (tags
