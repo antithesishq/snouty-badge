@@ -20,7 +20,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
         .name = "snouty-cycles",
-        .optimize = .ReleaseFast,
+        .optimize = .ReleaseSmall,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &build_cart_modules,
     });
