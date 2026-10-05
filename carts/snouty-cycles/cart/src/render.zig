@@ -344,10 +344,12 @@ pub fn Renderer(comptime S: type) type {
             max: u8 = 0,
             /// `spark`, or a derez burst of cycle `kind - 1`.
             kind: u8 = 0,
-            /// Where it was drawn last frame (erase), if `drawn`.
+            /// Where it was drawn last frame (erase), if `drawn`, and its
+            /// size (bursts start 2x2).
             drawn: bool = false,
             px: u8 = 0,
             py: u8 = 0,
+            size: u8 = 1,
 
             pub const spark = 0;
         };
@@ -774,7 +776,7 @@ pub fn Renderer(comptime S: type) type {
             for (&self.dots) |*d| {
                 if (!d.drawn) continue;
                 d.drawn = false;
-                self.repaint_rect(w, .{ .x0 = d.px, .y0 = d.py, .x1 = d.px + 1, .y1 = d.py + 1 });
+                self.repaint_rect(w, .{ .x0 = d.px, .y0 = d.py, .x1 = d.px + d.size, .y1 = d.py + d.size });
             }
             for (&self.tags) |*t| {
                 if (t.drawn.is_empty()) continue;
@@ -792,17 +794,22 @@ pub fn Renderer(comptime S: type) type {
                 // Age 0..3 of the colour ramp; bursts flicker at the end.
                 const age: u32 = 3 - @min(3, @as(u32, d.life) * 4 / (@as(u32, d.max) + 1));
                 var c: u16 = undefined;
+                var size: u8 = 1;
                 if (d.kind == Dot.spark) {
                     c = colors.spark[@min(age, 2)];
                 } else {
                     if (d.life < 8 and (d.life + w.tick) & 1 != 0) continue;
                     c = colors.burst[(d.kind - 1) & 3][age];
+                    // Big and hot first, then embers.
+                    if (age < 2 and px + 1 < screen_w and py + 1 < screen_h) size = 2;
                 }
-                self.put_px(px, py, c);
+                var k: u8 = 0;
+                while (k < size * size) : (k += 1) self.put_px(px + (k & 1), py + (k >> 1), c);
                 d.drawn = true;
                 d.px = @intCast(px);
                 d.py = @intCast(py);
-                S.mark_dirty(.{ .x0 = d.px, .y0 = d.py, .x1 = d.px + 1, .y1 = d.py + 1 });
+                d.size = size;
+                S.mark_dirty(.{ .x0 = d.px, .y0 = d.py, .x1 = d.px + size, .y1 = d.py + size });
             }
             for (&self.tags) |*t| {
                 if (t.life == 0) continue;

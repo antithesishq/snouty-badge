@@ -620,7 +620,7 @@ pub const Game = struct {
     fn derez_banner(g: *const Game) render.Banner {
         // Away from the crash, so the burst stays in view.
         const me = &g.world.cycles[0];
-        var b: render.Banner = .{ .cy = if (me.y < sim.grid_h / 2) 92 else 44 };
+        var b: render.Banner = .{ .cy = if (me.y < sim.grid_h / 2) 98 else 34 };
         if (g.timed_out) {
             b.add("TIME UP", 2, colors.warn);
             b.add("AGAIN", 1, colors.text);
