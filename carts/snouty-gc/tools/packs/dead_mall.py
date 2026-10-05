@@ -694,7 +694,8 @@ class FoodCourtArena(PA.PackArena):
     dry fountain (the wishing well: coins and dead phones), the stalled
     escalators are its four kickers, kiosk and planter islands sit at the
     diagonals, and the scrubber circles the old carousel corner (NE). Lit by
-    neon and rack LEDs under the skylight. 16 nav nodes (a 1.7 KB blob) so
+    neon and rack LEDs under the skylight. More stalled escalators cross the
+    side lanes over light wells (gap jumps). 18 nav nodes (a 1.9 KB blob) so
     the slot keeps room for four props cells."""
     name, stem, background = "THE FOOD COURT", "the_food_court", "food"
 
@@ -708,19 +709,27 @@ class FoodCourtArena(PA.PackArena):
             for x in range(n):
                 if math.hypot(x - 43.5, y - 43.5) <= 8.6:
                     k[y, x] = PA.PIT
-        self.kind = k
+        # Stalled escalators across the side lanes too, over the light wells
+        # cut into the floor (gap jumps: rows 41..45).
         self.ramps = []
+        for x0, x1 in ((0, 13), (74, 87)):
+            k[41:46, x0:x1 + 1] = PA.PIT
+            self.ramps.append((x0, 39, x1, 40, 1))
+            self.ramps.append((x0, 46, x1, 47, 3))
+        self.kind = k
         self.kickers = [(41, 34, 46, 35, 1), (41, 52, 46, 53, 3), (34, 41, 35, 46, 0), (52, 41, 53, 46, 2)]
         self.bays = [(0, 0), (82, 82)]
-        self.spawns = [(30, 80, 3), (56, 80, 3), (5, 30, 0), (5, 56, 0), (81, 30, 2), (81, 56, 2)]
-        self.pads = [(44, 4), (43, 83), (4, 43), (83, 44), (44, 24), (43, 63), (24, 43), (63, 44)]
+        self.spawns = [(30, 80, 3), (56, 80, 3), (5, 20, 0), (5, 64, 0), (81, 20, 2), (81, 64, 2)]
+        self.pads = [(44, 4), (43, 83), (4, 30), (83, 57), (44, 24), (43, 63), (24, 43), (63, 44)]
         J, B = 2, 1
         self.set_nodes([
             ("bay_nw", 3, 3, B), ("c_ne", 80, 7, 0), ("c_sw", 7, 80, 0), ("bay_se", 84, 84, B),
-            ("n", 44, 7, 0), ("s", 43, 80, 0), ("w", 7, 43, 0), ("e", 80, 44, 0),
+            ("n", 44, 7, 0), ("s", 43, 80, 0),
+            ("w_a", 7, 29, J), ("w_b", 7, 58, J), ("e_a", 80, 29, J), ("e_b", 80, 58, J),
             ("i_nw", 31, 31, 0), ("i_ne", 56, 31, 0), ("i_sw", 31, 56, 0), ("i_se", 56, 56, 0),
             ("pn", 44, 24, J), ("ps", 43, 63, J), ("pw", 24, 43, J), ("pe", 63, 44, J),
-        ], [("pn", "ps"), ("ps", "pn"), ("pw", "pe"), ("pe", "pw")])
+        ], [("pn", "ps"), ("ps", "pn"), ("pw", "pe"), ("pe", "pw"),
+            ("w_a", "w_b"), ("w_b", "w_a"), ("e_a", "e_b"), ("e_b", "e_a")])
         # The scrubber's round of the carousel corner: diagonally across the
         # NE ring, from a service door in the north rim to one in the east.
         self.mover = dict(a=(63, -3), b=(91, 25), period=840, warn=60, phase=200, damage=40, push=64,
@@ -728,7 +737,7 @@ class FoodCourtArena(PA.PackArena):
         w = PA.rel_world
         self.props = [("palm", *w(17, 17)), ("kiosk", *w(24, 24)), ("palm", *w(70, 17)), ("neon", *w(63, 24)),
                       ("kiosk", *w(17, 70)), ("palm", *w(24, 63)), ("palm", *w(70, 70)), ("neon", *w(63, 63)),
-                      ("neon", *w(44, -4)), ("neon", *w(43, 91)), ("palm", *w(-4, 20)), ("palm", *w(91, 66))]
+                      ("neon", *w(44, -4)), ("neon", *w(43, 91)), ("palm", *w(-4, 34)), ("palm", *w(91, 52))]
 
     def floor(self, tmap, big, rng):
         """Food-court tile in the plaza round the fountain (inside the
