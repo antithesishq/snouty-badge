@@ -76,11 +76,16 @@ free per pixel.
 | B (hold) | inputs panel: program, palette, parameter, source, the 3x3 field as a grid, pose numbers |
 | B + stick | steer the virtual hand (STICK source) |
 | B + A | punch with the virtual hand |
+| Select (on release) | MIRROR: flip the sensor's left-right (the breakout dangles on its cable) |
 | Start (on release) | sound on / off (boots off) |
 | Start + Select | the OS's; the cart ignores every button while both are held |
 
-Never the joystick click. Start acts on release, and only if Select was
-not pressed during the hold, so the exit chord never toggles sound.
+Never the joystick click. Start and Select act on release, and only if
+the other was not pressed during the hold, so the exit chord never
+toggles anything. Lateral effects come from the pose's coverage-weighted
+centroid and the smooth field, never from the nearest zone (which jumps
+between fingertips, knuckles and forearm over a flat hand), and they are
+broad: the 8820 has three zones across.
 
 Attract: no sensed hand and no button for 30 s advances to the next
 program (and again every 30 s); any button or a sensed hand resets it.

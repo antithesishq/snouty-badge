@@ -43,6 +43,7 @@ it (GHOST); B + stick steers a virtual hand (STICK).
 | B (hold) | inputs panel: program, palette, source, the 3x3 field, x/y/z, energy, pitch/roll/yaw (degrees), parameter, PUNCH |
 | B + stick | steer the virtual hand (STICK; hands back to the ghost 4 s after the last move) |
 | B + A | punch with the virtual hand |
+| Select | MIRROR: flip the sensor's left-right (the breakout dangles on its cable and can face either way; acts on release; MIRR in the panel) |
 | Start | sound on / off (acts on release; boots off) |
 | Start + Select | the OS's settings / exit; the cart ignores every button while both are held |
 

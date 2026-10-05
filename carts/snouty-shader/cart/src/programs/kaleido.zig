@@ -59,13 +59,26 @@ pub fn enter() void {
     cx = 40;
     cy = 32;
     tab = arena.as(Tables);
-    for (0..tw) |x| for (0..th) |y| {
-        const dx = @as(f32, @floatFromInt(x)) - tw / 2 + 0.5;
-        const dy = @as(f32, @floatFromInt(y)) - th / 2 + 0.5;
-        const a = atan2(dy, dx) / (2.0 * std.math.pi); // -0.5..0.5 turns
-        tab.ang[x][y] = @truncate(@as(u32, @bitCast(math.iround(a * 256.0))));
+    // One quadrant (dx, dy > 0) and its mirror images: a quarter of the
+    // atan2 / sqrt / divide work, so switching here costs ~4 ms, not 16.
+    const hx = tw / 2;
+    const hy = th / 2;
+    for (hx..tw) |x| for (hy..th) |y| {
+        const dx = @as(f32, @floatFromInt(x - hx)) + 0.5;
+        const dy = @as(f32, @floatFromInt(y - hy)) + 0.5;
+        const a: u8 = @truncate(@as(u32, @bitCast(math.iround(atan2(dy, dx) / (2.0 * std.math.pi) * 256.0))));
         const r = @sqrt(dx * dx + dy * dy);
-        tab.dep[x][y] = @intFromFloat(@min(255.0, depth_k / @max(r, 0.5)));
+        const d: u8 = @intFromFloat(@min(255.0, depth_k / @max(r, 0.5)));
+        const mx = tw - 1 - x;
+        const my = th - 1 - y;
+        tab.ang[x][y] = a;
+        tab.ang[mx][y] = 128 -% a;
+        tab.ang[x][my] = 0 -% a;
+        tab.ang[mx][my] = 128 +% a;
+        tab.dep[x][y] = d;
+        tab.dep[mx][y] = d;
+        tab.dep[x][my] = d;
+        tab.dep[mx][my] = d;
     };
 }
 
