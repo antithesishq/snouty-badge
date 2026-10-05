@@ -140,7 +140,10 @@ writes a frame whole or not at all. While no WELCOME comes, `LockstepN`
 says HELLO again every 2 s (`party.hello_retry_us`, as the fork's own
 `cart.lobby`): a host that opens a serial port flushes its input right
 after raising DTR (pyserial does), so a HELLO sent at once can be lost,
-and the end to end runs lost exactly that HELLO on a pty. Should both
+and the end to end runs lost exactly that HELLO on a pty. The fork now
+opens serial links with DTR low and raises it after the flush, and
+"until WELCOME, re-send HELLO every 2 s" is a spec rule for every cart
+(fork main after c1fe509). Should both
 arrive, the relay takes the second as a rejoin, which is harmless in the
 lobby.
 
@@ -321,7 +324,10 @@ same) and end to end (section 7.1).
 
 **Drain every frame, and sizing.** The relay (one thread, frames queued
 in arrival order) removes a player only when more than 64 KiB has waited
-for it for 1 s, or 1 MiB is waiting (`--queue-limit`, 16 times that); `lib/party_virtual.zig` models
+for it for 1 s, or 1 MiB is waiting (`--queue-limit`, 16 times that),
+and (fork main after c1fe509) any link with no write progress for 5 s
+(`dead_time`; SocketLink sets SO_SNDBUF to 4 KB, so a stopped simulator
+shows within 1-2 s more); `lib/party_virtual.zig` models the queue rules
 exactly that (`stuck_limit`, `stuck_us`, `hard_limit`; its queue holds
 256 KiB, so that is its hard limit, and tests scale the stuck limit down
 per port where they want a removal soon). A 16-badge race brings 15 x 6
@@ -467,7 +473,8 @@ finish in sync. Input latency p50 0.13 ms, p99 4.6 ms.
 What the real relay showed that the model had not: a HELLO sent the
 moment a serial link opens can be lost (pyserial flushes input right
 after raising DTR), so the client now retries it every 2 s (section
-4.1); the relay never removes a stopped simulator over TCP (section 5);
+4.1); the relay never removed a stopped simulator over TCP (fixed in the
+fork by the 5 s `dead_time`, section 5);
 rooms count from 1 and a HELLO of another version leaves the room first
 (the model now does the same).
 
