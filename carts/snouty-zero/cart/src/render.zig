@@ -180,20 +180,27 @@ fn draw_horizon(yaw: fixed.Turn) void {
     const scroll_f: u32 = @as(u32, yaw) >> 7; // 512 px per turn
     const scroll_b: u32 = @as(u32, yaw) >> 8; // 256 px per turn, half rate
     const j: usize = @intCast(jitter());
+    // The palettes in locals: the loop's register use then does not hang
+    // on where the linker's merged globals put them (M6: a global layout
+    // change once cost this loop a spill per pixel).
+    const fpal = front_pal;
+    const bpal = back_pal;
     for (0..@intCast(screen_w)) |x| {
         const col = &cart.framebuffer[x];
         const sxf: usize = @intCast((@as(u32, @intCast(x)) + scroll_f) & 511);
         const sxb: usize = @intCast((@as(u32, @intCast(x)) + scroll_b) & 255);
         const shf: u3 = if (sxf & 1 == 1) 4 else 0;
         const shb: u3 = if (sxb & 1 == 1) 4 else 0;
+        const fc = front[sxf >> 1 ..];
+        const bc = back[sxb >> 1 ..];
         // With the shake the strip's row y+j lands on screen row y.
         for (0..32) |y| {
             const sy: usize = @min(y + j, 31);
-            const f: u8 = (front[sy * 256 + (sxf >> 1)] >> shf) & 15;
+            const f: u8 = (fc[sy * 256] >> shf) & 15;
             if (f != 0) {
-                col[y] = front_pal[f];
+                col[y] = fpal[f];
             } else {
-                col[y] = back_pal[(back[sy * 128 + (sxb >> 1)] >> shb) & 15];
+                col[y] = bpal[(bc[sy * 128] >> shb) & 15];
             }
         }
         col[@intCast(horizon_y)] = fog_pixel;
