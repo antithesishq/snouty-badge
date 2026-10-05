@@ -102,10 +102,12 @@ Track names, in league order:
 - Perimeter: **Fenceline**, **Substation Ruins**, **The Last Mile**.
 
 More leagues come as **track packs**: files copied onto the badge
-drive, loaded at race start (section 19). The first two planned packs
-are **The Boneyard** (an aircraft boneyard full of future aircraft and
-spacecraft wreckage) and **The Seabed** (a dried ocean floor with
-shipwrecks and whale skeletons).
+drive, loaded at race start (section 19). Four packs are planned:
+- **Dead Mall**: a megamall turned datacenter, abandoned as both.
+- **The Boneyard**: an aircraft boneyard full of future aircraft and
+  spacecraft wreckage.
+- **The Seabed**: a dried ocean floor with shipwrecks and whale skeletons.
+- **Cold Storage**: AI compute on the last ice in Antarctica.
 
 ### 3.3 Track features
 
@@ -867,14 +869,19 @@ Merge to main as soon as a milestone is badge-ready.
   PROMPT INJECTION, the ending card), built in behind the RAM cut in 13.2
   or as a track pack once M7 exists; rewind back for single-player
   (17.7); a Tufty port (on the `tufty` branch, as the other carts were).
-- **M7 Track packs** (future goal, Adrian 2026-10-04): section 19. The
-  pack format and loader, scenery props, `tools/build_pack.py`, the pack
-  picker, link-race pack matching, then **The Boneyard** and **The
-  Seabed** as the first two packs (three tracks each). **Done when:** a
+- **M7 Track packs** (Adrian 2026-10-04 and 2026-10-05): section 19.
+  The pack format and loader (tracks and an arena), scenery props,
+  `tools/build_pack.py`, the pack and arena pickers, link pack matching,
+  then **Dead Mall** first (19.7: it brings the first non-brown arena)
+  and **The Boneyard** (19.5). **Done when:** a
   pack copied onto the badge drive shows in the league picker and races,
-  a pack's arena (19.7) shows in the BATTLE arena picker,
+  a pack's arena (19.9) shows in the BATTLE arena picker,
   the built-in leagues still work with no pack present, and a corrupt or
   foreign pack is refused with a message, never a crash.
+- **M9 More packs**: **The Seabed** (19.6) and **Cold Storage** (19.8,
+  Antarctica), each with three tracks and an arena. **Done when:** both
+  packs race and battle from the drive, and a link race with a pack on
+  both badges runs in sync.
 
 ## 17. Decisions (taken by default, 2026-10-04)
 
@@ -953,12 +960,13 @@ league:
 
 | Part | Size | Notes |
 |---|---|---|
-| Header | 64 B | magic `GCPK`, format version, pack name (16 chars), league name, track count, the hazard kinds it uses, CRC32 of the rest |
+| Header | 64 B | magic `GCPK`, format version, pack name (16 chars), league name, track count, arena flag, the hazard kinds it uses, CRC32 of the rest |
 | Palette | 512 B | as the built-in leagues |
 | Tileset | 8 or 16 KB | 128 or 256 tiles of 8x8 at 8 bpp |
 | Horizon | 12 KB | the two-layer strip, as built-in |
 | Props sheet | up to 6 KB | scenery billboards at 4 bpp (19.3) |
 | Per track (1 to 4) | 7 to 10 KB each | name, LZ map, attributes, centerline, features (crates, chips, hazards, props) |
+| Arena (0 or 1) | 6 to 9 KB | name, LZ map, attributes, spawn and crate pads, navigation field, features (19.9) |
 
 A three-track pack is about 50 to 60 KB, so the 1,280 KB drive holds the
 emulator ROMs and a shelf of packs.
@@ -1083,11 +1091,105 @@ across the plain.
   Trench** (following the severed cable down into the trench, with a
   ramp across the break).
 
-### 19.7 Arenas in packs
+### 19.7 Dead Mall
+
+*Before the takeover the Hyperscalers bought every dying mall for its
+floor space and its power feed, wheeled racks into the shopfronts and ran
+them hot. Then they built bigger, somewhere else. The escalators
+stopped, and the racks still blink.*
+
+A two-storey megamall turned datacenter, then abandoned as both. It is
+indoors and the first pack that isn't sun, sand and rust. Server racks
+fill the shopfronts behind roll-down grilles. The anchor store is
+gutted, with mannequins still standing in rows. Under the skylight dome
+is a dry fountain full of coins and dead phones.
+
+- **Palette**: pastel terrazzo (teal, salmon, cream), half-lit neon
+  signage in magenta and cyan, green exit signs, rack LEDs in blue and
+  amber, a dim purple night sky through the skylights. No brown.
+- **Floor**: terrazzo with brass inlay lines, food-court tile, carpet in
+  the anchor store, painted deck stripes in the parking structure, and
+  cable trays and floor grilles where racks were rolled in.
+- **Horizon**: the atrium's balconies and shopfronts, a giant dead
+  pretzel sign, the skylight dome, rows of rack lights fading back.
+- **Props**: palm planters, a mannequin, a kiosk cart, a neon shop sign,
+  a server rack, a vending machine, a stalled escalator, an abandoned
+  shopping cart, a security robot slumped against a pillar.
+- **Hazards**:
+  - *runaway scrubber* (crossing mover: a floor-polishing robot still
+    on its route);
+  - *sparking panel* (timed blast from a breaker the racks overloaded);
+  - *wet floor* (slick, signed with a yellow cone prop);
+  - *ceiling tile* (breakable crust: the mezzanine floor gives way to
+    the level below).
+- **Tracks**:
+  - **Anchor Store**: a loop through the department store, between
+    mannequin rows and racks, past the dead perfume counters.
+  - **Food Court**: round the atrium, weaving through tables, under the
+    pretzel sign, and jumping the stalled escalators.
+  - **Parking Structure**: the roof deck at night, with gap jumps
+    between ramps and the lot lights still on a timer.
+
+### 19.8 Cold Storage
+
+*The Hyperscalers moved the hot work south, to the last cold place on
+Earth, where the last open sea still meets the last ice. They pump the
+ocean through the racks and dump the heat back in, and the glaciers are
+going. Humans were not invited. We came for the warm air leaking out of
+the vents.*
+
+Antarctica: AI compute halls dug into the ice shelf, seawater intake
+pipes as wide as tunnels, melting glaciers calving into black water,
+wind farms on the ridges, and a geothermal plant on the volcano's flank
+feeding a humming switchyard. Every surface is ice, steel or black
+volcanic rock.
+
+- **Palette**: white and pale cyan ice, deep navy water, black basalt,
+  hazard orange on the pipes and the plant, and an aurora in green and
+  magenta over a polar twilight sky. Nothing else in the game looks like
+  it.
+- **Floor**: packed snow and glare ice, meltwater channels, grated steel
+  walkways over the pipes, black rock and ash on the volcano, and
+  painted helipad and road markings.
+- **Horizon**: the ice cliffs and the open sea, server domes lit from
+  inside, turbines turning on the ridge, and the volcano with its plume.
+  The aurora rolls in the second horizon layer.
+- **Props**: an intake pipe mouth, a pylon, a wind turbine, an ice
+  pinnacle, a radar dome, a frozen crane, a penguin colony sign (the
+  penguins are gone), and an emperor penguin who did not get the memo.
+- **Hazards**:
+  - *glare ice* (slick, the whole of some sections);
+  - *thin ice* (breakable crust over the sea: through it is a wreck);
+  - *calving* (crossing mover: an ice block slides off the glacier
+    face across the road);
+  - *arc flash* (timed blast at the switchyard);
+  - *steam vent* (timed blast where the warm outflow meets the ice).
+- **Tracks**:
+  - **Intake Shelf**: along the ice shelf's edge, with the sea on one
+    side (an open edge), through an intake pipe and into the server
+    halls.
+  - **Calving Front**: under the glacier face, with ice blocks crossing,
+    meltwater channels and crevasse jumps.
+  - **Erebus Grid**: up the volcano to the geothermal plant and the
+    switchyard, black rock and steam, arc flashes between the pylons.
+
+### 19.9 Arenas in packs
 
 A pack may also carry one battle arena: a square map with its spawn pads,
 crate pads, kickers and navigation field, drawn in the pack's tileset. It
-shows in the BATTLE arena picker after The Sandbox. The first two:
+shows in the BATTLE arena picker after The Sandbox. The arena is what
+gives battle colour: The Sandbox is brown on purpose, so the packs bring
+the rest. The four planned:
+
+- **Dead Mall: The Food Court.** The first non-brown arena, and the
+  first pack built. The pit is the dry fountain (the wishing well).
+  Stalled escalators are the kickers, kiosks and planters make wall
+  islands, and the old carousel turns as a mover in one corner. It's lit
+  by neon and rack LEDs under the skylight.
+- **Cold Storage: The Moon Pool.** A drilled hall in the ice shelf where
+  the intake pipes drop into the sea. The pit is the moon pool itself,
+  black water. The whole floor is glare ice, so every car slides, with
+  ice kickers and a ring of steam vents.
 
 - **The Boneyard: Hangar 18.** A collapsed hangar round a crashed saucer
   that nobody ever explained. Kickers off the broken wings, and the
@@ -1106,4 +1208,9 @@ shows in the BATTLE arena picker after The Sandbox. The first two:
   The Boneyard and The Seabed as the first two packs.
 - 2026-10-05: BATTLE (`KILL -9`) added as M6 (8.3): a stunt arena (The
   Sandbox), eliminations, and a lives limit as an option. The old M6
-  stretch becomes M8. Packs may carry an arena (19.7).
+  stretch becomes M8. Packs may carry an arena (19.9).
+- 2026-10-05: two more packs. **Dead Mall** (19.7) is a megamall turned
+  datacenter, abandoned as both, with The Food Court as the first
+  non-brown arena; it moves into M7 with The Boneyard. **Cold Storage**
+  (19.8) is set in Antarctica, among AI halls on the last ice and sea,
+  with The Moon Pool as its arena; it goes into M9 with The Seabed.
