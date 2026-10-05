@@ -111,7 +111,7 @@ shared library, the plan, and the hardware checks Adrian runs.
 
 ### M3: Snouty Morph (`snouty-morph`)
 
-- A demoscene mesh (torus knot, blob, Snouty head, Iris mark) that
+- A demoscene mesh (torus knot, Boing ball, Snouty head, Iris mark) that
   follows the hand in 6DoF and deforms with it (reach, jelly, twist,
   punch shockwave); a ghost hand in attract mode, stick fallback.
 - `lib/tof_pose.zig`: hand pose from the 3x3 frame (background model,

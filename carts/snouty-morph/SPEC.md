@@ -106,7 +106,7 @@ cart's ghost hand uses it too, so attract mode runs the real estimator.
 | Mesh | Geometry | Shading | Backdrop |
 |---|---|---|---|
 | KNOT | (2,3) torus knot tube, 64 x 8 = 512 vertices, 1024 faces, rainbow along its length | Gouraud | copper bars + stars |
-| BLOB | icosphere, 3 subdivisions: 642 vertices, 1280 faces, Snouty purple | Gouraud | plasma |
+| BOING | UV sphere, 16 x 32: 482 vertices, 960 faces, a Snouty purple and white checker after the Amiga Boing ball (PLAN deferred question 9) | Gouraud | plasma |
 | SNOUTY | demosnout's low-poly head (74 vertices, 93 faces, 8 materials), one midpoint subdivision | flat | dithered gradient + starfield |
 | IRIS | the Antithesis Iris mark in 3D: two extruded ring arcs and a diamond | flat | copper bars (cool palette) |
 
@@ -186,7 +186,7 @@ on badge builds.
 ## 5. Budget
 
 60 fps, worst frame under 12 ms calibrated busy in badge-bench (72 % of
-16.7 ms, demosnout's rule). Estimate for the 1280-face blob: vertices
+16.7 ms, demosnout's rule). Estimate for the largest mesh (1024 faces): vertices
 ~0.8 ms, normals ~0.6 ms, ~600 visible faces ~1.5 ms setup + ~15 k pixels
 ~1 ms, backdrop 0.5..1.2 ms, pose 0.05 ms: ~5 ms. Knobs in
 `cart/src/config.zig` (tube segments and sides, sphere level, dither,
