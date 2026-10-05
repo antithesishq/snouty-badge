@@ -76,6 +76,25 @@ pub fn build(b: *Build) void {
         }),
     });
     opts.test_step.dependOn(&b.addRunArtifact(lib_tests).step);
+
+    // The party lockstep over the real `badge lobby` (tools/party_e2e.sh,
+    // docs/LOCKSTEP_N.md): a host program, never part of a cart build or
+    // of the default install.
+    const party_e2e = b.addExecutable(.{
+        .name = "party_e2e",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/party_e2e/main.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "lockstep_n", .module = b.createModule(.{ .root_source_file = b.path("lib/lockstep_n.zig") }) },
+                .{ .name = "stein", .module = b.createModule(.{ .root_source_file = b.path("carts/snoutenstein/cart/src/party_host.zig") }) },
+            },
+        }),
+    });
+    b.step("party-e2e", "Build zig-out/bin/party_e2e (N badges over the real badge lobby; run tools/party_e2e.sh)")
+        .dependOn(&b.addInstallArtifact(party_e2e, .{}).step);
 }
 
 fn listed(list: []const u8, c: Cart) bool {
