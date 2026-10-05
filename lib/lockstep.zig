@@ -481,6 +481,17 @@ pub fn Lockstep(comptime L: type, comptime G: type) type {
             return self.phase == .racing or self.phase == .peer_left;
         }
 
+        /// Pump in a loop to ~14 ms after drawing (the pump policy, root
+        /// docs/LOCKSTEP.md): a race runs (`busy`), or the link is
+        /// handshaking. A HELLO is 10 wire bytes, two more than the PIO
+        /// receive FIFO holds, so a badge that pumps once a frame keeps
+        /// only a truncated HELLO (the next one's leading END happens to
+        /// close it). False while searching (no cable) and in the lobby,
+        /// whose messages all fit the FIFO.
+        pub fn wants_pump(self: *const Self) bool {
+            return self.busy() or self.link.state == .handshake;
+        }
+
         /// The input slot this badge drives: 0 for the host, 1 for the guest.
         pub fn local_slot(self: *const Self) u1 {
             return if (self.role == .guest) 1 else 0;

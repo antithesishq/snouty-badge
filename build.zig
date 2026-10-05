@@ -27,6 +27,8 @@ const carts = [_]Cart{
     .{ .dir = "snouty-cycles", .binary = "snouty-cycles", .add = &@import("carts/snouty-cycles/build.zig").add },
     .{ .dir = "paperclips", .binary = "paperclips", .add = &@import("carts/paperclips/build.zig").add },
     .{ .dir = "raspberry-trail", .binary = "raspberry-trail", .add = &@import("carts/raspberry-trail/build.zig").add },
+    .{ .dir = "snouty-theremin", .binary = "snouty-theremin", .add = &@import("carts/snouty-theremin/build.zig").add },
+    .{ .dir = "snouty-morph", .binary = "snouty-morph", .add = &@import("carts/snouty-morph/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
@@ -37,9 +39,9 @@ pub fn build(b: *Build) void {
 
     const opts = common.Options{
         .cart_mode = b.option(common.CartMode, "cart-mode", "ram (default): the usual RAM cart; xip: execute in place from the 256 KB cart flash window (<binary>-xip.uf2); both") orelse .ram,
-        .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze, demosnout, snouty-zero, snouty-flyover); start the emulators (snouty-boy, snouty-gear, snouty-genesis) with their debug overlay on") orelse false,
+        .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze, demosnout, snouty-zero, snouty-flyover, snouty-morph); start the emulators (snouty-boy, snouty-gear, snouty-genesis) with their debug overlay on") orelse false,
         .neopixels = b.option(bool, "neopixels", "Let carts light the neopixels (snoutenstein, snouty-maze, snouty-boy). Default off: the LEDs are painfully bright on hardware, see docs/NEOPIXELS.md") orelse false,
-        .sound = b.option(bool, "sound", "Start every cart with sound on (snoutenstein, snouty-boy, snouty-gear, snouty-genesis, snouty-zero). Default off: carts boot silent and their menu item or button turns sound on, see docs/SOUND.md") orelse false,
+        .sound = b.option(bool, "sound", "Start every cart with sound on (snoutenstein, snouty-boy, snouty-gear, snouty-genesis, snouty-zero, snouty-morph). Default off: carts boot silent and their menu item or button turns sound on, see docs/SOUND.md") orelse false,
         .rom = b.option([]const u8, "rom", "snouty-boy: Game Boy ROM for the simulator and -Drom-source=embed builds (default carts/snouty-boy/tests/roms/dmg-acid2.gb, or roms/2048.gb when that is absent); the default badge build embeds none"),
         .cart_optimize = b.option(std.builtin.OptimizeMode, "cart-optimize", "snouty-boy: optimize mode for the cart (default fast; its SPEC.md section 8)") orelse .fast,
         .test_optimize = b.option(std.builtin.OptimizeMode, "test-optimize", "snouty-boy: optimize mode for host tests (default safe)") orelse .safe,
