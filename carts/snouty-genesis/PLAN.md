@@ -1585,3 +1585,89 @@ author). Design, numbers and the hardware check: docs/LINK_PLAY.md.
 - Open: the two-badge hardware check (docs/LINK_PLAY.md section 8);
   no two-player ROM verified (none on the VM; Mega Bomberman is 1 MB and
   does not fit the RAM cart's drive).
+
+## Sonic 1 DAC fake (2026-10-05)
+
+Branch `genesis/sonic-dac` (worktree `/home/exedev/snouty-badge-sonic-dac`),
+off by default behind **`-Dgenesis_s1dac=true`**. The RAM cart has no Z80
+(it does not fit: +61 KB, and Sonic 1 frames already peak at 32.8 of
+33.3 ms), so Sonic 1's DAC drums and the SEGA chant, the Z80's only job
+in that game, are silent. This is a high-level fake of that one Z80
+driver: no Z80, the driver's behaviour reproduced from what the 68000
+writes. Other games are untouched (detection below), and so is every
+build without the flag (byte-identical behaviour, unchanged goldens).
+
+The driver (read from the Kosinski blob the 68000 uploads at boot, ROM
+0x1364 `lea $A00000,a1` / `bsr KosDec`; the oracle below confirms it):
+
+- Init at Z80 reset: `$1FFD` = `$1FFF` = 0, bank register = 68000
+  0x78000 (nine writes to `$6000`).
+- Idle loop polls `$1FFF` until bit 7 is set, then stores id - $81 there
+  (the handshake: bit 7 clear = taken). id - $81 < 6: a 4-bit DPCM sample
+  from the table at Z80 `$00D6` + 8 x (id - $81): pointer, length in
+  bytes, delay count `c` (byte +4); otherwise (id >= $87): the SEGA
+  chant, raw unsigned 8-bit PCM from banked ROM (window `$9688`, `$6978`
+  bytes, to the end of the window).
+- DPCM: accumulator starts at $80, high nibble first, each nibble adds a
+  signed delta from the 16-entry table at Z80 `$0022`, YM 2A gets the
+  sum. Writes 2B = $80 (DAC on) at the start. Write spacing in Z80
+  T-states: high -> low 99 + 13c, low -> next high 176 + 13c (275 + 26c
+  per byte). `$1FFF` bit 7 is checked once per byte, after the low
+  nibble: a new id cuts the sample there. `$1FFD` bit 7 is set around
+  each two-byte YM access (the 68000's SMPS polls it before touching the
+  YM, ROM 0x71B64) and reads $1F after a sample.
+- SEGA: 220 T-states per sample (16.27 kHz), never checks `$1FFF` (an id
+  sent meanwhile waits for its end), does not write 2B.
+- The 68000 side (SMPS, ROM 0x71CA4): music DAC notes $81-$87 go to
+  `$1FFF` as they are; $88-$8B (timpani) write a delay count (a 4-entry
+  table) to Z80 `$00EA` (sample $83's) and then $83. The title's SEGA
+  writes $88 (ROM 0x71FAC) and busy-waits ~2 s with the bus released.
+
+Design (`core/s1dac.zig`, only in the RAM cart variant with the flag):
+
+- Detection at `reset`: header serial `GM 00004049-01` (REV01) or
+  `GM 00001009-00` (REV00) and its checksum word, plus the 68000 code at
+  the two `$A01FFF` writers and the driver upload site. Off: everything
+  as before (the stub, Z80 RAM reads 0).
+- Z80 RAM lives in `Md.sram` (8 KB in the RAM cart, `rom.sram_max`):
+  Sonic 1 declares no SRAM, so the buffer is free. 68000 reads return
+  what it wrote (the Kosinski decompressor reads back its output). No new
+  buffer; `.bss` grows by a few dozen bytes of render state.
+- Console side, no new console fields: when the Z80 would be running
+  (BUSREQ and RESET released) and `$1FFF` has bit 7 set, the fake takes
+  the command as the driver would (`$1FFF` = id - $81, `$1FFD` = $1F, 2B =
+  $80 for DPCM) and hands it to the renderer; a Z80 RESET does the
+  driver's init. These write only existing state (Z80 RAM in `sram`, the
+  YM registers, `z80_bank`), from console events only: deterministic, so
+  link play's state hash still agrees between two badges with the flag.
+- Render side (`sound.Sound`, render-only like the synth): the sample
+  being played, its source position, the DPCM accumulator, the T-states
+  to the next DAC write and a pending id. `render_to` steps it per 44.1
+  kHz output sample (81.17 Z80 T-states each) while the Z80 would run,
+  and adds the DAC level per output sample instead of through the FM's
+  held 14.7 kHz value. BUSREQ / RESET changes catch the render up first,
+  so the DAC pauses while the 68000 holds the bus, as the real Z80 does.
+  Nothing renders when the Sound row is off.
+- Build: `-Dgenesis_s1dac=true` sets `build_options.s1dac` for the RAM
+  cart only; the XIP cart and the wasm keep the real Z80.
+
+Oracle and checks:
+
+- `tools/s1dac_trace.zig`, `zig build s1dac-trace -Dcart=snouty-genesis`:
+  host programs over the full core (real Z80) and over the RAM core with
+  the fake, both with a host-only probe (`build_options.probe`), running
+  Sonic 1 from `~/roms/genesis/sonic1.bin` (skipped when absent):
+  SEGA, title, Green Hill, then every music id from the sound driver's
+  queue. They log every `$A01FFF` write, BUSREQ/RESET, each DAC write
+  with its time and render WAVs to a directory given on the command
+  line. `tools/s1dac_compare.py` lines the two up (values in order,
+  sample spacing, start latency). Nothing derived from the ROM is
+  committed.
+- Host tests (`tests/s1dac_unit.zig`, a RAM core with the flag): DPCM
+  decoding and timing from a synthetic driver image, the handshake,
+  the pause under BUSREQ, detection refusing other ROMs; Sonic 1 checks
+  skip without the ROM.
+- badge-bench, RAM ELF, `snd_sonic1.json` and `ff_sonic1.json`, sound on,
+  flag off vs on: worst update under 33.3 ms, mean about unchanged.
+- Sizes: `arm-none-eabi-size -A` before and after; the link must keep
+  the 20 KB stack reservation.
