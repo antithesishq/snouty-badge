@@ -58,6 +58,7 @@ badge-bench <cart.elf> [--script FILE.json] [--press BTN:T1-T2 ...] [--frames N]
             [--max-frame-ms 1000] [--traces N] [--config FILE | --no-config]
             [--progress] [--calibrate FILE.toml] [--flash-cycles N]
             [--romfs IMAGE] [--flash-read-cycles N] [--wav FILE.wav]
+            [--saves FILE.json | --no-saves] [--no-save-rate-limit] [--exit-at N]
 ```
 
 Put the ELF first (`--png` takes an optional number and would otherwise
@@ -87,6 +88,10 @@ try to read the ELF path as one).
 | `--flash-read-cycles N` | Add N cycles per data load from the `--romfs` image. Default 0 (zero-wait, like SRAM). |
 | `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Default: `calibrate/calibration.toml` when it exists (the header says so). See Calibration. |
 | `--no-calibrate` | The raw model (default costs, no stall, no contention): one `ms` column, the historical floor. `tests/test_reflections.sh` uses it. |
+| `--saves FILE.json` | Serve cart saves (the patched OS's message `0x2C`, see Cart saves) from this JSON store: created if missing, rewritten after every commit, so saves carry over from one run to the next. Default: an empty in-memory store; requests are answered either way. |
+| `--no-saves` | Stock firmware: save requests are never answered, so `lib/save.zig`'s probe gives up after 250 modelled ms and the cart sees saves unsupported. |
+| `--no-save-rate-limit` | Turn off the store's commit rate limit (8 burst, one more per 10 s). |
+| `--exit-at N` | Before update N, do what the saves OS's settings "Exit cart" does: write 1 to the exit word the cart registered (`save.watchExit()`), keep serving, and stop the run when the cart writes 2 (`save.exitReady()`) or after 3 s of wall time; at once if it registered none. The report's `exit hook:` line says which. |
 | `--wav FILE.wav` | Write what the newer firmware's audio mixer took from the cart's stream, from its `CART_START_AUDIO` on: 8-bit unsigned mono 44,100 Hz, silence (128) wherever a 512-sample buffer found the ring short. Nothing is written for a cart that never starts audio. See Streaming audio. |
 
 Exit status: 0 all frames ran; 1 setup error (unreadable or non-ARM ELF,
@@ -143,6 +148,47 @@ outside SRAM) is mixed as silence with its tail untouched and warned
 about. `--wav FILE.wav` writes the mixed stream. Unit tests:
 `tests/test_audio.py`.
 
+## Cart saves
+
+The patched SYCL OS (sycl-badge branch `cart-saves`, its SAVES_PLAN.md
+is the ABI v1 spec; `lib/save.zig` is the cart side, root
+`docs/SAVES.md`) stores small blobs for carts. A cart fills a 64-byte
+`SaveRequest` in its RAM and sends the FIFO word `(0x2C << 24) |
+((addr - 0x20000000) >> 2)`; the OS answers through the struct only
+(`status`, `result`, `state = done`). `badge_bench/saves.py` serves it:
+
+- `SaveService` validates the request as the OS does (magic, op, key
+  1..32 bytes of 0x20..0x7E, `buf..buf+len` inside `0x20020000..0x20080000`,
+  blob 1..64 KB) and answers `probe` (version 1), `read`, `write`,
+  `delete`, `stat`, `list` and `exit_watch` with the plan's status codes.
+- `MemoryStore` / `FileStore` (`--saves`) hold the blobs with the store's
+  rules: 62 data blocks of 4 KB, 63 keys, a write needs ceil(len/4096)
+  free blocks while the old copy still exists (copy-on-write), a write of
+  the bytes already stored is `ok` and touches nothing, commits take a
+  token from a bucket of 8 refilled one per 10 s of wall time. The store
+  is behind a small `Store` interface so the OS's own store logic can
+  replace it.
+- Flash time: a commit charges the cart (ceil(len/4096) + 1) x 55 ms for
+  a write, 55 ms for a delete, 0 for anything else, as cycles added while
+  the cart is parked in its wait loop. That frame shows `[save N ms]` in
+  the table and carries `save_ms` in `bench.json`; the hang limit does
+  not count it.
+
+Report line, and `bench.json` `saves` (every request: frame, op, key,
+length, status, result, flash ms) and `exit`:
+
+```
+saves: 5 requests (probe 1, exit_watch 1, write 2, read 1); 1 commit, modelled flash 110 ms charged to the cart; store in memory
+  stored: link/test (3,000 B)
+exit hook: requested before frame 15; cart ready before frame 16 (122 ms wall)
+```
+
+Tests: `tests/test_saves.py` builds `lib/save.zig`'s badge backend for the
+M33 (`tests/save_harness/`, needs zig) and runs it under unicorn against
+the service: probe, round trips, the flash time charged with PRIMASK set,
+store rules, the exit hook, the file store across two boots and
+`--no-saves` (the 250 ms probe timeout).
+
 ## RAM carts and XIP carts
 
 A RAM cart ELF (`cart_ram.ld`, the default build) is loaded into SRAM by
@@ -191,7 +237,7 @@ ids). All in `badge_bench/os_fake.py`.
 |---|---|---|
 | `0x20000000..0x20080000` | SRAM | plain RAM; the ELF's PT_LOAD segments are copied in, `.bss` zeroed, SP = `0x20080000` (`__stack_top__`), LR = sentinel, PC = `_start` |
 | `0x20020000` | `abi.ipc_data` | two framebuffers (`0x20020000`, `0x2002A000`), tracy ring, trace buffer (`+0x15000`), neopixels (`+0x15080`), controls (`+0x15090`), light (`0x800`) and battery (`0xFFF`) levels, dirty rect, tone fields, tracy words (left 0: tracy inactive), vsync flags/ms, clear colour |
-| `0xD0000050/54/58` | SIO FIFO | `SYNC_TIME_REQ_CLR` -> `SYNC_TIME_ACK_CLR`; `SYNC_TIME_REQ_TIME` -> two words (the modelled cycle count); every present message (`0x28` tag, `PresentFlags`) or legacy `FRAMEBUFFER_READY` -> `FRAMEBUFFER_DONE` at once (the LCD flush is instant); `CART_TRACE` (`0x26`, the string in the trace buffer is printed); `CART_TONE` (`0x27`) recorded with the tone fields; the newer firmware's whole words `CART_VOLUME` (`0x29000000`, recorded with `global_volume`), `CART_STOP_AUDIO` (`0x29000001`, answered `0x29000003`, the mixer stops) and `CART_START_AUDIO` (`0x29000002`, the mixer starts: Streaming audio); `CART_RUNNING/FINISHED/CRASHED` recorded (the last two stop the run); anything else (other `0x29` words too) recorded as unknown |
+| `0xD0000050/54/58` | SIO FIFO | `SYNC_TIME_REQ_CLR` -> `SYNC_TIME_ACK_CLR`; `SYNC_TIME_REQ_TIME` -> two words (the modelled cycle count); every present message (`0x28` tag, `PresentFlags`) or legacy `FRAMEBUFFER_READY` -> `FRAMEBUFFER_DONE` at once (the LCD flush is instant); `CART_TRACE` (`0x26`, the string in the trace buffer is printed); `CART_TONE` (`0x27`) recorded with the tone fields; the newer firmware's whole words `CART_VOLUME` (`0x29000000`, recorded with `global_volume`), `CART_STOP_AUDIO` (`0x29000001`, answered `0x29000003`, the mixer stops) and `CART_START_AUDIO` (`0x29000002`, the mixer starts: Streaming audio); `CART_RUNNING/FINISHED/CRASHED` recorded (the last two stop the run); `0x2C` save requests served (Cart saves; ignored with `--no-saves`); anything else (other `0x29` words too) recorded as unknown |
 | `0xD0000000`, `0xD0000100..17C` | SIO CPUID, spinlocks | CPUID reads 1 (core 1); spinlocks work (used by the tracy path) |
 | `0x400B0008/0C/24/28` | TIMER0 TIMEHR/TIMELR/TIMERAWH/TIMERAWL | microseconds = modelled cycles / 150, TIMELR latches TIMEHR as on the RP2350. `micros_since_boot()` therefore reads modelled time and self-timing carts behave as they would at that speed |
 | `0xE0001000/04` | DWT CTRL, CYCCNT | CYCCNT = modelled cycles |
@@ -551,6 +597,7 @@ tests/test_reflections.sh
 tests/test_lcd_scrub.sh        # after zig build -Dcart=snouty-lynx
 .venv/bin/python tests/test_audio.py           # the streaming-audio consumer
 .venv/bin/python tests/test_neopixel_warning.py
+.venv/bin/python tests/test_saves.py           # lib/save.zig against the save service
 ./bench.sh ../zig-out/firmware/snouty-bugs.elf   --every 60 --png --symbols --json --listing
 ./bench.sh ../zig-out/firmware/snouty-boy.elf     --every 60 --png --symbols --json --listing
 ./bench.sh ../zig-out/firmware/snouty-maze.elf   --every 60 --png --symbols --json --listing
@@ -565,7 +612,8 @@ badge_bench/        cli.py (arguments), run.py (emulation and frame windows), os
                     (the fake OS), model.py (cycle model, unicorn/capstone setup), elf.py
                     (ELF, symbols, DWARF lines), script.py (input), config.py (toml),
                     report.py (tables, stats, hot list, JSON), audio.py (the newer
-                    firmware's streaming-audio mixer), png.py, listing.py,
+                    firmware's streaming-audio mixer), saves.py (the saves OS's
+                    0x2C requests and store), png.py, listing.py,
                     classes.py (model classes and default costs, no emulator imports)
 carts/<name>.toml   per-cart defaults (not the repository's carts/ sources)
 calibrate/          badge-calibrate cart, fit.py, the badge capture and calibration.toml
@@ -573,6 +621,7 @@ calibrate/          badge-calibrate cart, fit.py, the badge capture and calibrat
 tests/              test_reflections.sh (validation 1, --calibrate FILE for calibrated ms),
                     test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate),
                     test_neopixel_warning.py (neopixel guard on synthetic frames),
-                    test_audio.py (the audio consumer on a fake ring)
+                    test_audio.py (the audio consumer on a fake ring),
+                    test_saves.py + save_harness/ (lib/save.zig against saves.py)
 out/                default output directory (gitignored)
 ```

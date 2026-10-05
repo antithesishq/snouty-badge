@@ -34,6 +34,7 @@ import struct
 
 from . import audio as AU
 from . import model as M
+from . import saves as SV
 
 SRAM_BASE, SRAM_SIZE = 0x20000000, 0x80000
 SCRATCH_BASE, SCRATCH_SIZE = 0x20080000, 0x2000
@@ -80,6 +81,8 @@ SYNC_TIME_REQ_CLR, SYNC_TIME_ACK_CLR, SYNC_TIME_REQ_TIME = 0x2a000001, 0x2a00000
 FRAMEBUFFER_READY, FRAMEBUFFER_DONE = 0x25000001, 0x25000002
 CART_RUNNING, CART_FINISHED, CART_CRASHED = 0x20000001, 0x20000002, 0x20000003
 T_CART_TRACE, T_CART_TONE, T_FRAMEBUFFER_READY_V2 = 0x26, 0x27, 0x28
+# Type 0x2C is CART_SAVE_REQ of the patched saves OS (saves.py): served
+# when FakeOS.saves is a SaveService, ignored (stock firmware) when None.
 # Type 0x29 is audio in the newer firmware, compared as whole words
 # (upstream 3392a1b kernel.zig handle_cart_message, os_abi.zig): 0x29000000
 # CART_VOLUME, 0x29000001 CART_STOP_AUDIO (acked with 0x29000003),
@@ -156,11 +159,16 @@ class I2C0Fake:
 class FakeOS:
     """Serves the peripherals and the FIFO protocol. `host` is the runner; it
     gets on_present(flags), on_cyccnt_read() and on_message(kind, ...) calls
-    and provides cycles() (modelled cycles so far)."""
+    and provides cycles() (modelled cycles so far). With `save_store` (a
+    saves.Store) the 0x2C save requests are served and their flash time is
+    charged through host.stall(ms) (host.wall_ms() is the OS clock); with
+    None they are ignored, as stock firmware does."""
 
-    def __init__(self, mu, host, seed=1):
+    def __init__(self, mu, host, seed=1, save_store=None):
         self.mu = mu
         self.host = host
+        self.saves = SV.SaveService(mu, save_store) if save_store is not None else None
+        self.saves_ignored = 0
         self.rng = random.Random(seed)
         self.to_cart = []            # FIFO words queued for the cart
         self.sync_state = 'boot'     # boot -> cleared -> timed
@@ -369,6 +377,14 @@ class FakeOS:
             self.host.on_message('volume', v)
             return
         kind, payload = w >> 24, w & 0xffffff
+        if kind == SV.MSG_TYPE:
+            if self.saves is None:
+                self.saves_ignored += 1      # stock firmware: never answered
+                return
+            ms = self.saves.handle(payload, self.host.wall_ms(), self.host.current_frame())
+            if ms:
+                self.host.stall(ms)
+            return
         if kind == T_FRAMEBUFFER_READY_V2:
             # PresentFlags: bit0 framebuffer index, bit1 dirty rect, bit2
             # vsync updated, bit3 clear frame. The LCD flush is instant here.
