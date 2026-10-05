@@ -165,6 +165,9 @@ m3_scrub busy ms 6.18 / 9.50 / 10.78 in both, 0 frames over.
 
 ## 5. Hardware check
 
+**Passed 2026-10-05** (Adrian, two badges: "works great"), with the
+DMA receive ring on, its first run on hardware. The steps, for a rerun:
+
 Two badges with this build and the same 2-player ComLynx ROM on both
 drives (Warbirds, `~/roms/lynx/Warbirds.lnx`, or another from COMLYNX.md
 section 8), the probe kit's JST-SH 3-pin cable between the UART headers.

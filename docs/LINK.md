@@ -85,7 +85,8 @@ both orientations that counts fights and lost bytes.
   (`reset_after_cart`); on older firmware the channel would keep writing
   into the next cart's RAM. Off by default, and no game depends on it
   (Adrian: occasional loss is fine, no firmware update required). The
-  test cart's Up switches it.
+  test cart's Up switches it. Snouty Lynx's link cable runs with it on
+  and passed on two badges (2026-10-05, carts/snouty-lynx/docs/CABLE.md).
 - **Delivery is best effort.** A dropped packet is gone (`stats`
   counts CRC errors and framing errors). Lockstep games resend or carry
   enough state to recover.

@@ -758,6 +758,9 @@ unchanged). docs/CABLE.md is the long form.
 
 ## Status
 
+- 2026-10-05: M7 hardware check passed: Adrian played the link cable on
+  two badges, "works great" (docs/CABLE.md section 5), the DMA receive
+  ring's first hardware run.
 - 2026-10-05: M7 Link cable built on `lynx/link` (docs/CABLE.md). Two
   host Lynxes on the virtual cable: token ring 120 msg/s clean, every
   frame delivered through 0.5% byte loss, Warbirds (local dump) finds 2
@@ -765,7 +768,7 @@ unchanged). docs/CABLE.md is the long form.
   bench unchanged (m3_scrub 6.17 / 9.49 / 10.76 -> 6.18 / 9.50 / 10.78,
   m2_play 6.97 / 9.09 / 10.34 -> 6.98 / 9.11 / 10.36). RAM cart .text
   105,772 -> 127,772 B, scrub arena 73,324 -> 49,252 B (a third less
-  history unlinked). Hardware check open (docs/CABLE.md section 5).
+  history unlinked). Hardware check passed the same day (above).
 
 - 2026-10-04: Chorded rewind done on `emu-ff-lynx` (Left during the
   fast-forward hold; "Chorded rewind" at the end of this file).
