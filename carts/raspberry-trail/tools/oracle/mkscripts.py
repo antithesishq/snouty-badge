@@ -313,6 +313,17 @@ ENOUGH CLOTHING, then the illness subroutine).""",
       queues={190: ["NO"], 760: ["3"], 860: ["280"], 940: ["200"], 990: ["60"],
               1040: ["10"], 1090: ["120"]},
       outcome="arrived", lines=(4510,)),
+    Q("edge-numbers",
+      """Numbers the badge UI cannot enter but the listing takes: a negative
+marksman claim (D9=-3 makes every shot 4 s slower), an oxen amount beyond
+32 bits, a leading plus sign, negative and large menu choices (2180: not 1
+means continue; 2100: out of range means continue; eating and riders ask
+again).""",
+      queues={190: ["NO"], 760: ["-3"], 860: ["99999999999", "+260"],
+              940: ["150"], 990: ["80"], 1040: ["90"], 1090: ["100"],
+              2180: ["-1", "200"], 2100: ["-5", "300"], 2770: ["-1", "255", "2"],
+              3000: ["-2", "3"]},
+      lines=(910, 2900)),
     Q("format-eof",
       """Transcript format: the script ends before the game does (X eof).""",
       queues={190: ["NO"], 760: ["3"], 860: ["250"], 940: ["150"]}, stop_after=4),

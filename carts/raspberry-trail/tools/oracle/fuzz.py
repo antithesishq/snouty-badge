@@ -431,7 +431,7 @@ def main(argv):
             print("  %-16s %5d" % (name, outcomes[name]))
     missing_outcomes = [o for o in basic.OUTCOMES if not outcomes.get(o)]
     print("profiles: " + ", ".join("%s %d" % kv for kv in sorted(profiles.items())))
-    print("turns reached (D3 at the end): " + ", ".join("%d:%d" % kv for kv in sorted(turns.items())))
+    print("D3 at the end (the turn; the day of the month after an arrival): " + ", ".join("%d:%d" % kv for kv in sorted(turns.items())))
     print("\nevents (games reaching the line):")
     for ln, name in EVENTS.items():
         print("  %5d %-36s %5d" % (ln, name, events[ln]))

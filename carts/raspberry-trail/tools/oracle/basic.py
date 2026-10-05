@@ -81,7 +81,7 @@ OUTCOMES = ("arrived", "starved", "no_doctor_money", "no_medicine",
             "pneumonia", "injuries", "winter", "massacred", "snakebite")
 
 WRONG_WORD = "XXXX"
-INT_RE = re.compile(r"-?[0-9]+$")
+INT_RE = re.compile(r"[-+]?[0-9]+$")
 
 
 def fmt_var(x):
