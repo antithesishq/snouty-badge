@@ -37,6 +37,12 @@ pub const Color = packed struct(u16) {
     }
 };
 
+/// A colour of the master palette by name, e.g. `art.color("rasp")`,
+/// `art.color("paper")`, `art.color("ink")` (ASSETS.md lists them).
+pub fn color(comptime name: []const u8) Color {
+    return @bitCast(@field(gen.master, name));
+}
+
 pub const Size = struct { w: u16, h: u16 };
 
 pub const screen: Rect = .{ .x = 0, .y = 0, .w = 160, .h = 128 };

@@ -619,24 +619,24 @@ kkkkkk.
     return [cv]
 
 
-@pic("mark_pass", "Trail strip marker: South Pass (a bare mountain pass)")
+@pic("mark_pass", "Trail strip marker: South Pass (a grassy saddle, no snow)")
 def p_mark_pass():
     cv = Canvas(11, 9)
     cv.sprite(0, 0, """
-...k.......
-..kgk...k..
-.kgggk.kgk.
-.kgggkkgggk
-kgggggkgggk
-kggggggggggk
-""".replace("kggggggggggk", "kgggggggggk"), {"k": INK, "g": WOOD})
-    cv.sprite(0, 6, """
-kgggggggggk
-kgggggggggk
-kkkkkkkkkkk
-""", {"k": INK, "g": WOOD})
-    cv.px(3, 1, WOOD_L)
-    cv.px(8, 2, WOOD_L)
+.kk......kk
+kggk....kggk
+kgggk..kgggk
+kggggkkggggk
+kgggggwgggggk
+kggggwwwggggk
+kgggwwwwwgggk
+kgggwwwwwgggk
+kkkkkkkkkkkkk
+""".replace("kgggggwgggggk", "kggggwggggk").replace("kggggwwwggggk", "kgggwwwgggk")
+       .replace("kgggwwwwwgggk", "kggwwwwwggk").replace(".kk......kk", ".kk.....kk.")
+       .replace("kggk....kggk", "kggk...kggk").replace("kgggk..kgggk", "kgggk.kgggk")
+       .replace("kggggkkggggk", "kggggkggggk").replace("kkkkkkkkkkkkk", "kkkkkkkkkkk"),
+        {"k": INK, "g": LEAF, "w": WOOD_L})
     return [cv]
 
 
@@ -1384,7 +1384,7 @@ def p_v_helpful_food():
     return [done(cv)]
 
 
-@pic("v_hunt_result", "Vignette: the hunt's result, a haunch of meat and the rifle")
+@pic("v_hunt_result", "Vignette: the hunt's result, a roast drumstick and the rifle")
 def p_v_hunt_result():
     cv = vig(PAPER, WOOD, 28, PAPER, BROWN)
     b = Canvas(VW, VH)
@@ -1638,22 +1638,31 @@ def p_muzzle_flash():
             pts.append((8.5 + math.cos(a) * rad, 8.5 + math.sin(a) * rad))
         cv.poly(pts, FIRE_O)
         cv.poly([(8.5 + (x - 8.5) * 0.6, 8.5 + (y - 8.5) * 0.6) for x, y in pts], FIRE_Y)
-        cv.disk(8, 8, 3 if fr == 0 else 2, WHITE)
+        cv.disk(8, 8, 2 if fr == 0 else 1, WHITE)
         frames.append(cv)
     return frames
 
 
 @pic("mark_hit", "Shot result: a hit, raspberry starburst")
 def p_mark_hit():
-    cv = Canvas(18, 18)
-    pts = []
-    for k in range(14):
-        a = math.pi * 2 * k / 14
-        rad = 8 if k % 2 == 0 else 4
-        pts.append((8.5 + math.cos(a) * rad, 8.5 + math.sin(a) * rad))
-    cv.poly(pts, RASP)
-    cv.poly([(8.5 + (x - 8.5) * 0.55, 8.5 + (y - 8.5) * 0.55) for x, y in pts], RASP_L)
-    cv.disk(8, 8, 1, WHITE)
+    cv = Canvas(17, 17)
+    cv.sprite(1, 1, """
+.......r.......
+...r...r...r...
+....r.rrr.r....
+.....rrrrr.....
+...rrrlllrrr...
+..rrrllwllrrr..
+.rrrllwwwllrrr.
+rrrrlwwwwwlrrrr
+.rrrllwwwllrrr.
+..rrrllwllrrr..
+...rrrlllrrr...
+.....rrrrr.....
+....r.rrr.r....
+...r...r...r...
+.......r.......
+""", {"r": RASP, "l": RASP_L, "w": WHITE})
     cv.outline(INK)
     return [cv]
 
@@ -1725,7 +1734,8 @@ def p_tombstone():
                 127 - round(math.cos(rr) * 6), 71 - round(math.sin(rr) * 6), BROWN)
     cv.disk(127, 71, 1, BROWN)
     cv.fill(rect(130, 56, 140, 66) & border(ellipse(116, 58, 138, 84)), PINE if False else DUSK_P)
-    LAYOUT["tomb_text"] = (x0 + 6, y0 + 30, x1 - x0 - 11, 40)
+    tx, ty, tw, th = LAYOUT["tomb_text"] = (x0 + 6, y0 + 30, x1 - x0 - 11, 40)
+    assert all(cv.p[y][x] == GREY_L for y in range(ty, ty + th) for x in range(tx, tx + tw)), "tomb_text not blank"
     return [cv]
 
 
@@ -1922,6 +1932,10 @@ def render(pics):
     for k in sorted(LAYOUT):
         x, y, w, h = LAYOUT[k]
         lines.append("    pub const %s: Rect = .{ .x = %d, .y = %d, .w = %d, .h = %d };" % (k, x, y, w, h))
+    lines += ["};", "", "/// The master palette every picture draws from (DisplayColor bits).",
+              "pub const master = struct {"]
+    for k, v in MASTER.items():
+        lines.append("    pub const %s: u16 = 0x%04X; // #%06X" % (k.lower(), display_bits(rgb(v)), v))
     lines += ["};", "", "pub const data: *const [%d]u8 = @embedFile(\"art.bin\");" % len(blob), ""]
     return "\n".join(lines), bytes(blob)
 
@@ -1991,48 +2005,61 @@ def checker_bg(w, h):
 
 
 def sheet(pics, path):
+    """Contact sheet: every frame at 1x, then the composed title and every
+    frame at 3x, each labelled with name, size and stored bytes."""
     from PIL import Image, ImageDraw
 
-    pad = 8
-    width = 1100
-    # layout rows greedily
-    items = []
-    for p in pics:
-        n = len(p["frames"])
-        scale = 3 if p["w"] <= 160 else 2
-        w1 = n * (p["w"] + 4)
-        w3 = n * (p["w"] * scale + 6)
-        items.append((p, scale, max(w1 + w3 + 12, 120), p["h"] * scale + 14))
-    x = y = pad
-    rowh = 0
-    places = []
-    for p, scale, iw, ih in items:
-        if x + iw > width - pad:
-            x = pad
-            y += rowh + pad
-            rowh = 0
-        places.append((p, scale, x, y))
-        x += iw + pad
-        rowh = max(rowh, ih)
-    height = y + rowh + pad
-    im = Image.new("RGBA", (width, height), (0x2A, 0x24, 0x20, 255))
+    width, pad = 1040, 10
+    ink, paper, dim = (0x1A, 0x14, 0x10, 255), (0xF4, 0xE9, 0xD0, 255), (0xBD, 0xB6, 0xA6, 255)
+
+    def flow(items, x0, y0):
+        """items: (label, [Image]) -> placements; returns (placements, bottom)."""
+        out, x, y, rowh = [], x0, y0, 0
+        for label, ims in items:
+            w = sum(i.width for i in ims) + 4 * (len(ims) - 1)
+            w = max(w, 6 * len(label) + 2)
+            h = max(i.height for i in ims) + 12
+            if x + w > width - pad and x > x0:
+                x, y, rowh = x0, y + rowh + pad, 0
+            out.append((label, ims, x, y))
+            x += w + pad
+            rowh = max(rowh, h)
+        return out, y + rowh
+
+    def framed(cv, scale):
+        bg = checker_bg(cv.w * scale, cv.h * scale)
+        bg.alpha_composite(to_image(cv, scale))
+        return bg
+
+    sections = []
+    one = [("%s %dx%d" % (p["name"], p["w"], p["h"]), [framed(f, 1) for f in p["frames"]]) for p in pics]
+    sections.append(("1x (actual size on the 160x128 screen)", one))
+    title = composed_title(pics)
+    three = [("title screen as composed (title_bg + title_wagon + title_logo)", [framed(title, 3)])]
+    three += [("%s %dx%d, %d fr, %d col, %d B" % (p["name"], p["w"], p["h"], len(p["frames"]), len(p["pal"]), p["bytes"]),
+               [framed(f, 3) for f in p["frames"]]) for p in pics]
+    sections.append(("3x", three))
+    total = sum(p["bytes"] for p in pics)
+
+    placed, y = [], pad + 14
+    for head, items in sections:
+        placed.append((head, None, pad, y))
+        pl, y = flow(items, pad, y + 14)
+        placed += pl
+        y += pad * 2
+    im = Image.new("RGBA", (width, y), (0x2A, 0x24, 0x20, 255))
     d = ImageDraw.Draw(im)
-    for p, scale, x, y in places:
-        label = "%s %dx%d %dB" % (p["name"], p["w"], p["h"], p["bytes"])
-        d.text((x, y), label, fill=(0xF4, 0xE9, 0xD0, 255))
-        yy = y + 12
+    d.text((pad, pad), "The Raspberry Trail art (tools/gen_art.py): %d pictures, %d bytes in the cart" % (len(pics), total),
+           fill=paper)
+    for label, ims, x, yy in placed:
+        if ims is None:
+            d.text((x, yy), label, fill=(0xF2, 0x55, 0x8C, 255))
+            continue
+        d.text((x, yy), label, fill=dim)
         xx = x
-        for f in p["frames"]:
-            bg = checker_bg(f.w, f.h)
-            bg.alpha_composite(to_image(f))
-            im.alpha_composite(bg, (xx, yy))
-            xx += f.w + 4
-        xx += 8
-        for f in p["frames"]:
-            bg = checker_bg(f.w * scale, f.h * scale)
-            bg.alpha_composite(to_image(f, scale))
-            im.alpha_composite(bg, (xx, yy))
-            xx += f.w * scale + 6
+        for i in ims:
+            im.alpha_composite(i, (xx, yy + 12))
+            xx += i.width + 4
     im.convert("RGB").save(path, optimize=True)
 
 
@@ -2052,10 +2079,19 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--png", help="also write each picture at 4x into this directory")
     ap.add_argument("--no-sheet", action="store_true")
+    ap.add_argument("--table", action="store_true", help="print the ASSETS.md picture table")
     a = ap.parse_args()
     pics = build()
     text, blob = render(pics)
     check = render_check(pics)
+    if a.table:
+        print("| Pic | Size | Frames | Colours | Bytes | Depicts |")
+        print("|---|---|---|---|---|---|")
+        for p in pics:
+            print("| `%s` | %dx%d | %d | %d | %d | %s |" % (p["name"], p["w"], p["h"], len(p["frames"]), len(p["pal"]),
+                                                       p["bytes"], p["doc"]))
+        print("| total | | | | %d | |" % (len(blob) + 2 * sum(len(p["pal"]) + 1 for p in pics)))
+        return
     if a.check:
         ok = os.path.exists(OUT_ZIG) and open(OUT_ZIG).read() == text
         ok = ok and os.path.exists(OUT_BIN) and open(OUT_BIN, "rb").read() == blob

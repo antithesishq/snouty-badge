@@ -12,7 +12,7 @@ pub const checks = [_]Check{
     .{ .opaque_px = 74, .sum = 61620500 }, // strip_wagon
     .{ .opaque_px = 74, .sum = 68528184 }, // strip_wagon
     .{ .opaque_px = 33, .sum = 8460520 }, // mark_start
-    .{ .opaque_px = 78, .sum = 50104434 }, // mark_pass
+    .{ .opaque_px = 88, .sum = 58367304 }, // mark_pass
     .{ .opaque_px = 71, .sum = 126925228 }, // mark_mountains
     .{ .opaque_px = 58, .sum = 26329845 }, // mark_fort
     .{ .opaque_px = 60, .sum = 31598084 }, // mark_city
@@ -68,9 +68,9 @@ pub const checks = [_]Check{
     .{ .opaque_px = 12800, .sum = 1690738271 }, // shoot_riders
     .{ .opaque_px = 12800, .sum = 710841726 }, // shoot_bandits
     .{ .opaque_px = 12800, .sum = 1119195958 }, // shoot_animals
-    .{ .opaque_px = 90, .sum = 446796531 }, // muzzle_flash
-    .{ .opaque_px = 53, .sum = 239546592 }, // muzzle_flash
-    .{ .opaque_px = 149, .sum = 469459728 }, // mark_hit
+    .{ .opaque_px = 90, .sum = 337594923 }, // muzzle_flash
+    .{ .opaque_px = 53, .sum = 164754684 }, // muzzle_flash
+    .{ .opaque_px = 161, .sum = 511564640 }, // mark_hit
     .{ .opaque_px = 167, .sum = 1037550005 }, // mark_miss
     .{ .opaque_px = 15360, .sum = 2850317191 }, // tombstone
     .{ .opaque_px = 15360, .sum = 4242013309 }, // arrival
@@ -115,9 +115,9 @@ pub const samples = [_]Sample{
     .{ .pic = 4, .frame = 0, .x = 5, .y = 2, .c = 0x10A3 },
     .{ .pic = 5, .frame = 0, .x = 0, .y = 0, .c = null },
     .{ .pic = 5, .frame = 0, .x = 10, .y = 8, .c = 0x10A3 },
-    .{ .pic = 5, .frame = 0, .x = 5, .y = 4, .c = 0x3B94 },
-    .{ .pic = 5, .frame = 0, .x = 3, .y = 6, .c = 0x3B94 },
-    .{ .pic = 5, .frame = 0, .x = 8, .y = 2, .c = 0x6D19 },
+    .{ .pic = 5, .frame = 0, .x = 5, .y = 4, .c = 0x6D19 },
+    .{ .pic = 5, .frame = 0, .x = 3, .y = 6, .c = 0x6D19 },
+    .{ .pic = 5, .frame = 0, .x = 8, .y = 2, .c = 0x2CC9 },
     .{ .pic = 6, .frame = 0, .x = 0, .y = 0, .c = null },
     .{ .pic = 6, .frame = 0, .x = 10, .y = 8, .c = 0x10A3 },
     .{ .pic = 6, .frame = 0, .x = 5, .y = 4, .c = 0xB3E7 },
@@ -404,10 +404,10 @@ pub const samples = [_]Sample{
     .{ .pic = 43, .frame = 1, .x = 6, .y = 12, .c = null },
     .{ .pic = 43, .frame = 1, .x = 13, .y = 4, .c = null },
     .{ .pic = 44, .frame = 0, .x = 0, .y = 0, .c = null },
-    .{ .pic = 44, .frame = 0, .x = 17, .y = 17, .c = null },
-    .{ .pic = 44, .frame = 0, .x = 9, .y = 9, .c = 0xF7FF },
-    .{ .pic = 44, .frame = 0, .x = 6, .y = 12, .c = 0x585C },
-    .{ .pic = 44, .frame = 0, .x = 13, .y = 4, .c = 0x10A3 },
+    .{ .pic = 44, .frame = 0, .x = 16, .y = 16, .c = null },
+    .{ .pic = 44, .frame = 0, .x = 8, .y = 8, .c = 0xF7FF },
+    .{ .pic = 44, .frame = 0, .x = 5, .y = 11, .c = 0x585C },
+    .{ .pic = 44, .frame = 0, .x = 12, .y = 4, .c = 0x10A3 },
     .{ .pic = 45, .frame = 0, .x = 0, .y = 0, .c = null },
     .{ .pic = 45, .frame = 0, .x = 17, .y = 13, .c = null },
     .{ .pic = 45, .frame = 0, .x = 9, .y = 7, .c = 0xF7FF },

@@ -10,7 +10,7 @@ pub const Pic = enum(u8) {
     title_logo, // 116x40, 1 frame(s): Title words THE RASPBERRY TRAIL, raspberry and cream woodtype
     strip_wagon, // 12x9, 2 frame(s): Trail strip wagon icon facing right, 2 wheel frames
     mark_start, // 7x9, 1 frame(s): Trail strip marker: Independence (a signpost)
-    mark_pass, // 11x9, 1 frame(s): Trail strip marker: South Pass (a bare mountain pass)
+    mark_pass, // 11x9, 1 frame(s): Trail strip marker: South Pass (a grassy saddle, no snow)
     mark_mountains, // 11x9, 1 frame(s): Trail strip marker: Blue Mountains (snowy blue peaks)
     mark_fort, // 9x9, 1 frame(s): Trail strip marker: a fort (palisade and flag)
     mark_city, // 11x9, 1 frame(s): Trail strip marker: Oregon City (cabin under a pine)
@@ -41,7 +41,7 @@ pub const Pic = enum(u8) {
     v_bandits, // 64x40, 1 frame(s): Vignette: masked bandits in the moonlight
     v_illness, // 64x40, 1 frame(s): Vignette: illness, a medicine bottle and spoon
     v_helpful_food, // 64x40, 1 frame(s): Vignette: a basket of wild raspberries and berries (no people)
-    v_hunt_result, // 64x40, 1 frame(s): Vignette: the hunt's result, a haunch of meat and the rifle
+    v_hunt_result, // 64x40, 1 frame(s): Vignette: the hunt's result, a roast drumstick and the rifle
     v_south_pass, // 64x40, 1 frame(s): Vignette: South Pass, a wide grassy saddle with no snow
     v_doctor, // 64x40, 1 frame(s): Vignette: the doctor's bag and a bandage roll
     shoot_hunt, // 160x80, 1 frame(s): Shooting scene: hunting, a buffalo and a deer on the prairie
@@ -49,7 +49,7 @@ pub const Pic = enum(u8) {
     shoot_bandits, // 160x80, 1 frame(s): Shooting scene: bandits behind the rocks at night
     shoot_animals, // 160x80, 1 frame(s): Shooting scene: wild animals, wolves at dusk
     muzzle_flash, // 18x18, 2 frame(s): Shot sprite: muzzle flash, 2 frames
-    mark_hit, // 18x18, 1 frame(s): Shot result: a hit, raspberry starburst
+    mark_hit, // 17x17, 1 frame(s): Shot result: a hit, raspberry starburst
     mark_miss, // 18x14, 1 frame(s): Shot result: a miss, a puff of dust
     tombstone, // 160x96, 1 frame(s): Death: a tombstone on the prairie at dusk; the UI writes the cause on it
     arrival, // 160x96, 1 frame(s): Arrival: Oregon City, cabins by the river under Mt Hood
@@ -103,7 +103,7 @@ pub const infos = [_]Info{
     .{ .w = 160, .h = 80, .frames = 1, .frame = 61, .pal = 388, .colors = 13 }, // shoot_bandits
     .{ .w = 160, .h = 80, .frames = 1, .frame = 62, .pal = 401, .colors = 9 }, // shoot_animals
     .{ .w = 18, .h = 18, .frames = 2, .frame = 63, .pal = 410, .colors = 4 }, // muzzle_flash
-    .{ .w = 18, .h = 18, .frames = 1, .frame = 65, .pal = 414, .colors = 5 }, // mark_hit
+    .{ .w = 17, .h = 17, .frames = 1, .frame = 65, .pal = 414, .colors = 5 }, // mark_hit
     .{ .w = 18, .h = 14, .frames = 1, .frame = 66, .pal = 419, .colors = 6 }, // mark_miss
     .{ .w = 160, .h = 96, .frames = 1, .frame = 67, .pal = 425, .colors = 16 }, // tombstone
     .{ .w = 160, .h = 96, .frames = 1, .frame = 68, .pal = 441, .colors = 16 }, // arrival
@@ -117,68 +117,68 @@ pub const frames = [_]Frame{
     .{ .off = 4240, .len = 45, .rle = true },
     .{ .off = 4285, .len = 45, .rle = true },
     .{ .off = 4330, .len = 23, .rle = true },
-    .{ .off = 4353, .len = 32, .rle = true },
-    .{ .off = 4385, .len = 36, .rle = true },
-    .{ .off = 4421, .len = 32, .rle = true },
-    .{ .off = 4453, .len = 50, .rle = false },
-    .{ .off = 4503, .len = 63, .rle = true },
-    .{ .off = 4566, .len = 63, .rle = true },
-    .{ .off = 4629, .len = 61, .rle = true },
-    .{ .off = 4690, .len = 63, .rle = true },
-    .{ .off = 4753, .len = 63, .rle = true },
-    .{ .off = 4816, .len = 61, .rle = true },
-    .{ .off = 4877, .len = 63, .rle = true },
-    .{ .off = 4940, .len = 63, .rle = true },
-    .{ .off = 5003, .len = 61, .rle = true },
-    .{ .off = 5064, .len = 63, .rle = true },
-    .{ .off = 5127, .len = 63, .rle = true },
-    .{ .off = 5190, .len = 61, .rle = true },
-    .{ .off = 5251, .len = 73, .rle = true },
-    .{ .off = 5324, .len = 73, .rle = true },
-    .{ .off = 5397, .len = 71, .rle = true },
-    .{ .off = 5468, .len = 71, .rle = true },
-    .{ .off = 5539, .len = 71, .rle = true },
-    .{ .off = 5610, .len = 69, .rle = true },
-    .{ .off = 5679, .len = 426, .rle = true },
-    .{ .off = 6105, .len = 386, .rle = true },
-    .{ .off = 6491, .len = 346, .rle = true },
-    .{ .off = 6837, .len = 682, .rle = true },
-    .{ .off = 7519, .len = 518, .rle = true },
-    .{ .off = 8037, .len = 518, .rle = true },
-    .{ .off = 8555, .len = 720, .rle = true },
-    .{ .off = 9275, .len = 519, .rle = true },
-    .{ .off = 9794, .len = 517, .rle = true },
-    .{ .off = 10311, .len = 460, .rle = true },
-    .{ .off = 10771, .len = 475, .rle = true },
-    .{ .off = 11246, .len = 569, .rle = true },
-    .{ .off = 11815, .len = 601, .rle = true },
-    .{ .off = 12416, .len = 871, .rle = true },
-    .{ .off = 13287, .len = 492, .rle = true },
-    .{ .off = 13779, .len = 442, .rle = true },
-    .{ .off = 14221, .len = 443, .rle = true },
-    .{ .off = 14664, .len = 281, .rle = true },
-    .{ .off = 14945, .len = 494, .rle = true },
-    .{ .off = 15439, .len = 390, .rle = true },
-    .{ .off = 15829, .len = 399, .rle = true },
-    .{ .off = 16228, .len = 521, .rle = true },
-    .{ .off = 16749, .len = 813, .rle = true },
-    .{ .off = 17562, .len = 490, .rle = true },
-    .{ .off = 18052, .len = 498, .rle = true },
-    .{ .off = 18550, .len = 427, .rle = true },
-    .{ .off = 18977, .len = 704, .rle = true },
-    .{ .off = 19681, .len = 414, .rle = true },
-    .{ .off = 20095, .len = 343, .rle = true },
-    .{ .off = 20438, .len = 374, .rle = true },
-    .{ .off = 20812, .len = 1262, .rle = true },
-    .{ .off = 22074, .len = 1576, .rle = true },
-    .{ .off = 23650, .len = 1056, .rle = true },
-    .{ .off = 24706, .len = 1038, .rle = true },
-    .{ .off = 25744, .len = 79, .rle = true },
-    .{ .off = 25823, .len = 43, .rle = true },
-    .{ .off = 25866, .len = 97, .rle = true },
-    .{ .off = 25963, .len = 64, .rle = true },
-    .{ .off = 26027, .len = 1207, .rle = true },
-    .{ .off = 27234, .len = 1405, .rle = true },
+    .{ .off = 4353, .len = 38, .rle = true },
+    .{ .off = 4391, .len = 36, .rle = true },
+    .{ .off = 4427, .len = 32, .rle = true },
+    .{ .off = 4459, .len = 50, .rle = false },
+    .{ .off = 4509, .len = 63, .rle = true },
+    .{ .off = 4572, .len = 63, .rle = true },
+    .{ .off = 4635, .len = 61, .rle = true },
+    .{ .off = 4696, .len = 63, .rle = true },
+    .{ .off = 4759, .len = 63, .rle = true },
+    .{ .off = 4822, .len = 61, .rle = true },
+    .{ .off = 4883, .len = 63, .rle = true },
+    .{ .off = 4946, .len = 63, .rle = true },
+    .{ .off = 5009, .len = 61, .rle = true },
+    .{ .off = 5070, .len = 63, .rle = true },
+    .{ .off = 5133, .len = 63, .rle = true },
+    .{ .off = 5196, .len = 61, .rle = true },
+    .{ .off = 5257, .len = 73, .rle = true },
+    .{ .off = 5330, .len = 73, .rle = true },
+    .{ .off = 5403, .len = 71, .rle = true },
+    .{ .off = 5474, .len = 71, .rle = true },
+    .{ .off = 5545, .len = 71, .rle = true },
+    .{ .off = 5616, .len = 69, .rle = true },
+    .{ .off = 5685, .len = 426, .rle = true },
+    .{ .off = 6111, .len = 386, .rle = true },
+    .{ .off = 6497, .len = 346, .rle = true },
+    .{ .off = 6843, .len = 682, .rle = true },
+    .{ .off = 7525, .len = 518, .rle = true },
+    .{ .off = 8043, .len = 518, .rle = true },
+    .{ .off = 8561, .len = 720, .rle = true },
+    .{ .off = 9281, .len = 519, .rle = true },
+    .{ .off = 9800, .len = 517, .rle = true },
+    .{ .off = 10317, .len = 460, .rle = true },
+    .{ .off = 10777, .len = 475, .rle = true },
+    .{ .off = 11252, .len = 569, .rle = true },
+    .{ .off = 11821, .len = 601, .rle = true },
+    .{ .off = 12422, .len = 871, .rle = true },
+    .{ .off = 13293, .len = 492, .rle = true },
+    .{ .off = 13785, .len = 442, .rle = true },
+    .{ .off = 14227, .len = 443, .rle = true },
+    .{ .off = 14670, .len = 281, .rle = true },
+    .{ .off = 14951, .len = 494, .rle = true },
+    .{ .off = 15445, .len = 390, .rle = true },
+    .{ .off = 15835, .len = 399, .rle = true },
+    .{ .off = 16234, .len = 521, .rle = true },
+    .{ .off = 16755, .len = 813, .rle = true },
+    .{ .off = 17568, .len = 490, .rle = true },
+    .{ .off = 18058, .len = 498, .rle = true },
+    .{ .off = 18556, .len = 427, .rle = true },
+    .{ .off = 18983, .len = 704, .rle = true },
+    .{ .off = 19687, .len = 414, .rle = true },
+    .{ .off = 20101, .len = 343, .rle = true },
+    .{ .off = 20444, .len = 374, .rle = true },
+    .{ .off = 20818, .len = 1262, .rle = true },
+    .{ .off = 22080, .len = 1576, .rle = true },
+    .{ .off = 23656, .len = 1056, .rle = true },
+    .{ .off = 24712, .len = 1038, .rle = true },
+    .{ .off = 25750, .len = 83, .rle = true },
+    .{ .off = 25833, .len = 47, .rle = true },
+    .{ .off = 25880, .len = 121, .rle = true },
+    .{ .off = 26001, .len = 64, .rle = true },
+    .{ .off = 26065, .len = 1207, .rle = true },
+    .{ .off = 27272, .len = 1405, .rle = true },
 };
 
 /// Index 0 of each picture's palette is transparent; its slot holds 0 and is
@@ -189,7 +189,7 @@ pub const palette = [_]u16{
     0x0000, 0x10A3, 0xD75E, 0x8ABE, 0x4053, 0x585C, 0xF7FF, 0xAE9C, // title_logo
     0x0000, 0x10A3, 0x585C, 0xC53F, 0x2A4D, 0xA5B7, // strip_wagon
     0x0000, 0x10A3, 0xD75E, 0x3B94, // mark_start
-    0x0000, 0x10A3, 0x6D19, 0x3B94, // mark_pass
+    0x0000, 0x10A3, 0x2CC9, 0x6D19, // mark_pass
     0x0000, 0x10A3, 0xF7FF, 0xB3E7, // mark_mountains
     0x0000, 0x10A3, 0x585C, 0x3B94, // mark_fort
     0x0000, 0x10A3, 0x2CC9, 0x585C, 0x3B94, // mark_city
@@ -246,4 +246,51 @@ pub const layout = struct {
     pub const tomb_text: Rect = .{ .x = 50, .y = 40, .w = 60, .h = 40 };
 };
 
-pub const data: *const [28639]u8 = @embedFile("art.bin");
+/// The master palette every picture draws from (DisplayColor bits).
+pub const master = struct {
+    pub const ink: u16 = 0x10A3; // #1A1410
+    pub const brown_d: u16 = 0x2147; // #3B2A20
+    pub const brown: u16 = 0x2A4D; // #6B4A2F
+    pub const wood: u16 = 0x3B94; // #A0703F
+    pub const wood_l: u16 = 0x6D19; // #C9A06A
+    pub const paper: u16 = 0xD75E; // #F4E9D0
+    pub const paper_d: u16 = 0xAE9C; // #E2D2AE
+    pub const white: u16 = 0xF7FF; // #FFFDF5
+    pub const grey_d: u16 = 0x4249; // #4E4A44
+    pub const grey: u16 = 0x7C31; // #8A8478
+    pub const grey_l: u16 = 0xA5B7; // #BDB6A6
+    pub const rasp: u16 = 0x585C; // #E30B5C
+    pub const rasp_d: u16 = 0x4053; // #9E0842
+    pub const rasp_l: u16 = 0x8ABE; // #F2558C
+    pub const rasp_p: u16 = 0xC53F; // #F8A5C2
+    pub const leaf: u16 = 0x2CC9; // #4C9A2A
+    pub const leaf_d: u16 = 0x1B45; // #2E6B1E
+    pub const leaf_l: u16 = 0x5611; // #8CC152
+    pub const pine: u16 = 0x2A43; // #1E4A2A
+    pub const gold: u16 = 0x5DB9; // #C8B45A
+    pub const gold_l: u16 = 0x86BC; // #E6D482
+    pub const sun_o: u16 = 0x3CDE; // #F29A3A
+    pub const sun_y: u16 = 0x6EBE; // #F7D46B
+    pub const sun_p: u16 = 0x7B5D; // #E86A7A
+    pub const dusk_p: u16 = 0x7A4D; // #6A4A7A
+    pub const dusk_v: u16 = 0x5967; // #3E2E5A
+    pub const night: u16 = 0x4944; // #22284A
+    pub const sky: u16 = 0xEE31; // #8EC5E8
+    pub const sky_l: u16 = 0xF739; // #CFE6F2
+    pub const water: u16 = 0xB3E7; // #3D7FB5
+    pub const water_d: u16 = 0x7A84; // #24527A
+    pub const mtn: u16 = 0x9B4F; // #7A6A9A
+    pub const mtn_l: u16 = 0xB495; // #A890B0
+    pub const fire_y: u16 = 0x771F; // #FFE070
+    pub const fire_o: u16 = 0x1C5E; // #F28A1E
+    pub const fire_r: u16 = 0x19DA; // #D23A1A
+    pub const skin: u16 = 0x7D5C; // #E0A878
+    pub const murk: u16 = 0x3BCD; // #6B7A3A
+    pub const murk_d: u16 = 0x2A89; // #4A522A
+    pub const ice: u16 = 0xF77B; // #DDEFF7
+    pub const ice_b: u16 = 0xE695; // #A8D0E6
+    pub const storm: u16 = 0x7B2B; // #5A6478
+    pub const storm_l: u16 = 0xA4B1; // #8A94A6
+};
+
+pub const data: *const [28677]u8 = @embedFile("art.bin");

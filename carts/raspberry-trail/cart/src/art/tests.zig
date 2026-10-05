@@ -225,6 +225,8 @@ test "art: Color matches the DisplayColor layout" {
     const c: art.Color = .{ .r = 0xE3 >> 3, .g = 0x0B >> 2, .b = 0x5C >> 3 };
     try std.testing.expectEqual(@as(u16, 28 | 2 << 5 | 11 << 11), @as(u16, @bitCast(c)));
     try std.testing.expectEqual(@as(u32, 0xE7085A), c.rgb888());
+    try std.testing.expectEqual(c, art.color("rasp"));
+    try std.testing.expectEqual(@as(u32, 0xF7EBD6), art.color("paper").rgb888());
 }
 
 test "art: layout rects sit on the screen" {
