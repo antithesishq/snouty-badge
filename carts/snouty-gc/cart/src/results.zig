@@ -170,7 +170,7 @@ fn draw_battle_winner(w: *const world.World, follow: u8, frame: u32) void {
     const win = &w.cars[wi];
     const r = win.racer % racers.count;
     const liv = hud.livery(r);
-    hud.centered(battle_text.winner_title(w.battle.end), 4, if ((frame / 20) % 2 == 0) hud.cyan else hud.white);
+    hud.centered(battle_text.winner_title(w.battle.end, win.active), 4, if ((frame / 20) % 2 == 0) hud.cyan else hud.white);
     hud.fill_rect(4, 16, 50, 50, liv);
     sprites.blit_at(&sprites.portraits[r], 0, 5, 17, .{});
     hud.text(racers.roster[r].name, 60, 18, liv);
@@ -180,7 +180,8 @@ fn draw_battle_winner(w: *const world.World, follow: u8, frame: u32) void {
     var lb: [16]u8 = undefined;
     hud.text(battle_text.standing_line(&lb, w, wi), 60, 52, hud.grey);
     quote(r, 72);
-    hud.centered(battle_text.end_note(w.battle.end), 92, hud.dim);
+    var nb: [24]u8 = undefined;
+    hud.centered(battle_text.end_line(&nb, w, &hud.name_of), 92, hud.grey);
     const me = &w.cars[follow % world.car_count];
     if (wi != follow and me.rank > 0) {
         var line: [16]u8 = undefined;

@@ -230,9 +230,21 @@ pub fn standing_line(buf: *[16]u8, w: *const world.World, i: usize) []const u8 {
     return join(buf, &.{ "LIVES ", d[0..put(&d, c.lives)] });
 }
 
-/// The winner card's header by how the round ended.
-pub fn winner_title(e: world.BattleEnd) []const u8 {
-    return if (e == .lives) "LAST PROCESS UP" else "TOP KILLER";
+/// The winner card's header: the standings' first is the top killer;
+/// `LAST PROCESS UP` when the round ended by lives and it is the one left
+/// (a car out of lives can still top the standings on eliminations).
+pub fn winner_title(e: world.BattleEnd, winner_in: bool) []const u8 {
+    return if (e == .lives and winner_in) "LAST PROCESS UP" else "TOP KILLER";
+}
+
+/// The winner card's line on how the round ended: `TIME UP`, or `LAST UP:
+/// BOTNET` (the car left with lives).
+pub fn end_line(buf: *[24]u8, w: *const world.World, name_of: *const fn (u8) []const u8) []const u8 {
+    if (w.battle.end != .lives) return end_note(w.battle.end);
+    for (&w.cars) |*c| {
+        if (c.active) return join(buf, &.{ "LAST UP: ", name_of(c.racer) });
+    }
+    return end_note(w.battle.end);
 }
 
 // --- LINK BATTLE in the lobby (link_ui.zig, main.zig) -------------------------------

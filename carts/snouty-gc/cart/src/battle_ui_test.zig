@@ -10,6 +10,11 @@ const world = @import("world.zig");
 const track = @import("track.zig");
 const net = @import("net.zig");
 const text = @import("battle_text.zig");
+const racers = @import("racers.zig");
+
+fn racer_name(r: u8) []const u8 {
+    return racers.roster[r % racers.count].name;
+}
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
@@ -42,7 +47,17 @@ test "battle text fits the panels: fixed lines, hints, every option label and ru
     try fits(text.elims_label(&e, 99));
     for ([_]world.BattleEnd{ .lives, .time }) |end| {
         try fits(text.end_note(end));
-        try fits(text.winner_title(end));
+        try fits(text.winner_title(end, true));
+        try fits(text.winner_title(end, false));
+    }
+    // `LAST UP: ` and the longest racer name.
+    var w: world.World = .{};
+    w.battle.end = .lives;
+    for (0..world.car_count) |i| {
+        for (&w.cars, 0..) |*c, j| c.active = j == i;
+        w.cars[i].racer = @intCast(i);
+        var lb: [24]u8 = undefined;
+        try fits(text.end_line(&lb, &w, &racer_name));
     }
     for (track.arenas) |a| try fits(a.name);
     // The card: KILL -9 at 2x is 112 px; its two lines and the prompt
@@ -126,6 +141,22 @@ test "the round clock: M:SS rounded up, 0:00 only at the end" {
     try expectEqualStrings("0:00", text.clock(&b, 0));
     try expectEqualStrings("1:01", text.clock(&b, 3601));
     try expectEqualStrings("10:00", text.clock(&b, 10 * tuning.battle_minute));
+}
+
+test "the winner card: TOP KILLER unless the one left with lives tops the standings" {
+    try expectEqualStrings("LAST PROCESS UP", text.winner_title(.lives, true));
+    try expectEqualStrings("TOP KILLER", text.winner_title(.lives, false));
+    try expectEqualStrings("TOP KILLER", text.winner_title(.time, true));
+    var w: world.World = .{};
+    w.battle.end = .lives;
+    for (&w.cars, 0..) |*c, i| {
+        c.racer = @intCast(i);
+        c.active = i == 5;
+    }
+    var b: [24]u8 = undefined;
+    try expectEqualStrings("LAST UP: BOTNET", text.end_line(&b, &w, &racer_name));
+    w.battle.end = .time;
+    try expectEqualStrings("TIME UP", text.end_line(&b, &w, &racer_name));
 }
 
 test "standings lines: LIVES, WRECKS with INF, OUT and the time survived" {
