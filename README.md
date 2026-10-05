@@ -52,6 +52,7 @@ have run on a badge.
 | `snouty-zero` | `snouty-zero` | F-Zero style Mode 7 hover racer | M5.1 done | RAM, plus XIP built by default | none known | not yet |
 | `snouty-pipes` | `snouty-pipes` | Windows 3D Pipes screensaver: ray-cast pipes drawn incrementally, teapot easter egg, orbit, B nametag, steer mode game with rewind | M3 done | RAM | none known | not yet |
 | `paperclips` | `paperclips` | Universal Paperclips by Frank Lantz & Bennett Foddy (ported with permission): the whole incremental game, number for number, as pages of rows | M2 done (whole game) | RAM | no saves (the OS has no cart save region) | not yet |
+| `snouty-theremin` | `snouty-theremin` | theremin: hand distance over the TMF8820 time-of-flight breakout plays pitch (and volume, two-handed); the stick plays it without the breakout; scope, note and cents, scale snap, four waveforms | M1 done (branch `tof/theremin`) | RAM | the sensor driver is not wired yet (stick only); boots with sound on | not yet |
 | `siwoo` | `siwoo` | name badge for Siwoo Yoon: demosnout's Snouty head over "SIWOO YOON" in chrome | done | RAM | made for the Tufty 2350 (Supabase Select badge); see its SPEC.md | not yet |
 | `badge-calibrate` | `badge-calibrate` | hardware calibration cart for badge-bench (`badge-bench/calibrate/`) | C3 done (badge fit applied) | RAM | a tool, not a game | ran on a badge 2026-09-28 (`badge-2026-09-28-pass5.txt`) |
 
