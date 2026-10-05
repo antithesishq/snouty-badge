@@ -82,7 +82,7 @@ fn drive_module(b: *Build) *Build.Module {
         mk.addFileArg(b.path("tools/make_romfs.py"));
         const img = mk.addOutputFileArg("drive.img");
         var it = std.mem.tokenizeScalar(u8, list, ',');
-        while (it.next()) |f| mk.addFileArg(b.path(f));
+        while (it.next()) |f| mk.addFileArg(.{ .cwd_relative = f });
         mk.addArg("--truncate");
         _ = wf.addCopyFile(img, "drive.img");
         const src = wf.add("gc_drive.zig", "pub const image: []const u8 = @embedFile(\"drive.img\");\n");

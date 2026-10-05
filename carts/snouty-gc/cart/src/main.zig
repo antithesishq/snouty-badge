@@ -1439,6 +1439,7 @@ comptime {
             "debug_battle_arena",     "debug_stunt",         "debug_safe",           "debug_lobby_rules",
             "debug_battle_stress",    "debug_me_out",        "debug_feed",           "debug_pack_count",
             "debug_pack_status",      "debug_pack_rows",     "debug_start_pack",     "debug_pack_arena",
+            "debug_select_track",     "debug_world_track",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1968,5 +1969,13 @@ fn debug_pack_arena(n: u32) callconv(.c) u32 {
     race_mode = .battle;
     battle_ui.opts.arena = @intCast(n & 0xFF);
     new_race(.battle, 0);
+    return w.track;
+}
+/// The select's track row (race row index) and the World's track byte
+/// (`track.pack_base` + k on a pack track).
+fn debug_select_track() callconv(.c) u32 {
+    return select.track_index;
+}
+fn debug_world_track() callconv(.c) u32 {
     return w.track;
 }

@@ -473,3 +473,54 @@ The engine sheets left from Zero (`assets/gen/shadow.png`, and
 `exhaust.png`, Zero's `fx.png` renamed) are described in
 `../ASSETS_ENGINE.md`; the art track's sheets (`python3
 tools/draw_art.py`) are in `assets/gen/art/` (`../ASSETS.md`).
+
+## 7. Track packs (M7)
+
+Track packs are `.GCP` files on the badge drive (`docs/PACKS.md`: the
+format, how to make one, how to copy one onto a badge). On the badge, copy
+`assets/packs/dead_mall/DEADMALL.GCP` and `assets/packs/boneyard/BONEYARD.GCP`
+into the drive's top folder, eject, start the cart: QUICK RACE's and
+GARBAGE COLLECTION's track row lists the six built-in tracks, then ANCHOR
+STORE, FOOD COURT, PARKING DECK (Dead Mall), MOTHBALL MILE, WING ROW,
+REENTRY FIELD (The Boneyard); BATTLE's arena row THE SANDBOX, THE FOOD
+COURT, HANGAR 18. A pack is raceable once its CRC is in (a few frames on
+the select). CIRCUIT stays on the built-in leagues.
+
+The simulator has no drive: build a wasm whose drive holds packs with
+`-Dgc-pack` (comma-separated, from the repository root), then serve that
+wasm:
+
+```sh
+zig build -Dcart=snouty-gc -Dgc-pack=carts/snouty-gc/cart/src/gen/packs/DEADMALL.GCP,carts/snouty-gc/cart/src/gen/packs/BONEYARD.GCP
+cd carts/snouty-gc && node ../../tools/serve-cart.mjs   # serves that wasm (section 2)
+# headless: a Quick Race on race row 6 (the first pack track), the autopilot driving;
+# a BATTLE round on arena row 1 (the first pack's arena)
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 600 --every 30 --call debug_pack_count --call debug_start_pack:6
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 600 --every 30 --call debug_pack_count --call debug_pack_arena:1
+```
+
+A plain `zig build` gives the simulator an empty drive again (the built-in
+tracks only). Exports: `debug_pack_count` (scans the drive),
+`debug_pack_status:i`, `debug_pack_rows`, `debug_start_pack:row`,
+`debug_pack_arena:row`, `debug_select_track`, `debug_world_track`
+(`128 + k` on a pack track).
+
+badge-bench maps `cart/src/gen/packs/drive_empty.img` by default
+(`badge-bench/carts/snouty-gc.toml`); the pack benches map the content
+packs' drive and poke a race (`gc_pack=1`), the stress scene (`2`) or a
+BATTLE round (`3`) on row `gc_pack_row` at boot. `--flash-read-cycles N`
+charges N cycles per drive read (the props cells and the sim's tables are
+read in place):
+
+```sh
+D=carts/snouty-gc/cart/src/gen/packs/drive_packs.img   # DEADMALL, BONEYARD, TEST
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --romfs $D --frames 3000 --poke gc_pack=1 --poke gc_pack_row=6   # ANCHOR STORE
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --romfs $D --frames 3000 --poke gc_pack=1 --poke gc_pack_row=11 --flash-read-cycles 20  # REENTRY FIELD
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --romfs $D --frames 300 --poke gc_pack=2 --poke gc_pack_row=6     # stress on ANCHOR STORE
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --romfs $D --frames 3600 --poke gc_pack=3 --poke gc_pack_row=1    # THE FOOD COURT
+```
+
+Regenerating: `python3 tools/test_pack/make.py` (TEST.GCP and the drive
+images in `cart/src/gen/packs/`), `python3 tools/packs/make_packs.py`
+(Track B's content packs), `python3 tools/build_pack.py DIR` (any pack
+directory), `python3 tools/build_pack.py --info FILE.GCP`.

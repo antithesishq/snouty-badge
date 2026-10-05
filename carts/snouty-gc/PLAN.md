@@ -2163,6 +2163,87 @@ deferred questions from L94.
 
 ### M7 status
 
+**Track A (format, loader, engine), 2026-10-05, branch `gc/present`.**
+Commits: the M7.0 interface 4b07184d (docs/PACKS.md, pack_format.zig,
+build_pack.py, the test pack, crust tiles, build_arena taking a pack's
+arena), the mover-cell budget fix 961854ac, the loader with props and crust
+d8733f04, the menus' pack rows and link version 2 47663830, Track B's packs
+merged 8b584b77, the pack host tests 2b04aea5, the RAM pass ede5016d, then
+check.sh, the previews, `docs/preview_m7.gif` and these docs. Decisions
+L94 to L111.
+
+- **Loader** (`pack.zig`): the drive's root scanned by 8.3 entries when
+  the select, BATTLE's setup or the LINK lobby opens; each file's directory
+  parsed (`pack_format.parse`); the CRC 4 KB a frame in those screens'
+  frames only (never in a race, never beside a save); a second scan keeps
+  verdicts. `load` unpacks the tiles, horizon and map into the built-in
+  slots with bounds-checked decoding and reads every other section in
+  place from the drive (L100); `track.pack_track` / `pack_league` then run
+  through the same slices as a built-in track (`Setup.track = pack_base +
+  k`), and `track.select` reloads them after a built-in track used the
+  slots. Refusals: NOT A PACK, PACK TOO NEW, PACK DAMAGED, PACK TOO BIG,
+  NEEDS NEWER CART (a turret), RECOPY PACK (a split file), each a row with
+  the file's name in the track row, never pickable.
+- **Engine**: props in the depth list at a car sprite's scale (the 64 cap,
+  farthest first), solid ones a wall circle in the sim; breakable crust in
+  `hazards.zig` (crack on touch, break after `warn`, a pit for `period`,
+  heal), shown by swapping tiles 121..123 in the map copy, a fall when all
+  four corners are on it, respawns never on it; a mover drawn with a props
+  cell.
+- **Picker** (`pack_rows.zig`): built-in tracks then pack tracks (TRACK
+  n/N to two digits) in QUICK RACE and GC, The Sandbox then pack arenas in
+  BATTLE's setup; the panel shows a pack track's name, league, laps,
+  hazards (BREAKABLE CRUST, MOVER) and outline. CIRCUIT stays built-in
+  (L102).
+- **Link** (`net.zig` version 2): the rules carry the pack's 24-bit id
+  after v1's five bytes; picks are 4 bits, bit 3 `lacks` (computed by
+  loading the pack when the rules arrive), so the host cannot GO and reads
+  PARTNER LACKS PACK; a badge that still fails at GO leaves (the other
+  races on with the AI). `net.GameV1` keeps M6's wire for
+  net_compat_test: v1 and v2 see wrong_version both ways; M4 and v0
+  likewise. lib/lockstep.zig untouched.
+- **Simulator**: `-Dgc-pack=FILE[,FILE]` builds a FAT image of the packs
+  (tools/make_romfs.py) into the wasm as its drive; the default wasm has
+  none. A 16 KB by-value copy of the map buffer (`for (track.map_ram)`)
+  overflowed the simulator's 14.7 KB stack on every load (and took half the
+  badge's); fixed with `&`.
+- **Tests**: 207 pass (`zig build test-gc`, the binary run directly; M6
+  had 182). `pack_test.zig`: the test pack and the content packs load and
+  race (3 laps with the autopilot, a built-in race after unchanged), the
+  drive scan's refusals and rows, RECOPY PACK, truncated packs, 600
+  bit-flipped packs (587 refused by the CRC; with the CRC made good 269
+  loaded and ran 400 ticks, 331 refused), scrambled sections, crust, a solid
+  prop; `net_test`: link races, GC and battles on the test pack in sync
+  (clean and 1%), a partner lacking the pack, a pack failing at GO;
+  `net_compat_test` v1 vs v2; `tools/test_build_pack.py` (5). Track B's
+  `pack_content_test.zig` passes too.
+- **Bench** (calibrated, mean / worst ms; `--lcd` identical; f20 = every
+  drive read costs 20 cycles): ANCHOR STORE (21 props in 6 cells, the
+  scrubber) 3.54 / 5.08, f20 3.72 / 5.29; REENTRY FIELD (the busiest pack
+  map) 3.52 / 5.92, f20 3.68 / 6.11; the stress scene on ANCHOR STORE 4.79
+  / 6.09, f20 4.80 / 6.11; THE FOOD COURT battle 3.41 / 5.78, f20 3.52 /
+  5.95; HANGAR 18 3.43 / 4.63. The built-in benches as at M6 (m0_race 3.65
+  / 5.22, stress 5.02 / 6.17, m6_battle 3.46 / 5.31, probe stress 5.13 /
+  6.29).
+- **RAM**: `size -A` .text 194,920 + .data 8,300 + .bss 52,040 (+ 2,380
+  exidx/extab): **16,312 B free** (M6: 25,908), so M7 costs 9,596 B after
+  the RAM pass (14,776 free before it). The pass: a 64-byte nibble CRC for
+  std's table, no z copy in the depth list (896 B), the cluster table on
+  the stack, an 8.3 scan instead of romfs.find, props read from the track
+  data, arena checks inside track.parse_arena, a 96 KB cap and 6 listed
+  packs.
+- **check.sh PASS** (every step; `zig build test` fails only in other
+  carts' runners in this worktree, Boy's missing test ROMs, so test-gc
+  decides). New: the packs' rebuild checks in `tracks`, three pack
+  previews (the picker's 14 rows, ANCHOR STORE to the results, a battle in
+  Hangar 18), six pack benches.
+- `docs/preview_m7.gif` (251 frames, 100 ms): the picker through every
+  pack track to ANCHOR STORE and its race, REENTRY FIELD (the crust, the
+  furrow), THE FOOD COURT battle.
+- **On a badge**: never run. Copy DEADMALL.GCP and BONEYARD.GCP to the
+  drive (docs/PACKS.md); check the in-place reads' cost with props in view
+  (L109).
+
 **Track B (pack content, branch gc/packs).** Both packs are built,
 packaged and host-tested. `tools/packs/make_packs.py` runs the built-in
 rasterizer (build_tracks.py) with a `LEAGUES` entry per pack registered at
@@ -2977,6 +3058,42 @@ L100. **In-place sections**: with 8 KB for all of M7 (code included) there
     per-track props budget any more (6 cells of 32x48 on a race track and
     3 to 4 in an arena are fine, as are 16). Risk: a host writing to the
     drive mid-race (as with the emulators).
+L101. **A pack track in the World** is `Setup.track` / `World.track` from
+    `track.pack_base` (0x80) up: "the loaded pack track" plus its index in
+    the pack. Which pack is the loader's and the link rules' (the 24-bit
+    id), not the World's, so the World and its checksums are unchanged.
+L102. **Rows**: a pack still checking or refused takes one race row
+    showing its file name and reason (not pickable); the arena row lists
+    only raceable packs. When a CRC finishes the rows grow, so the cursor
+    may land on another row. CIRCUIT stays on the built-in leagues: a
+    pack as a CIRCUIT league is for Adrian (deferred).
+L103. **Link**: version 2 (eight rules bytes, 4-bit picks). A guest that
+    has not heard the rules counts as lacking (so an early ready never lets
+    the host GO). The guest's `lacks` loads the pack (cached), so a damaged
+    or split pack is caught before GO; if a load still fails at GO that
+    badge leaves the race and returns to the lobby, and the other races on
+    with the AI (PEER LEFT).
+L104. **Crust**: a car falls only with all four footprint corners on broken
+    crust (or off the track), as at a pit edge; the AI has no crust sense
+    yet (a band across the whole road takes the AI behind the leader down
+    when it breaks). Track B's bands follow PACKS.md's warn rule.
+L105. **Six packs listed, 96 KB cap** (RAM): the first six `.GCP` files of
+    the drive's directory.
+L106. **8.3 names only**: the scan reads the root's 8.3 entries (a long
+    name a host writes is ignored; the pack's menu name is in its header).
+L107. **Solid props**: a circle of `radius` that pushes a car on the ground
+    out and costs it speed and wall damage; airborne cars fly over; the AI
+    does not steer round props (the packs put solid props off the line).
+L108. **A pack mover's sprite**: its props cell at car scale with a shadow,
+    no beacon (the Sweeper keeps its own art and beacon).
+L109. **In-place reads on the badge**: props cells are read per pixel from
+    the drive's flash; the bench's flat 20 cycles a read costs 0.2 ms. The
+    XIP cache is not modelled: check on hardware with props in view.
+L110. **The simulator's drive** needs python3 at build time, only with
+    `-Dgc-pack` (tools/make_romfs.py builds the image).
+L111. **Load cost in menus**: moving the select's cursor onto a pack track
+    loads it there (36 KB unpacked, a few ms in that menu frame); the race
+    start then finds it loaded. Not benched (one long menu frame).
 L130. **Track B: per-track floors.** A pack has one tileset, so each track
     picks a road floor by remapping the rasterizer's road tiles (SURF, the
     seams, the dot, the ruts) onto the free slots 28..31, 89..91, 124..127

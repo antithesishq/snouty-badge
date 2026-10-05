@@ -59,6 +59,19 @@ here: every forked file names its Zero source and commit on its first line.
   pumps the link through the draw via `render.band_hook` /
   `render.pump_at` (render, sprites, hud call it; null outside a link
   race).
+- M7 track packs (`docs/PACKS.md`): `pack_format.zig` (the `.GCP`
+  format v1 as Zig: header, league block, track records, `parse`, the
+  `Refusal` lines), `pack.zig` (no cart API: the drive scan by 8.3 entries,
+  the background CRC `tick`, `load` of one track or arena: the tiles,
+  horizon and map unpacked into the built-in slots, every other section
+  read in place from the drive; `load_bytes` for tests; the link `id`),
+  `pack_rows.zig` (the menus' rows: built-in tracks then pack tracks, The
+  Sandbox then pack arenas; refused packs; the link rules' `track` and
+  `pack`, `has_rules`). A pack track is `track.pack_track` /
+  `pack_league`, `Setup.track = track.pack_base + k`. main.zig scans when
+  the select, BATTLE's setup or the LINK lobby open and ticks the CRC in
+  their frames only (never in a race or near a save). The simulator's drive
+  is `-Dgc-pack=FILE[,FILE]` (build.zig's `gc_drive` module).
 - `world.zig`: the plain `World` (6 `Car`s, clock, PRNG, countdown, track
   index; no pointers), `Input` (the race byte: bit 0 up, 1 down, 2 left,
   3 right, 4 A, 5 B, 6 Start, 7 Select), `Setup` (track, seed, the two
@@ -203,6 +216,14 @@ Sweeper sheet `hazards.png`).
   input scripts' `debug_world_sum` and `career_test.zig` the seeded
   races' fingerprints. Upgrades and chips reach the World only through
   `Setup` (`loadouts`, `chips`); LINK keeps the defaults.
+- M7: the link protocol is version 2 (eight rules bytes: v1's five and
+  the pack's 24-bit id; 4-bit picks, bit 3 `lacks`); `net.GameV1` and
+  `GameV0` stay for net_compat_test. Pack data reaches `simulate` only as
+  track data (`track.pack_track`; its sections are read in place from the
+  drive, the same CRC-checked bytes on both badges).
+  RAM: 16,312 B free at M7 (keep it at 16 KB or more; the saves branch
+  takes 5,128). Never iterate a big global array by value (`for
+  (track.map_ram)` copies 16 KB onto the stack): use `&`.
 - M6: the link protocol is version 1 (`net.Game.version`); change it
   again whenever the rules bytes, the input bits or what `simulate` does
   with them change (root `docs/LOCKSTEP.md` 4.7). The KILL -9 card and
