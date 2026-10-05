@@ -528,7 +528,12 @@ fn draw_diag() void {
 
     const e = d.err;
     say(0, 1, fmt(&buf, "ERR {s}", .{e.code.name()}), if (e.code == .none) dim else bad);
-    if (e.code != .none) {
+    const f = d.first_err;
+    if (d.fail_streak > 1 and f.code != .none) {
+        // A run of failures: the first one is the cause.
+        say(0, 2, fmt(&buf, "1ST {s}", .{trim(f.code.name(), 10)}), bad);
+        say(15, 2, fmt(&buf, "{X:0>4}", .{f.raw & 0xFFFF}), bad);
+    } else if (e.code != .none) {
         say(0, 2, fmt(&buf, "@{s}", .{trim(e.step.name(), 10)}), bad);
         say(12, 2, fmt(&buf, "R{X:0>4}", .{e.raw & 0xFFFF}), bad);
     } else say(0, 2, fmt(&buf, "STEP {s}", .{trim(d.step.name(), 13)}), dim);
@@ -549,7 +554,7 @@ fn draw_diag() void {
     }), if (ln.sda and ln.scl) fg else bad);
     say(0, 7, fmt(&buf, "AB{X:0>8} TO{d} RC{d}", .{ st.last_abort, st.timeouts, st.recoveries }), fg);
     draw_bus_scan(0, 8);
-    say(0, 9, fmt(&buf, "FR{d} MS{d} TN{d} CK{d}", .{ d.stats.frames, d.stats.missed, d.stats.torn, d.stats.bl_csum_mismatch }), fg);
+    say(0, 9, fmt(&buf, "FR{d} MS{d} TN{d} CK{d} RS{d}", .{ d.stats.frames, d.stats.missed, d.stats.torn, d.stats.bl_csum_mismatch, d.stats.rescues }), fg);
     say(0, 10, fmt(&buf, "POLL{d}.{d}/{d}.{d}MS MT{d}", .{
         poll_us / 1000, poll_us / 100 % 10, poll_max_us / 1000, poll_max_us / 100 % 10, d.stats.mid_triplets,
     }), fg);
@@ -623,7 +628,13 @@ fn draw_status() void {
     if (sensor.err.code != .none) {
         say(0, 9, fmt(&buf, "ERR {s}", .{sensor.err.code.name()}), bad);
         say(0, 10, fmt(&buf, "@{s} R{X:0>4}", .{ trim(sensor.err.step.name(), 10), sensor.err.raw & 0xFFFF }), bad);
-        if (sensor.state == .failed) say(0, 11, "RETRYING...", warn);
+        if (sensor.state == .failed) say(0, 11, fmt(&buf, "RETRYING... x{d}", .{sensor.fail_streak}), warn);
+        // What started it: the latest error is often the recovery's.
+        const f = sensor.first_err;
+        if (sensor.fail_streak > 1 and f.code != .none) {
+            say(0, 12, fmt(&buf, "1ST {s}", .{trim(f.code.name(), 15)}), bad);
+            say(0, 13, fmt(&buf, "@{s} R{X:0>4}", .{ trim(f.step.name(), 10), f.raw & 0xFFFF }), bad);
+        }
     }
     say(0, 15, "</>: PAGES  DIAG", dim);
 }

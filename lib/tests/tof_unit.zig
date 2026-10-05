@@ -400,8 +400,84 @@ test "an image that does not start: app timeout, CPU reset, recovery" {
     try std.testing.expect(rig.drv.force_reset);
     rig.model.fault.corrupt_ram = false;
     _ = try rig.run_until_state(.measuring, 4_000_000);
-    // The second attempt also tried DS000693's powerup_select = 2 variant.
-    try std.testing.expect(rig.model.stats.remaps_ps2 >= 1);
+    // Never with powerup_select = 2 (it survives resets: a badge hung).
+    try std.testing.expectEqual(@as(u32, 0), rig.model.stats.remaps_ps2);
+}
+
+/// The chip as a badge left it: powerup_select 2 from an older driver,
+/// the application running, and resets with 2 hanging (ENABLE 0x21).
+fn leave_ps2(rig: *Rig) !void {
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    rig.model.fault.ps2_hang = true;
+    rig.model.powerup_select = 2;
+}
+
+test "a chip left at powerup_select 2 recovers on a reload (CPU reset clears it)" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    try leave_ps2(&rig);
+    rig.drv.reload();
+    _ = try rig.run_until_state(.measuring, 3_000_000);
+    try std.testing.expectEqual(@as(u2, 1), rig.model.powerup_select);
+    try std.testing.expectEqual(@as(u32, 0), rig.model.stats.remaps_ps2);
+}
+
+test "a chip hung at powerup_select 2 (cpu_ready never) is rescued by a forced CPU reset" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    try leave_ps2(&rig);
+    // Something else reset it with 2 set: hung, ENABLE 0x21, as on the badge.
+    rig.model.write_reg(tof.reg.reset, 0x80);
+    _ = try rig.run_until_state(.failed, 3_000_000); // the frame timeout notices
+    try std.testing.expectEqual(tof.ErrCode.frame_timeout, rig.drv.first_err.code);
+    _ = try rig.run_until_state(.measuring, 4_000_000);
+    try std.testing.expectEqual(@as(u2, 1), rig.model.powerup_select);
+    try std.testing.expectEqual(@as(u16, 0), rig.drv.fail_streak);
+}
+
+test "cpu_ready never comes after a plain power-on: forced CPU reset (PLL off first)" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    // Plugged in hung: PON on, powerup_select 2, CPU dead.
+    rig.model.fault.ps2_hang = true;
+    rig.model.fault.reset_needs_pll_off = true;
+    rig.model.powerup_select = 2;
+    rig.model.pon = true;
+    rig.model.mode = .dead;
+    _ = try rig.run_until_state(.measuring, 3_000_000);
+    try std.testing.expectEqual(@as(u32, 1), rig.drv.stats.rescues);
+    // Rescued inside the first attempt: no error at all.
+    try std.testing.expectEqual(tof.ErrCode.none, rig.drv.err.code);
+}
+
+test "a reset without turning the PLL off would hang; the driver's never does" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    rig.model.fault.reset_needs_pll_off = true;
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    for (0..3) |_| {
+        rig.drv.reload();
+        _ = try rig.run_until_state(.measuring, 3_000_000);
+    }
+    try std.testing.expectEqual(@as(u32, 0), rig.drv.stats.rescues);
+}
+
+test "repeated failures of every kind while measuring always come back, never via powerup_select 2" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    const kinds = [_]virtual.Error{ error.DataNack, error.Timeout, error.AddrNack, error.ArbLost };
+    var i: u32 = 0;
+    while (i < 24) : (i += 1) {
+        rig.model.fault.fail_at = i % 7;
+        rig.model.fault.fail_kind = kinds[i % kinds.len];
+        if (i % 5 == 4) rig.drv.reload();
+        // Long enough for the fault to fire, a 1 s retry and a reboot.
+        try rig.run(300_000);
+        try rig.run_until_frames(rig.drv.stats.frames + 3, 5_000_000);
+        try std.testing.expectEqual(tof.State.measuring, rig.drv.state);
+    }
+    try std.testing.expectEqual(@as(u32, 0), rig.model.stats.remaps_ps2);
 }
 
 test "the bus scan finds the sensor and other devices" {
