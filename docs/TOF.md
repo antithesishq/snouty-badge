@@ -174,6 +174,11 @@ commands 40 us).
 - Sound: its own continuous-phase voice rendered into lib/stream_audio's
   ring. Boots with sound ON (the cart is an instrument); Select mutes and
   the mute state is shown on screen (deferred question 1).
+- Status 2026-10-05: built on branch `tof/theremin` against
+  `lib/tof_types.zig` only; `carts/snouty-theremin/cart/src/input.zig`
+  `sensor_frame` is the one place lib/tof.zig plugs in (it returns null
+  until then, so the stick plays). carts/snouty-theremin/PLAN.md has the
+  bench numbers and the cart's own questions.
 
 ### M2: Sensor Eyes and the depth photo (`snouty-sense` pages)
 
@@ -185,7 +190,17 @@ commands 40 us).
   spinning point cloud. Needs hardware to prove mask switch time, dead
   SPADs and calibration.
 
-### M3 (later): gestures and hand modes
+### M3: Snouty Morph (`snouty-morph`)
+
+- A demoscene mesh (torus knot, Boing ball, Snouty head, Iris mark) that
+  follows the hand in 6DoF and deforms with it (reach, jelly, twist,
+  punch shockwave); a ghost hand in attract mode, stick fallback.
+- `lib/tof_pose.zig`: hand pose from the 3x3 frame (background model,
+  coverage centroid, plane-fit tilt, moment yaw, One Euro filters) and
+  `lib/tof_synth.zig` (synthetic frames for tests and the ghost hand).
+  Design and honest limits in carts/snouty-morph/SPEC.md.
+
+### M4 (later): gestures and hand modes
 
 - `lib/tof_gesture.zig` (swipe, push/pull, height, presence) and hand
   modes for existing carts (Flyover altitude, Reflections ripple,

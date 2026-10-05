@@ -33,6 +33,10 @@ var frames: u32 = 0;
 
 pub const Action = enum { none, pick, back };
 
+/// M5: the CIRCUIT's select (SPEC 8.1: the pick is kept for the whole
+/// Prix): no track row (the leagues set the tracks), `A ENTER THE PRIX`.
+pub var circuit: bool = false;
+
 /// M4: the link race's select (SPEC 7.3), set by main.zig every frame
 /// (null: single player). No track row (the host's lobby picks it); A
 /// marks this badge ready on a racer the partner has not taken, and the
@@ -76,7 +80,7 @@ pub fn update() Action {
     if (link) |l| {
         // A ready badge keeps its racer; B takes the mark back.
         if (l.ready) return .none;
-    } else if (input.pressed(.down) and row == 0) {
+    } else if (input.pressed(.down) and row == 0 and !circuit) {
         row = 1;
         sound.menu_move();
     }
@@ -111,16 +115,16 @@ fn plain(str: []const u8, x: i32, y: i32, color: cart.DisplayColor) void {
 
 /// Turntable (SPEC 8.1, 5 yaws): rear, quarter right, side right and back,
 /// then the mirrored side, 20 frames a view, starting on the quarter view.
-const turntable = [8]struct { cell: u8, flip: bool }{
+pub const turntable = [8]struct { cell: u8, flip: bool }{
     .{ .cell = sprites.car_quarter, .flip = false }, .{ .cell = sprites.car_side, .flip = false },
     .{ .cell = sprites.car_quarter, .flip = false }, .{ .cell = sprites.car_rear, .flip = false },
     .{ .cell = sprites.car_quarter, .flip = true },  .{ .cell = sprites.car_side, .flip = true },
     .{ .cell = sprites.car_quarter, .flip = true },  .{ .cell = sprites.car_rear, .flip = false },
 };
-const view_frames: u32 = 20;
+pub const view_frames: u32 = 20;
 
 /// The plinth under the turntable: an ellipse of radii (rx, ry) by spans.
-fn plinth(cx: i32, cy: i32, rx: i32, ry: i32, color: cart.DisplayColor) void {
+pub fn plinth(cx: i32, cy: i32, rx: i32, ry: i32, color: cart.DisplayColor) void {
     var dy: i32 = -ry;
     while (dy <= ry) : (dy += 1) {
         // Half width at this row: rx * sqrt(1 - (dy/ry)^2), integer.
@@ -181,7 +185,9 @@ pub fn draw(frame: u32) void {
     const arrow = if (row == 0) (if (blink) ink else dim) else (if (blink) hud.cyan else dim);
     plain("<", 4, 116, arrow);
     plain(">", 148, 116, arrow);
-    if (row == 0) {
+    if (circuit) {
+        plain("A ENTER THE PRIX", 16, 116, dim);
+    } else if (row == 0) {
         // "A PICK  vTRACK" centred: 14 cells, the arrow drawn in cell 8.
         plain("A PICK", 24, 116, dim);
         hud.down_arrow(90, 117, dim);

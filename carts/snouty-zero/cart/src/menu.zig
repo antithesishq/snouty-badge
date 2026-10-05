@@ -57,6 +57,11 @@ pub fn draw_title(frame: u32) void {
 /// and the items are centred as one block on the longest item (at most 17
 /// characters: 12 + 136 px leaves 6 px each side), never left of x 44.
 pub fn draw_list(title: []const u8, items: []const []const u8, list: *const List, y0: i32) void {
+    draw_list_dim(title, items, list, y0, null);
+}
+
+/// `draw_list` with item `dim` greyed (LINK RACE in the simulator).
+pub fn draw_list_dim(title: []const u8, items: []const []const u8, list: *const List, y0: i32, dim: ?usize) void {
     hud.centered(title, y0, hud.cyan);
     var longest: usize = 0;
     for (items) |item| longest = @max(longest, item.len);
@@ -65,7 +70,8 @@ pub fn draw_list(title: []const u8, items: []const []const u8, list: *const List
         const y = y0 + 16 + @as(i32, @intCast(i)) * 12;
         const selected = i == list.cursor;
         if (selected) hud.text(">", x - 12, y, hud.coral);
-        hud.text(item, x, y, if (selected) hud.coral else hud.white);
+        const greyed = dim != null and dim.? == i;
+        hud.text(item, x, y, if (greyed) hud.dim else if (selected) hud.coral else hud.white);
     }
 }
 

@@ -56,10 +56,10 @@ fn fill_run(t: *const track.Track, start: usize) usize {
     return len;
 }
 
-/// Height of the floor at `samples_ahead` (Q16.16 samples) of the player's
-/// progress, world px, linearly interpolated.
+/// Height of the floor at `samples_ahead` (Q16.16 samples) of the viewed
+/// machine's progress, world px, linearly interpolated.
 pub fn height_at(samples_ahead: i32) i32 {
-    const p = &world.w.machines[world.player];
+    const p = &world.w.machines[world.view];
     const base: i32 = @as(i32, p.progress) << fixed.Q;
     const pos = base + samples_ahead;
     const i: usize = @intCast((pos >> fixed.Q) & 255);

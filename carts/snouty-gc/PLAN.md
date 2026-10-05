@@ -1484,6 +1484,177 @@ playing, the two-badge check).
 - **Never run on two badges.** `docs/LINK_PLAY.md` section 4 is the
   hardware check for the show.
 
+## M5 Circuit and polish
+
+Goal: a full two-league CIRCUIT is playable start to finish (SPEC 8.2,
+9, 16): menu, CIRCUIT, racer select, garage, race, results, standings
+with CYCLES, garage again, three tracks of the Dumps, the league card,
+the Runoff unlocked, three tracks of the Runoff, the circuit end card.
+Plus the polish list: `TAGGED!` clipped at the screen edge, Quick Race in
+two presses, a balance pass that errs dangerous, the bench profile and
+fast paths. One agent (Opus), worktree
+/home/exedev/snouty-badge-gc-present, branch `gc/present` off origin/main
+90683be4 (M0-M4 merged, tag `snouty-gc/m4`). It owns every file of the
+cart except `cart/src/net.zig`, `net_test.zig` and `link_ui.zig` (another
+session is moving `net.zig` into a shared `lib/lockstep.zig`); LINK races
+keep the L0 upgrades through the `Setup` defaults.
+
+### M5.0 Interface (committed before the career code)
+
+Same contract as M1.0 to M4: only `sim.simulate` writes the World,
+rendering and the career read it. The World stays pointer-free and under
+its 2,560 B cap (raised only with a comment if it must be).
+
+- **`world.Loadout`** (one per car): `front: ?Front` and `rear: ?Rear`
+  (null = the racer's own, SPEC 4.1), `front_level` and `rear_level` 1..3,
+  `plating`, `clock`, `traction`, `burst` (BURST BUFFER) and `watchdog`
+  0..3. **`Setup.loadouts: [car_count]Loadout`**, indexed by car (= racer),
+  default all `.{}`: L0 and the stock weapons, which is today's car
+  exactly. `sim.reset` applies it (SPEC 9.2): armor `+30` a PLATING level
+  (`Car.ecc` at L3: a hit of 4 or less is ignored, PING cannot chip you),
+  top speed `+4%` a CLOCK level (`top_q8`), grip `+0.03` a TRACTION level
+  (`grip_q8 + 8`), `Car.burst_max` 1 + BURST BUFFER charges a lap,
+  `Car.watchdog` 120 / 90 / 60 / 40 ticks of WATCHDOG delay (the hulk
+  burns for the first 90 of them, or all of a shorter delay), the weapons
+  and their levels (front L2 `+25%` ammo, L3 also `+25%` damage; rear L2
+  `+1` ammo, L3 also `+25%` effect: bomb and caltrop damage, the caltrop
+  slow, the leak's grown size, the firewall's width).
+- **Cycle chips** (SPEC 9.1): **`Setup.chips`** (false by default; the
+  CIRCUIT sets it) turns them on; `track.chip_spots[0..chip_n]` (a cache
+  `track.select` fills, like the crates) are 8 trails of 3 chips along the
+  line, offset across the road in turn. **`World.chips: u32`** has bit k
+  set while chip k is taken; every taken chip comes back each 240 ticks
+  (`chip_clock`; first planned as "on the leader's next lap", which left
+  none for the back of the field). A car on the ground whose centre comes within its
+  radius + 3 px takes one: **`Car.chips`** counts them, and an **event
+  `chip`** (car, chip index; x, y the chip) tells the presentation.
+- **CYCLES accounting is outside `simulate`** (`career.zig`, pure, host
+  tested): at the race end it reads each car's `rank` (place: 1000 / 600
+  / 400 / 250 / 150 / 100), `kills` (the last-hit wreck credit: 150
+  each), `chips` (10 each), and adds the league win (1500) at a league's
+  end. `career.Career` holds the circuit: the player's racer, league and
+  race, the open leagues, the player's wallet, every racer's points,
+  loadout, CYCLES earned and spent, each AI's place in its upgrade plan,
+  and the last race's award (for the standings). `setup(seed)` gives the
+  next race's `world.Setup` (track = league x 3 + race, the player in slot
+  0, the six loadouts, chips on). `finish_race(&w)` books the race,
+  `league_over()` / `league_result()` / `advance()` close a league (top 3
+  opens the next; otherwise it is replayed, CYCLES kept), `buy(slot,
+  pick)` is the garage, `ai_shop()` the AIs' plans.
+- **AI upgrade plans** (SPEC 4.3, 9.2): a fixed list of slots per racer
+  (LEGACY: PLATING first, then front L2, never CLOCK; KIDDIE: CLOCK
+  first, never PLATING; and so on), bought in order before each race with
+  a budget of the larger of the AI's own CYCLES and a share of what the
+  player has spent, so difficulty follows the player's and is a pure
+  function of the races so far.
+
+### Work list
+
+1. M5.0 in `world.zig`, `sim.zig`, `weapons.zig`, `track.zig` (chips),
+   with tests: each upgrade's effect, ECC L3, the chips, and the M0-M4
+   replays unchanged (golden fingerprints of seeded races recorded
+   before the change, and the four input scripts' `debug_world_sum`
+   pinned in `check.sh`).
+2. `career.zig` (CYCLES, points, leagues, garage prices and purchases, AI
+   plans) and `career_test.zig` (CYCLES accounting, purchases, AI plans
+   deterministic and rising with the player's, a scripted full-circuit
+   soak to the end card with the autopilot driving).
+3. Presentation: CIRCUIT in the main menu (SPEC 8.1 order: QUICK RACE,
+   GARBAGE COLLECTION, CIRCUIT, LINK, SOUND); the racer select without a
+   track row; **the garage** (`garage.zig`, SPEC 9.2: the portrait, the car
+   on its turntable, the slot list with levels and prices, Up/Down a slot,
+   Left/Right an item, A buys, a one-line reaction from the racer's
+   portrait per purchase, in each racer's voice: `roster_text.zig`);
+   results with CYCLES; **standings** (points table and the CYCLES
+   breakdown); the **league card** (won / cleared / failed), the
+   **unlock card** (the Runoff), the **circuit end card** (SPEC 8.2: "You
+   reached the fence. The Hyperscalers did not notice."). Chips drawn on
+   the floor (a `hud.png` cell) with a `+10` pop; BURST pips up to 4.
+   Career state in RAM only, no saves (SPEC 17.6).
+4. Polish: `TAGGED!` (and every world-anchored text) kept on screen; A on
+   the title goes straight to the Quick Race select (two presses, SPEC
+   8.1); the balance pass (dangerous; measured in the circuit soak); the
+   bench profile and any fast path the new screens or chips need.
+5. Gate: `tools/check.sh` gains the golden replays, a circuit preview run
+   (menu to garage, a purchase, a race, standings) and a circuit bench
+   (a recorded circuit race with chips, plain and `--lcd`); worst frame
+   under 8 ms; RAM free reported (62,752 B at M4).
+
+### M5 gate
+
+`tools/check.sh` PASS; the full-circuit soak reaches the end card; the
+M0-M4 replays unchanged; bench under 8 ms; `docs/preview_m5.gif` (garage
+purchases with reactions, standings, the league unlock, the end card);
+PLAN "M5 status"; deferred questions L28 on. The lead tags
+`snouty-gc/m5` and merges.
+
+### M5 status
+
+**2026-10-05, branch `gc/present`.** The SNOUTY GCP (CIRCUIT) is playable
+from the main menu to the end card; the polish list is done. Commits:
+the plan (9e86ef55), the sim side (f0b7e09e), the screens and polish
+(54bc7ebd), chips every 4 s and the docs (4e8845d8), this status.
+
+- **M5.0 as planned** (`world.Loadout`, `Setup.loadouts`, `Setup.chips`,
+  `Car.ecc` / `burst_max` / `watchdog` / `chips`, `World.chips_on` /
+  `chip_clock` / `chips`, event `chip`; L34 changed the chips' return to
+  every 240 ticks). **World 2,540 B** (cap 2,560 kept), `Car` 116 B. The
+  stock setup is the M0-M4 car: `career_test.zig` replays five seeded
+  4,000-tick races (race on tracks 0, 3, 4, GC on 1, attract on 5) to
+  fingerprints recorded at 90683be4, with the default and with an
+  explicit stock `Loadout`; `check.sh` pins the four input scripts at
+  update 2,999 (`m0_race` 1,125,151,687, `m2_race` 1,116,132,432,
+  `m3_gc_race` -1,540,294,026, `m3_outflow_race` 69,064,753: as at M4).
+- **Career** (`career.zig`): CYCLES 1000/600/400/250/150/100 by place,
+  150 a credited wreck, 10 a chip, 1500 a league win; points 9/6/4/3/2/1;
+  top 3 opens the Runoff, the Runoff's top 3 ends the Prix; SPEC 9.2's
+  prices; AI plans per racer (LEGACY never CLOCK, KIDDIE never PLATING)
+  on 75% of the player's garage spending (L35).
+- **Screens**: CIRCUIT in the menu, the select's `A ENTER THE PRIX`, the
+  garage (`garage.zig`) with 60 reaction lines, the standings, league,
+  unlock and end cards (`standings.zig`), chips on the floor (a new
+  `hud.png` cell, `+10` pops), four BURST bolts, `TAGGED!` clamped on
+  screen, A on the title to the Quick Race select (two presses).
+- **Tests** (`zig build test-gc`: **137 pass**, 21 new in
+  `career_test.zig`): the golden races, each upgrade (PLATING to 230 on a
+  MAINFRAME, ECC ignoring 1..4 with no kill credit, PING L3 chipping ECC
+  in a frozen scenario, CLOCK, TRACTION, BURST BUFFER 1..4 refilled on
+  the line, WATCHDOG 120/90/60/40 with the hulk, weapon levels and swaps,
+  LOGIC BOMB L3 44), chips (20+ on every track, all on the floor, the
+  autopilot takes some, one event each, they come back, none without
+  `Setup.chips`), CYCLES and points, a league won / failed / cleared,
+  standings ties, the garage's prices, poor and maxed, every reaction
+  fitting two rows, the plans' rules, plans deterministic and rising
+  with the player's spending, and the **circuit soak**: the autopilot
+  (SNOUTY's AI) drives SNOUTY and KIDDIE through whole Prix to the end
+  card, buying the cheapest level it can before each race (12 races each,
+  two failed leagues; about 4.8 wrecks a race; L37 has the other racers).
+- **check.sh**: the golden replays, the title shortcut, a CIRCUIT run
+  (menus, garage, two purchases, a real race to the standings, then
+  made-up results to the league, unlock and end cards), two new benches.
+  **PASS** (test via test-gc: another cart's runner fails in `zig build
+  test`, as before).
+- **Bench** (calibrated; `--lcd` identical, mean / worst ms): `m0_race`
+  3.65 / 5.22; stress 5.02 / **6.17**; `m2_race` 3.58 / 5.22;
+  `m3_outflow_race` 3.64 / 5.71; `m3_gc_race` 3.49 / 5.67; new
+  `m5_circuit_race` 3.51 / 4.66 (the garage, then a CIRCUIT race with
+  chips and upgraded AIs); new `m5_cards` 1.75 / 5.43 (the unlock card's
+  A frame: its floor plus the garage drawn over it). Probe: stress 5.17 /
+  6.34, GC 3.59 / 5.80. The one fast path: the end card's chain-link
+  fence by columns (6.39 -> under 4 ms on that card).
+- **RAM**: `size -A` **.text 162,188 + .data 7,688 + .bss 52,144** (+
+  1,728 exidx/extab + descriptor) = 223,768 B, **50,408 B (49 KB) free**
+  (M4: 62,752).
+- `docs/preview_m5.gif` (644 frames, 60 ms): the menu's CIRCUIT row, the
+  select, the garage (SPEAR PHISH L2 and SNOUTY's line, PING shown as an
+  800 swap, PLATING L1 and L2, then `NO CYCLES. I'LL GO HUNT SOME.`), a
+  CIRCUIT race with chips, the real results and standings (4th, 8 kills,
+  8 chips: +1,530), then made-up results: the Dumps PRIX WON card, NEW
+  PRIX UNLOCKED over the Runoff, the Runoff's card and the end card.
+- **On a badge**: never run. Check the garage's text and pips at 1:1, the
+  chips' readability at speed, that a human can clear the Dumps (L37), the
+  title's A, and the menu's five rows.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -1958,3 +2129,79 @@ L26. **A guest that gets GO on the LINK screen** (not in the select)
 L27. **zig fmt** in this Zig rewrote `@intFromEnum` / `@enumFromInt` to
     `@backingInt` / `@fromBackingInt` in the cart's files (the first M4
     Track B commit carries that churn).
+
+Taken during M5 (Circuit and polish):
+
+L28. **No saves** (SPEC 17.6): the SNOUTY GCP lives in RAM for the
+    session. B in the garage keeps it (CIRCUIT resumes it in the garage);
+    switching the badge off loses it. A new Prix starts only after the
+    end card (there is no "abandon"). A flash save would be a small blob
+    (`career.Career` is plain data) if Adrian wants one.
+L29. **Gun swaps** reset the gun to L1, and the old gun's levels are gone
+    (swapping back costs 800 again). AIs never swap; their plans level
+    their own guns.
+L30. **Weapon levels** are cumulative (L3 keeps L2's ammo) and round up:
+    front ammo 40/10/6/3 -> 50/13/8/4, damage PING 4 -> 5, BROADCAST 3 ->
+    4, LANCE 25 -> 32, SPEAR PHISH 30 -> 38; rear L3 "+25% effect" is the
+    LOGIC BOMB's 35 -> 44, the caltrop's 5 -> 7 and its slow 60 -> 75
+    ticks, the MEMORY LEAK's grown radius 18 -> 23, the FIREWALL's half
+    width 32 -> 40 (its 1 a tick stays, so ECC ignores it).
+L31. **ECC** ignores any hit of 4 or less from anything (shots, walls,
+    FIREWALL ticks, DDOS drones, small rams). An ignored hit is no hit: no
+    kill credit window, no GC tag, no hit event.
+L32. **TRACTION** adds 8/256 (0.03) to the chassis grip multiplier;
+    **CLOCK** scales `top_q8` by 1.04 a level, so thrust and terminal
+    speed both follow.
+L33. **WATCHDOG** L2 and L3 (60 and 40 ticks) are shorter than the hulk's
+    90: the hulk burns for the whole delay.
+L34. **Cycle chips** are CIRCUIT-only (`Setup.chips`), 8 trails of 3 at
+    samples 20 + 32k (+0, 2, 4), left / centre / right at 45% of the half
+    width (moved to the line if that is not road); every taken chip comes
+    back every 240 ticks. First built as "back on the leader's next lap",
+    which left none for the back of the field. AIs take chips too.
+L35. **AI budgets** are 75% of what the player has spent in the garage
+    (`tuning.ai_follow_pct`; `ai_own_pct` 0). The first try also counted
+    each AI's own winnings: race winners maxed their cars by the second
+    league and the autopilot never left the Dumps in 18 races. So the
+    field follows the player's spending a step behind it, deterministically.
+L36. **League rules**: points 9/6/4/3/2/1, ties go to the better place
+    in the league's last race; the league win (1500 CYCLES) is 1st in
+    points; the top 3 open the next league; a failed league is replayed
+    from race 1 with the points reset and the CYCLES and upgrades kept.
+L37. **Balance** (SPEC 17.12, dangerous): base tuning is unchanged, as
+    the M0-M4 replays must not move. The danger in the CIRCUIT comes from
+    the AIs' upgrades: the autopilot (SNOUTY's AI) wrecks about 4.8 times a
+    race in the circuit soak and is roughly a 4th-place driver against an
+    equal field; it needs 12 races (two failed leagues) as SNOUTY or KIDDIE,
+    24 as SYSADMIN, and never clears the Dumps in a MAINFRAME. A human
+    using BURST and pickups well should do better; `ai_follow_pct` is the
+    knob for Adrian's play test.
+L38. **Garage flow**: the cursor starts on FRONT; Start races from any row
+    (A on RACE too); B goes to the main menu. The AIs shop when the race
+    starts (after the player). Pause RESTART in a CIRCUIT race is the same
+    track with a new seed; QUIT goes back to the garage and books nothing.
+L39. **CYCLES on screen**: the standings card has the race's breakdown
+    (place, kills, chips, total, wallet) rather than the results table,
+    whose six rows fill the screen; the results cards are unchanged.
+L40. **Quick Race in two presses**: A on the title opens the Quick Race
+    select (Start still opens the menu). No title hint was added, as
+    `menu.zig`'s title belongs to the gc/menu-fix branch.
+L41. **Main menu**: CIRCUIT is the third row (SPEC 8.1 order); the rows'
+    pitch went from 13 to 11 px so five rows fit above the hint lines.
+    gc/menu-fix's PICKUPS row will need the same room at the merge.
+L42. **The Prix**: the new text uses the SNOUTY GCP name (Adrian's rename):
+    `THE SNOUTY GCP` under CIRCUIT, `A ENTER THE PRIX`, `THE DUMPS PRIX`,
+    `PRIX WON!`, `NEW PRIX UNLOCKED`, `SNOUTY GCP / PRIX COMPLETE` on the
+    end card, whose line SPEC 8.2 writes in sentence case and the cart
+    in capitals.
+L43. **Garage reactions**: ten per racer (swap, level, plating, ECC,
+    clock, traction, burst, watchdog, too poor, maxed), at most two rows
+    of 19, up for 3 s, in the racer's livery colour; the portrait bobs
+    while it talks.
+L44. **Debug paths**: `debug_prix_skip` (wasm) books made-up results so
+    the preview and check.sh reach the cards without six races; the
+    `gc_cards` poke (badge-bench) makes the garage's Start book a 1st place
+    instead of racing. Neither is reachable in play.
+L45. **HUD**: up to four BURST bolts, packed 6 px apart past two so they
+    stay left of the car; every floating tag (`TAGGED!`, `<honey>`, `+10`)
+    is clamped to x 2..158.

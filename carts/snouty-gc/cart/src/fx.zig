@@ -26,6 +26,7 @@
 //! the sweep it went out at for the results; `blast` puffs at a vent's
 //! mouth; `hazard_hit` sparks, flashes the armor bar and names the hazard
 //! in the feed. The attract demo reads `panic_target` to cut its camera.
+const std = @import("std");
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
@@ -58,9 +59,10 @@ pub const Particle = struct {
     dx: i8 = 0,
     dy: i8 = 0,
 };
-const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK", "TAGGED!" };
+const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK", "TAGGED!", "+10" };
 const text_quack: u8 = 3;
 const text_tagged: u8 = 4;
+const text_chip: u8 = 5;
 pub const particle_count = 48;
 pub var particles: [particle_count]Particle = @splat(.{});
 var next_particle: usize = 0;
@@ -348,7 +350,12 @@ fn wreck_cause(c: u8) world.Wreck {
 /// pickups) are simply ignored here until they get a look.
 fn on_event(w: *const world.World, e: *const world.Event, follow: u8) void {
     const kind = e.kind;
-    if (kind == .hit) {
+    if (kind == .chip) {
+        // M5: a cycle chip taken: a pop, and `+10` over it for this
+        // badge's own car (10 CYCLES in the career).
+        spawn(.spark, px_q(e.x), px_q(e.y), 3, 8);
+        if (e.a == follow) spawn_text(px_q(e.x), px_q(e.y), text_chip, 0, 0);
+    } else if (kind == .hit) {
         if (!valid_car(e.b)) return;
         const v = &w.cars[e.b];
         spawn(.spark, v.x, v.y, 6, 12);
@@ -615,8 +622,12 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
         .text => {
             const str = texts[pt.size % texts.len];
             if (pt.age > 30 and pt.age % 2 == 0) return;
-            const color: cart.Pixel = if (pt.size == text_quack) honey_white else if (pt.size == text_tagged) (if (pt.age % 4 < 2) tagged_red else honey_white) else honey_orange;
-            font.draw(str, p.sx - @as(i32, @intCast(str.len * 4)), bottom - 8, color, honey_shadow);
+            const color: cart.Pixel = if (pt.size == text_quack) honey_white else if (pt.size == text_tagged) (if (pt.age % 4 < 2) tagged_red else honey_white) else if (pt.size == text_chip) chip_green else honey_orange;
+            // M5: kept whole on screen (TAGGED! over a car at the edge was
+            // cut off), 2 px from either side.
+            const wpx: i32 = @intCast(str.len * 8);
+            const x = std.math.clamp(p.sx - @divTrunc(wpx, 2), 2, 158 - wpx);
+            font.draw(str, x, bottom - 8, color, honey_shadow);
         },
         .ray => draw_ray(p.sx, bottom, pt.age),
     }
@@ -624,6 +635,7 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
 
 const honey_orange: cart.Pixel = .from_color(.rgb(0xF59A3C));
 const tagged_red: cart.Pixel = .from_color(.rgb(0xE83838));
+const chip_green: cart.Pixel = .from_color(.rgb(0x4CE070));
 const honey_white: cart.Pixel = .from_color(.rgb(0xFCFBF9));
 const honey_shadow: cart.Pixel = .from_color(.rgb(0x16031B));
 const ray_core: cart.Pixel = .from_color(.rgb(0xFFFFFF));

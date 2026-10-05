@@ -43,7 +43,11 @@ and 1.5x grip, OVERFIT 1.1x top speed and fragile in contact). Maps are
 stored packed and the selected track is unpacked into RAM at race start.
 M5 made the cart XIP only; M5.1 brought the RAM cart back (the XIP
 variant's copy of the league art was what overflowed cart RAM) and keeps
-the XIP cart beside it for a hardware comparison.
+the XIP cart beside it for a hardware comparison. M5.5 adds knockouts
+(ram a rival into a meltdown or off the track and it is out). M6 adds
+LINK RACE: two badges joined by a cable on their UART headers race each
+other on one track in lockstep (SPEC 8.1, section 9 below); it is greyed
+in the simulator, where there is no link.
 
 Controls (SPEC section 4) at M2:
 
@@ -139,8 +143,9 @@ python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 170
 
 Input scripts live in `tools/scripts/`:
 
-- `m3_menus.json` (600 frames): Start at 130 (title), Down Down A (Sound
-  on) at 160-180, Up Up A (Quick Race) at 200-220, Down A (league 2,
+- `m3_menus.json` (600 frames): Start at 130 (title), Down Down A at
+  160-180 (written for an older menu: since M6 it lands on the greyed
+  LINK RACE row and does nothing), Up Up A (Quick Race) at 200-220, Down A (league 2,
   Spine) at 240-250, Down A (track 2, Rack Row 7) at 270-280; Start at 400
   (pause), Down A at 420-430 (Restart). `debug_screen` reads 5 (race)
   from 281 and `debug_track` 4.
@@ -204,6 +209,10 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_active` | 1 while the player's machine is alive |
 | `debug_sound`, `debug_mode`, `debug_track`, `debug_gp_points` | sound flag; 0 quick / 1 GP / 2 attract; current track index; SNOUTY's GP points |
 | `debug_rebuilds`, `debug_replay_calls`, `debug_replay_max` | rewind cost: keyframe rebuilds this race (0 expected), simulate calls by restores and prefills in the last frame, and the most in one frame since boot |
+| `debug_link_view(k)` | made-up LINK RACE lobby (the simulator's link is offline): 1 searching, 2 the host's lobby, 3 the guest's, 4 another cart, 5 the host with both ready (START: GO), 6 the guest ready, 7 no link; the lobby's controls work on it |
+| `debug_link_race(k)` | a made-up two-human link race without the lockstep: k bit 0 the view (0 the host's machine 0, 1 the guest's machine 1), k >> 1 the track; the host drives the menu's machine, the guest BACKPROP; with `debug_set_autopilot:1` both views show the same race |
+| `debug_link_notice(k)` | over a made-up link race: 1 WAITING FOR PEER, 2 PEER LEFT, AI DRIVING, 3 a desync (the results with the DESYNC band), 0 none |
+| `debug_link_state`, `debug_linked`, `debug_view`, `debug_link_waits`, `debug_human_lap(s)` | the lockstep state (0 offline, 1 searching, 2 wrong cart, 3 wrong version, 4 lobby, 5 racing, 6 waiting, 7 peer left, 8 desync; 0xFF before LINK RACE opened); 1 in a link race (3 made up); the machine the camera follows; link race frames without a tick; laps of human slot s |
 
 ## 6. Flashing
 
@@ -244,4 +253,61 @@ python3 tools/build_tracks.py     # tilesets, horizon strips, every .track -> as
 python3 tools/gen_sin.py          # cart/src/gen/sin.zig
 python3 tools/gen_font.py         # assets/gen/font.bin from the SDK font
 python3 tools/prepare_assets.py   # sprite sheets (assets/gen/*.png), ASSETS.md
+```
+
+## 9. Link race on two badges (M6)
+
+SPEC 8.1 is the design, root `docs/LINK.md` the cable and
+`docs/LOCKSTEP.md` the shared lockstep. The simulator has no link, so
+LINK RACE is greyed there; the host tests (`cart/src/link_race_test.zig`,
+in `zig build test`) run two badges over a virtual cable.
+
+**Hardware check (two badges).**
+
+1. Flash `zig-out/firmware/snouty-zero.uf2` from main onto both badges
+   (section 6) and start Snouty Zero on both.
+2. Join the two UART headers (J4, the 3-pin JST-SH) with a JST-SH 3-pin
+   to 3-pin cable; crossed or straight both work. Not the Qwiic (I2C)
+   header.
+3. On both: Start through the title, then LINK RACE in the main menu.
+   Expected within a second: the lobby says HOST on one badge and GUEST
+   on the other, with CROSSED or STRAIGHT top right. `PLUG IN THE CABLE`
+   that does not go away means no link (check the cable and the header);
+   `WRONG CART: ...` means the other badge runs another link cart.
+4. On the host, pick the track: the TRACK row, Left/Right (any track of
+   the three leagues). The guest's TRACK line follows it live.
+5. On both, pick a machine on the MACHINE row (Left/Right) and press A:
+   YOU ... READY, and the other badge shows PEER <machine> READY.
+6. On the host, Start (`START: GO` blinks): both badges run the
+   countdown together. Each follows its own machine (host: machine 0,
+   guest: machine 1, side by side on the back row); the other human is
+   the cyan dot on the minimap.
+7. Worth trying: ram each other and the rivals (a knockout counts for
+   whoever did it); Start on either badge pauses both on the same tick,
+   RESUME on either resumes both; pull the cable mid-race: both say
+   `PEER LEFT, AI DRIVING` and finish with the AI driving the other
+   machine. At the finish each badge shows both humans' place and time;
+   A goes back to the lobby for a rematch.
+
+Report anything that says `WAITING FOR PEER` for long stretches with the
+cable in, or `DESYNC: RACE ENDED` (that is a determinism bug: note the
+track, the machines and roughly when).
+
+**Preview without a cable.** The debug exports make up what the link
+would show (section 5). The M6 GIF (`docs/preview_m6.gif`): the lobbies,
+then one race on Exhaust Ridge from the host's view and from the
+guest's, then the guest's results:
+
+```sh
+W=../../zig-out/bin/snouty-zero.wasm
+node ../../tools/preview.mjs $W --frames 600 --every 6 --out out/a \
+    --call debug_link_view:1 --call-at "90 debug_link_view:2" \
+    --press RIGHT:130-131 --press RIGHT:160-161 --press DOWN:200-201 --press A:270-271 \
+    --call-at "330 debug_link_view:5" --call-at "420 debug_link_view:3" --call-at "510 debug_link_view:6"
+node ../../tools/preview.mjs $W --frames 1560 --every 15 --out out/b --call debug_link_race:4 --call debug_set_autopilot:1
+node ../../tools/preview.mjs $W --frames 1560 --every 15 --out out/c --call debug_link_race:5 --call debug_set_autopilot:1 \
+    --call-at "1250 debug_link_notice:1" --call-at "1340 debug_link_notice:0"
+node ../../tools/preview.mjs $W --frames 7000 --every 12 --start-skip 6550 --out out/d --call debug_link_race:5 --call debug_set_autopilot:1
+# number out/a, b, c, d's frames into one out/all/frame_NNNNN.png sequence, then:
+python3 ../../tools/make_gif.py out/all docs/preview_m6.gif --scale 2 --ms 100
 ```

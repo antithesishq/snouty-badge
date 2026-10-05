@@ -1,0 +1,70 @@
+seed 1
+# Numbers the badge UI cannot enter but the listing takes: a negative
+# marksman claim (D9=-3 makes every shot 4 s slower), an oxen amount beyond
+# 32 bits, a leading plus sign, negative and large menu choices (2180: not 1
+# means continue; 2100: out of range means continue; eating and riders ask
+# again).
+# goal: lines 910 2900; ends: E starved
+# written by mkscripts.py (scenario 'edge-numbers')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+-3
+# 860 oxen $
+99999999999
+# 860 oxen $
++260
+# 940 food $
+150
+# 990 ammunition $
+80
+# 1040 clothing $
+90
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+-1
+# 2770 eat (1) poorly (2) moderately (3) well
+-1
+# 2770 eat (1) poorly (2) moderately (3) well
+255
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+-5
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+-2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+3
+# 2180 (1) hunt (2) continue
+200
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+300
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.78
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.98
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 1.30
+# 5220 minister?
+YES
+# 5240 fancy funeral?
+YES
+# 5260 inform next of kin?
+YES

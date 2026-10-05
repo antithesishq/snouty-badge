@@ -17,7 +17,17 @@ here: every forked file names its Zero source and commit on its first line.
   the lobby and link select frames, the link race and pause frames
   (submit, one `step` a frame, the pump points, the pump loop to
   `tuning.link_pump_until_us`), `linked`, the gap probe
-  (`gc_pump_probe`).
+  (`gc_pump_probe`). M5: the CIRCUIT (`prix`, a `career.Career`; the
+  `garage`, `standings` and `card` screens, `Mode.circuit`), A on the
+  title for a Quick Race, the `gc_cards` bench poke.
+- `career.zig` (M5): the CIRCUIT (the SNOUTY GCP, SPEC 8.2, 9): leagues,
+  points, CYCLES booked from a finished World (place, `kills`, `chips`,
+  league wins) outside `simulate`, the garage's offers, prices and
+  purchases, the AIs' upgrade plans (`plans`, `ai_shop`: a share of the
+  player's spending), `setup(seed)` for the next race. Pure, no cart API.
+  `garage.zig` (the garage screen: portrait, turntable, slots, prices,
+  the racers' reactions), `standings.zig` (the standings, league, unlock
+  and end cards).
 - `net.zig` (M4): the lockstep over `lib/link.zig` (`Net(L)`: lobby,
   input rings, packets, `step`, pause, peer-left hand-over, desync check,
   `world_hash`); `docs/NET.md` is its protocol and how main drives it.
@@ -29,11 +39,15 @@ here: every forked file names its Zero source and commit on its first line.
 - `world.zig`: the plain `World` (6 `Car`s, clock, PRNG, countdown, track
   index; no pointers), `Input` (the race byte: bit 0 up, 1 down, 2 left,
   3 right, 4 A, 5 B, 6 Start, 7 Select), `Setup` (track, seed, the two
-  humans' racers, mode, M4 `crews`: AI cars past it stay off the grid).
+  humans' racers, mode, M4 `crews`: AI cars past it stay off the grid;
+  M5 `loadouts`, one `Loadout` per car, default the stock car, and
+  `chips`).
 - `sim.zig`: `reset(w, setup)` and `simulate(w, inputs: [2]u8)`, pure in
   `(World, inputs)`: auto-throttle driving, walls, armor and `damage`,
   wrecks with kill credit, hulks and the WATCHDOG respawn, contacts and
-  ramming by mass, laps (and the ammo refill), rank. No cart API, no
+  ramming by mass, laps (and the ammo refill), rank; M5 `equip` (a
+  `Loadout`'s upgrades: PLATING and ECC, CLOCK, TRACTION, BURST BUFFER,
+  WATCHDOG, guns and levels) and the cycle chips. No cart API, no
   globals written.
 - `weapons.zig`: the 4 front and 4 rear weapons (SPEC 6.1, 6.2), the
   projectile and drop pools, hits, the SPEAR PHISH lock, the event ring
@@ -99,7 +113,10 @@ here: every forked file names its Zero source and commit on its first line.
   `content_test.zig` (M3: hazards, bays, the AI's hazard sense, every
   track's soak, GARBAGE COLLECTION and its soak, attract), `net_test.zig`
   (M4: two `Net`s and Worlds on `lib/link_virtual.zig`: link races in
-  sync, loss, unplug, desync, pause, quit and rematch, CREWS), tests in
+  sync, loss, unplug, desync, pause, quit and rematch, CREWS),
+  `career_test.zig` (M5: the M0-M4 races' recorded fingerprints, each
+  upgrade, ECC, chips, CYCLES, the garage, the AI plans, a full-circuit
+  soak to the end card), tests in
   `track.zig`, `hazards.zig`, `gc_mode.zig`, `fixed.zig`, `engine.zig`.
 
 ## Data
@@ -137,3 +154,7 @@ Sweeper sheet `hazards.png`).
   scripts' World checksums (`check.sh` preview) must not change. The
   link race is host-tested only (`net_test.zig`); `docs/LINK_PLAY.md`
   has the two-badge check.
+- M5: the stock `Setup` must stay the M0-M4 car: `check.sh` pins the four
+  input scripts' `debug_world_sum` and `career_test.zig` the seeded
+  races' fingerprints. Upgrades and chips reach the World only through
+  `Setup` (`loadouts`, `chips`); LINK keeps the defaults.

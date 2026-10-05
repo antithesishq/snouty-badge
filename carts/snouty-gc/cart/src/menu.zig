@@ -77,8 +77,8 @@ pub fn draw_title(frame: u32) void {
 // --- The main menu (SPEC 8.1) -------------------------------------------------------
 
 /// Main menu rows, in order.
-pub const Item = enum(u8) { quick, gc, link, sound };
-pub const item_count = 4;
+pub const Item = enum(u8) { quick, gc, circuit, link, sound };
+pub const item_count = 5;
 
 const panel = cart.DisplayColor.rgb(0x2A1E34);
 const panel_hi = cart.DisplayColor.rgb(0x4A2440);
@@ -91,10 +91,10 @@ const panel_hi = cart.DisplayColor.rgb(0x4A2440);
 /// LINK IN SIMULATOR flashes in place of its line.
 pub fn draw_main(list: *const List, sound_on: bool, link_ok: bool, link_note: u32, frame: u32) void {
     big_title(8);
-    const y0: i32 = 36;
-    const pitch: i32 = 13;
-    cart.rect(.{ .x = 4, .y = y0 - 3, .width = 152, .height = 4 * pitch + 5, .fill_color = panel, .stroke_color = hud.dim });
-    const items = [item_count][]const u8{ "QUICK RACE", "GARBAGE COLLECTION", "LINK", if (sound_on) "SOUND: ON" else "SOUND: OFF" };
+    const y0: i32 = 33;
+    const pitch: i32 = 11;
+    cart.rect(.{ .x = 4, .y = y0 - 3, .width = 152, .height = item_count * pitch + 5, .fill_color = panel, .stroke_color = hud.dim });
+    const items = [item_count][]const u8{ "QUICK RACE", "GARBAGE COLLECTION", "CIRCUIT", "LINK", if (sound_on) "SOUND: ON" else "SOUND: OFF" };
     const x: i32 = 80 - @as(i32, subtitle.len) * 4;
     for (items, 0..) |item, i| {
         const y = y0 + @as(i32, @intCast(i)) * pitch;
@@ -109,6 +109,7 @@ pub fn draw_main(list: *const List, sound_on: bool, link_ok: bool, link_note: u3
     const about = switch (@as(Item, @fromBackingInt(@intCast(list.cursor)))) {
         .quick => "3 LAPS, SIX RACERS",
         .gc => "LAST CAR LEFT WINS",
+        .circuit => "THE SNOUTY GCP",
         .link => if (link_ok) "TWO BADGES, A CABLE" else "NO LINK IN",
         .sound => "A TOGGLES THE SPEAKER",
     };
@@ -118,6 +119,7 @@ pub fn draw_main(list: *const List, sound_on: bool, link_ok: bool, link_note: u3
     hud.fill_rect(4, 92, 152, 32, hud.anti_black);
     hud.centered(about, 96, about_color);
     if (list.cursor == @backingInt(Item.gc)) hud.centered("MARK AND SWEEP", 106, hud.dim);
+    if (list.cursor == @backingInt(Item.circuit)) hud.centered("2 LEAGUES, A GARAGE", 106, hud.dim);
     if (on_link) hud.centered(if (link_ok) "LINK RACE, LINK GC" else "SIMULATOR", 106, if (link_ok) hud.dim else about_color);
     hud.centered("A SELECT  B BACK", 116, hud.dim);
 }

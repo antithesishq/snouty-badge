@@ -121,7 +121,12 @@ pub const DemoResult = enum(u8) { none = 0, ok = 1, desync = 2 };
 
 /// `demo_result`: "DEMO OK" (grey) or "DEMO DESYNC" (Coral) at the top
 /// left once a demo has replayed its whole log; nothing for `.none`.
-pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult) void {
+/// The title menu (M7): PLAY (the campaign) and DEATHMATCH, Up/Down
+/// moves `cursor`. Without link hardware (the simulator) DEATHMATCH is
+/// greyed and "NO LINK IN SIMULATOR" shows under it while selected.
+pub const TitleMenu = struct { cursor: u8 = 0, link: bool = true };
+
+pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult, menu: TitleMenu) void {
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = anti_black });
     switch (demo_result) {
         .none => {},
@@ -131,9 +136,46 @@ pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult) void {
     blit.cell(gfx.title, 128, 40, 0, 16, 16, .{});
     centered("powered by", 62, iris);
     centered("deterministic replay", 72, iris);
-    if ((tick_n / 30) % 2 == 0) centered("PRESS A", 90, anti_white);
-    centered(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 106, grey);
-    centered("B: E1M1  START: TEST", 118, grey);
+    const blink = (tick_n / 30) % 2 == 0;
+    const items = [2][]const u8{ "PLAY", "DEATHMATCH" };
+    for (items, 0..) |item, i| {
+        const y: i32 = 82 + 10 * @as(i32, @intCast(i));
+        const on = menu.cursor == i;
+        const greyed = i == 1 and !menu.link;
+        const color = if (greyed) steel else if (on) anti_white else grey;
+        centered(item, y, color);
+        if (on and blink) {
+            const x: i32 = 80 - @as(i32, @intCast(item.len * 4)) - 12;
+            cart.text(.{ .str = ">", .x = x, .y = y, .text_color = coral });
+        }
+    }
+    if (menu.cursor == 1 and !menu.link) centered("NO LINK IN SIMULATOR", 102, grey);
+    centered(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 110, grey);
+    centered("B: E1M1  START: TEST", 120, grey);
+}
+
+/// Deathmatch (M7): frags in the bar's right block (x 96..159) instead of
+/// the keys and the rewind meter: "YOU n" over "THEM n".
+pub fn draw_frags(me: i16, them: i16) void {
+    cart.rect(.{ .x = 96, .y = bar_y, .width = 64, .height = bar_h, .fill_color = anti_black });
+    var buf: [8]u8 = undefined;
+    cart.text(.{ .str = "YOU", .x = 98, .y = bar_y + 3, .text_color = green });
+    cart.text(.{ .str = "THEM", .x = 98, .y = bar_y + 13, .text_color = coral });
+    text_right(signed(&buf, me), 158, bar_y + 3, anti_white);
+    text_right(signed(&buf, them), 158, bar_y + 13, anti_white);
+}
+
+/// `v` as decimal, a minus sign only when negative (std.fmt's width
+/// formats put a plus on signed values).
+pub fn signed(buf: []u8, v: i32) []const u8 {
+    const mag: u32 = @abs(v);
+    return if (v < 0) fmt(buf, "-{d}", .{mag}) else fmt(buf, "{d}", .{mag});
+}
+
+/// `str` with its last pixel column at `x1`.
+pub fn text_right(str: []const u8, x1: i32, y: i32, color: cart.DisplayColor) void {
+    const x: i32 = x1 + 1 - @as(i32, @intCast(str.len * 8));
+    cart.text(.{ .str = str, .x = x, .y = y, .text_color = color });
 }
 
 /// Death freeze (SPEC.md 9.1): the view is drawn red underneath; this is
@@ -226,16 +268,16 @@ fn press_a(ticks: u32) void {
     if (ticks >= 60 and (ticks / 30) % 2 == 0) centered("PRESS A", 100, anti_white);
 }
 
-fn centered(str: []const u8, y: i32, color: cart.DisplayColor) void {
+pub fn centered(str: []const u8, y: i32, color: cart.DisplayColor) void {
     text_in(str, 0, 160, y, color);
 }
 
 /// `str` centred in the span x0..x0+w.
-fn text_in(str: []const u8, x0: i32, w: i32, y: i32, color: cart.DisplayColor) void {
+pub fn text_in(str: []const u8, x0: i32, w: i32, y: i32, color: cart.DisplayColor) void {
     const tw: i32 = @intCast(str.len * 8);
     cart.text(.{ .str = str, .x = x0 + @divTrunc(w - tw, 2), .y = y, .text_color = color });
 }
 
-fn fmt(buf: []u8, comptime f: []const u8, args: anytype) []const u8 {
+pub fn fmt(buf: []u8, comptime f: []const u8, args: anytype) []const u8 {
     return std.fmt.bufPrint(buf, f, args) catch "?";
 }

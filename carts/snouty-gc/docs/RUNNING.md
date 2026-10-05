@@ -72,6 +72,31 @@ DRIVING`, `DESYNC`. `docs/LINK_PLAY.md` is how to play it and the
 two-badge hardware check (never run on two badges yet). In the simulator
 LINK is greyed: `NO LINK IN SIMULATOR`.
 
+M5 (CIRCUIT, SPEC 8.2, 9; the SNOUTY GCP): **A on the title** opens the
+Quick Race select (A, A to a race; Start still opens the menu). The main
+menu gains **CIRCUIT** (QUICK RACE, GARBAGE COLLECTION, CIRCUIT, LINK,
+SOUND). CIRCUIT opens the racer select (no track row: `A ENTER THE
+PRIX`), then the **garage**: the racer's portrait, the car turning under
+it, the slots FRONT, REAR, PLATING, CLOCK, TRACTION, BURST, WATCHDOG with
+their levels as pips, and RACE. Up/Down a slot, Left/Right a gun on FRONT
+and REAR (another gun is a swap at L1, the car's own its next level), A
+buys (the price turns coral when the wallet is short), and the portrait
+answers every press with a line (`NO CYCLES. I'LL GO HUNT SOME.`); Start
+or A on RACE races the league's next track, B goes back to the menu with
+the Prix kept (CIRCUIT resumes it). A CIRCUIT race has **cycle chips**
+(green chips in trails along the road, 10 CYCLES each, a `+10` pops; they
+come back every 4 s) and the AIs drive their upgraded cars. After the
+results: the **standings** (the league table with this race's points, and
+the race's CYCLES: place, kills, chips, the wallet), then the garage.
+After a league's third race the **league card** (PRIX WON with +1500, a
+PODIUM place, or out of the top 3: the league again, CYCLES kept), then
+the **unlock card** over the Runoff's floor, and after the Runoff the
+**end card** (`YOU REACHED THE FENCE. THE HYPERSCALERS DID NOT NOTICE.`).
+Pause QUIT in a CIRCUIT race goes back to the garage (the race is not
+booked). The Prix lives in RAM: switching the badge off loses it. The
+BURST pips show up to four bolts (BURST BUFFER), and `TAGGED!` no longer
+runs off the screen edge.
+
 Controls at M1 (SPEC 5.1):
 
 | Input | Race |
@@ -103,7 +128,7 @@ repository root (`../..`), and build outputs are in the root `zig-out/`.
 ## 1. Pull and build
 
 ```sh
-git fetch origin && git checkout gc/present   # or a tag: git checkout snouty-gc/m3
+git fetch origin && git checkout gc/present   # or a tag: git checkout snouty-gc/m5
 git submodule update --init sycl-badge
 zig build -Dcart=snouty-gc                    # from the repository root
 ```
@@ -237,8 +262,30 @@ carts/snouty-gc/tools/scripts/m3_gc_race.json` (the `gc gaps:` traces in
 `bench.json`: the worst gap ending at each site, us: top, after the
 tick, horizon, floor, floor lines, sprites, HUD, after the HUD).
 
+The M5 preview (`docs/preview_m5.gif`, 644 frames at 60 ms) is two runs
+of one script: the menus (CIRCUIT), the select, the garage (3,000 CYCLES
+given; SPEAR PHISH L2 with its reaction, PING shown as an 800 swap,
+PLATING L1 and L2, then too poor for L3), a CIRCUIT race with the
+autopilot (chips, every 4th frame of 880..1400), then the real results,
+the standings, and made-up results (`debug_prix_skip`) through the Dumps'
+league card, the Runoff's unlock card, its league card and the end card:
+
+```sh
+A='--call debug_set_autopilot:1 --press START:2-2 --press START:20-20 --press DOWN:40-40,DOWN:55-55 --press A:80-80
+   --press A:120-120 --call-at "125 debug_prix_give:3000" --press A:150-150 --press RIGHT:250-250
+   --press DOWN:290-290,DOWN:310-310 --press A:330-330,A:430-430,A:530-530 --press START:650-650'
+eval node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 1400 --every 4 $A --out out/m5a/
+eval node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 8500 --every 4 --start-skip 7140 $A \
+    --press A:7230-7230,A:7320-7320,A:7470-7470,A:7600-7600,A:7720-7720,A:7870-7870,A:8020-8020,A:8080-8080,A:8120-8120,A:8200-8200,A:8320-8320 \
+    --call-at "'7520 debug_prix_skip:1'" --call-at "'7640 debug_prix_skip:1'" --call-at "'8060 debug_prix_skip:1'" \
+    --call-at "'8100 debug_prix_skip:2'" --call-at "'8140 debug_prix_skip:1'" --out out/m5b/
+```
+
+then frames 8..700 and 880..1400 of `m5a` and all of `m5b`, in that
+order, into one directory and `make_gif.py --scale 2 --ms 60`.
+
 Input scripts in `tools/scripts/` (`tools/record_script.py [--track N]
-[--gc] --frames F --out ...` records the autopilot's drive through the M3
+[--gc] [--circuit] --frames F --out ...` records the autopilot's drive through the M3
 menus: Start at 2, Start at 10, Down at 12 for GARBAGE COLLECTION, A at
 14, then Down at 16 and Right every 2 frames for the track, A 4 frames
 later; the race seed comes from the frame counter, so the replay is the
@@ -257,7 +304,14 @@ same race):
   the busiest track (Track A's, re-recorded on the M3 menus).
 - `m3_gc_race.json` (3,600 frames): `--gc --track 1`, a GARBAGE
   COLLECTION race on Monitor Dunes (marks, two collections, SNOUTY
-  collected and watching, the Sweeper). The stress scene (since M3) also
+  collected and watching, the Sweeper).
+- `m5_circuit_race.json` (3,000 frames, M5): `--circuit`, Start, Start,
+  Down, Down, A (CIRCUIT), A (SNOUTY), the garage, Start at 30: the
+  Dumps' first CIRCUIT race with chips.
+- `m5_cards.json` (600 frames, with `--poke gc_cards=1`, M5): the garage
+  with 5,000 CYCLES at boot, three purchases, then Start (which books a
+  made-up 1st place under the poke) and A through the standings, the
+  league card, the unlock card, the Runoff and the end card. The stress scene (since M3) also
   has a Sweeper, two firing vents, a MARKED car, tags and claws.
 
 Debug exports (zero-argument wasm functions for `--dump-exports`,
@@ -288,6 +342,8 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 | `debug_set_autopilot(v)`, `debug_start_race(n)`, `debug_stress(v)` | setup calls (`--call NAME:ARG`): the autopilot drives the player (v = 2: the pad's A, B and Select join it, and the pad alone plays a CAPTCHA board); skip to a Quick Race on track n; v = 1 starts the render stress scene (stress.zig: the World's pools filled without the sim) |
 | `debug_give_pickup(p)`, `debug_roll_pickup(p)`, `debug_give_ahead(p)` | M2 preview hooks (`--call-at "T NAME:P"`, P in SPEC 6.3 order: 0 PREFETCH .. 14 ZERO-DAY): pickup P into the followed car's slot, the same behind the 45-tick roulette, or to the nearest car ahead (its AI uses it) |
 | `debug_effect(k)` | M2 preview hook: `stress.Effect` k & 255 on the followed car (or car (k >> 8) - 1): 1 KERNEL PANIC, 2 BIT FLIP, 3 CAPTCHA, 4 DDOS, 5 DEADLOCK, 6 HEISENBUG, 7 SUDO, 8 RACE CONDITION, 9 SPAGHETTI, 10 RUBBER DUCK, 11 PREFETCH, 12 HONEYPOT spin, 13 ZERO-DAY, 14 duck pop, 15 HOT PATCH, 16 crate pop, 17 a rival's FORK BOMB ahead. These write the World (debug only); the sim runs the state on |
+| `debug_start_circuit(r)`, `debug_prix_skip(p)`, `debug_prix_give(c)` | M5 setup and preview hooks: a new CIRCUIT with racer r in the garage; book the next race as place p (the others in racer order) and show the standings; add c CYCLES to the wallet |
+| `debug_prix_cycles`, `debug_prix_league`, `debug_prix_race`, `debug_prix_done`, `debug_card`, `debug_garage_row` | M5: the wallet, the league (0 the Dumps, 1 the Runoff), the next race in it, the Prix over; the card shown (0 league, 1 unlock, 2 end); the garage's row (7 RACE). `debug_screen` 8 garage, 9 standings, 10 card; `debug_mode` 4 a CIRCUIT race |
 | `debug_pickup`, `debug_frozen`, `debug_captcha`, `debug_captcha_cursor`, `debug_captcha_lit`, `debug_forks` | followed car: held pickup (16 none), frozen ticks, CAPTCHA ticks left, cursor cell, lit cells; live FORK BOMB `&`s |
 
 ## 4. Flashing
@@ -310,9 +366,12 @@ badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --symbols --poke gc_stress=1
 # M3: Outflow Canyon, and a GARBAGE COLLECTION race
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 1500 --script carts/snouty-gc/tools/scripts/m3_outflow_race.json
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 3600 --script carts/snouty-gc/tools/scripts/m3_gc_race.json
+# M5: a CIRCUIT race from the menus and the garage; the garage, standings and every card
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 3000 --script carts/snouty-gc/tools/scripts/m5_circuit_race.json
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 600 --poke gc_cards=1 --script carts/snouty-gc/tools/scripts/m5_cards.json
 ```
 
-`gc_stress` is an exported global the cart reads in `start()`.
+`gc_stress` and `gc_cards` (M5) are exported globals the cart reads in `start()`.
 
 Read the `busy ms` column. Milestone numbers are in `PLAN.md`.
 
