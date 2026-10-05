@@ -51,6 +51,16 @@ const Badge = struct {
     log: [max_ticks + 1]u32 = undefined,
     /// The tick at which each slot first showed as handed over.
     gone_at: [16]?u32 = @splat(null),
+    /// Poll-hook pumps (inside frames).
+    polls: u64 = 0,
+
+    /// Pumps inside a frame (the poll hook), at the group's clock.
+    var clock: u64 = 0;
+    pub fn poll(ctx: *anyopaque) void {
+        const b: *Badge = @ptrCast(@alignCast(ctx));
+        b.polls += 1;
+        b.sess.pump(clock);
+    }
 
     fn next_time(b: *const Badge) u64 {
         return b.frame_start + points[b.point];
@@ -81,6 +91,10 @@ const Group = struct {
             const start = s.ls.is_host() and @popCount(s.ls.ready_mask()) == n_badges;
             if (!s.lobby(now, start)) return;
             b.racing = true;
+            // As the party cart does: the console pumps the port inside
+            // every frame (`Md.setup.poll_hook`), so pumps land in the
+            // middle of LockstepN's step.
+            b.md.setup.poll_hook = .{ .ctx = b, .func = &Badge.poll };
             b.log[0] = b.md.state_hash();
         }
         // The update's two ticks: submit both, step what is in.
@@ -123,6 +137,7 @@ const Group = struct {
             }
             const b = &g.b[best orelse return error.NoBadges];
             g.now = @max(g.now, b.next_time());
+            Badge.clock = g.now;
             g.relay.advance(g.now);
             if (b.point == 0) g.update(b) else {
                 b.sess.pump(g.now);
@@ -235,5 +250,8 @@ test "mp-party: four badges play Mega Bomberman in lockstep, a 30 ms badge, a le
     try std.testing.expect(at > leave_tick);
     var stalls: u64 = 0;
     for (&g.b) |*b| stalls += b.sess.ls.stats.stalls;
-    std.debug.print("\nmp-party: 4 badges, Mega Bomberman to tick {d} in sync (battle from {d}), badge 4 left at {d}, idle from tick {d} everywhere; step stalls {d}\n", .{ upto, bomber.battle_frame, leave_tick, at, stalls });
+    var polls: u64 = 0;
+    for (&g.b) |*b| polls += b.polls;
+    try std.testing.expect(polls > 4 * 4 * end_tick);
+    std.debug.print("\nmp-party: 4 badges, Mega Bomberman to tick {d} in sync (battle from {d}), badge 4 left at {d}, idle from tick {d} everywhere; step stalls {d}, {d} pumps from inside frames\n", .{ upto, bomber.battle_frame, leave_tick, at, stalls, polls });
 }
