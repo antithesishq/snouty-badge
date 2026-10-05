@@ -193,6 +193,14 @@ the lobby, the race, pause, results. Pump points in a race frame:
    stretch where nothing reads the FIFO. In the host tests this halves
    the stalls under loss (section 5).
 
+The loop runs while `n.wants_pump()` (lockstep's: `busy()`, or the link
+handshaking). Since the integration the LINK lobby and the link racer
+select run it too: a HELLO is 10 wire bytes, two more than the 8-byte
+receive FIFO, so a badge pumping once a frame kept a truncated HELLO
+(the next HELLO's leading END closed it). Searching (no cable) and a
+settled lobby pump once a frame at the top only; before, GC's lobby
+looped to 14 ms in every state.
+
 **Lobby frame** (host and guest):
 
 ```zig

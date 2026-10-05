@@ -896,12 +896,16 @@ fn probe_end() void {
     if (w.tick % net.check_every == 0) gc_probe_sink +%= net.world_hash(&w);
 }
 
-/// After drawing: keep pumping until `tuning.link_pump_until_us` into the
-/// frame (the vsync wait is the one stretch where nothing reads the
-/// receive FIFO), retrying a stalled step (`ticked`, null: no race).
+/// After drawing, while a race runs or the link handshakes
+/// (`lnk.wants_pump()`; the lobby and the link select call it too, as a
+/// HELLO overflows the receive FIFO): keep pumping until
+/// `tuning.link_pump_until_us` into the frame (the vsync wait is the one
+/// stretch where nothing reads the receive FIFO), retrying a stalled step
+/// (`ticked`, null: no race). Searching and a settled lobby pump once a
+/// frame at the top only.
 fn pump_loop(ticked: ?*bool) void {
     if (cart.is_wasm) return;
-    while (cart.micros_since_boot() -% frame_t0 < tuning.link_pump_until_us) {
+    while (lnk.wants_pump() and cart.micros_since_boot() -% frame_t0 < tuning.link_pump_until_us) {
         lnk.pump(cart.micros_since_boot());
         const t = ticked orelse continue;
         if (!t.* and w.phase != .finished) {

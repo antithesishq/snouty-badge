@@ -201,6 +201,13 @@ pub fn Net(comptime L: type) type {
             return self.ls.busy();
         }
 
+        /// Pump in a loop after drawing: a race runs (`busy`) or the link
+        /// is handshaking (a HELLO is 10 wire bytes, more than the 8-byte
+        /// receive FIFO). False while searching and in a settled lobby.
+        pub fn wants_pump(self: *const Self) bool {
+            return self.ls.wants_pump();
+        }
+
         /// The input slot this badge drives: 0 for the host, 1 for the guest.
         pub fn local_slot(self: *const Self) u1 {
             return self.ls.local_slot();
