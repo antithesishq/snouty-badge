@@ -321,3 +321,48 @@ test "autoplayer plays the whole game to the credits" {
     try expectEqualStrings("30,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000", game.clips_text(&g, &b));
     try expect(!g.panels.comp_div and !g.panels.projects_div and !g.panels.creation_div);
 }
+
+test "soft-float f64 routines are bit-exact (host FPU as reference)" {
+    const sf = game.softfloat;
+    var st: u64 = 0x1234567;
+    var i: u32 = 0;
+    while (i < 2_000_000) : (i += 1) {
+        st ^= st << 13;
+        st ^= st >> 7;
+        st ^= st << 17;
+        const r = st;
+        // Normals near each other (cancellation), anything, subnormals.
+        const a: u64 = switch (r % 4) {
+            0 => r,
+            1 => r & 0x800fffffffffffff,
+            else => (r & 0x800fffffffffffff) | ((1023 + (r >> 52) % 64 - 32) << 52),
+        };
+        const b: u64 = switch ((r >> 3) % 3) {
+            0 => a ^ (1 << 63) +% ((r >> 20) % 16),
+            1 => a +% ((r >> 30) % 4096),
+            else => (r *% 0x9E3779B97F4A7C15) & 0x83ffffffffffffff | (@as(u64, 0x3f) << 56),
+        };
+        const fa: f64 = @bitCast(a);
+        const fb: f64 = @bitCast(b);
+        inline for (.{ .{ fa + fb, sf.add(a, b) }, .{ fa - fb, sf.sub(a, b) }, .{ fa * fb, sf.mul(a, b) }, .{ @floor(fa), sf.floor(a) }, .{ @ceil(fa), sf.ceil(a) } }) |c| {
+            const want: u64 = @bitCast(c[0]);
+            if (std.math.isNan(c[0])) {
+                try expect((c[1] & 0x7fffffffffffffff) > 0x7ff0000000000000);
+            } else try expectEqual(want, c[1]);
+        }
+        try expectEqual(fa < fb, sf.lt(a, b));
+        try expectEqual(fa <= fb, sf.le(a, b));
+        try expectEqual(fa == fb, sf.eq(a, b));
+    }
+}
+
+test "prepared bench states keep running" {
+    for ([_]u8{ 2, 3 }) |stage| {
+        var g: Game = undefined;
+        game.init(&g, 7);
+        game.prepare.prepare(&g, stage);
+        game.advance_ms(&g, 5000);
+        try expect(g.human_flag == 0);
+        if (stage == 3) try expect(g.space_flag == 1 and g.battle_flag == 1);
+    }
+}
