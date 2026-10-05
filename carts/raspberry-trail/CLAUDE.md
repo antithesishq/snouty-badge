@@ -18,7 +18,9 @@ is the game's specification: never edit it.
   layout; paging needs the prompt box height), `ui/render.zig` and
   `ui/draw.zig` (the cart API side), `ui/autoplay.zig` (plays whole games
   through the buttons: previews and badge-bench), `ui/font.zig` +
-  `ui/gen/font5x7.zig` (from `tools/gen_font.py`). Run instructions,
+  `ui/gen/font5x7.zig` (from `tools/gen_font.py`), `ui/sound.zig` (the
+  effects through `tone_stream`; App raises `sfx`). The UI imports the art
+  as the `art` module (build.zig). Run instructions,
   controls, debug exports and pokes: `docs/RUNNING.md`.
 - `cart/src/art/`: generated pictures plus a draw API (from
   `tools/gen_art.py`).

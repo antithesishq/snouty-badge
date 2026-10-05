@@ -38,7 +38,7 @@ fn fresh() *App {
 /// Presses A through "A: MORE" pages until a prompt (or a shot) is up.
 fn to_prompt(app: *App) void {
     var k: u32 = 0;
-    while (app.phase == .more and k < 200) : (k += 1) press(app, .{ .a = true });
+    while ((app.phase == .more or app.phase == .scene) and k < 200) : (k += 1) press(app, .{ .a = true });
 }
 
 /// Plays the current shot right, `delay` frames before each press.
@@ -424,4 +424,85 @@ test "autoplay: stats (prints)" {
         }
         std.debug.print("policy {x}: {d} games, {d} frames/game, shots {d} hit {d} wrong {d} misfire {d}, outcomes {any}\n", .{ v, app.games_over, frames / @max(app.games_over, 1), app.shots, app.shots_hit, app.shots_wrong, app.misfires, outcomes });
     }
+}
+
+// -- M2: title menu, help, scenes, the strip ---------------------------------
+
+test "title menu: sound toggle, credits, new game" {
+    const app = fresh();
+    try std.testing.expectEqual(app_mod.TitleItem.new_game, app.title_cursor);
+    press(app, .{ .down = true });
+    try std.testing.expectEqual(app_mod.TitleItem.sound, app.title_cursor);
+    const s0 = app.sound;
+    press(app, .{ .a = true });
+    try std.testing.expectEqual(!s0, app.sound);
+    try std.testing.expectEqual(app_mod.Screen.title, app.screen);
+    press(app, .{ .down = true });
+    press(app, .{ .a = true });
+    try std.testing.expectEqual(app_mod.Screen.credits, app.screen);
+    press(app, .{ .b = true });
+    try std.testing.expectEqual(app_mod.Screen.title, app.screen);
+    press(app, .{ .down = true }); // wraps to NEW GAME
+    try std.testing.expectEqual(app_mod.TitleItem.new_game, app.title_cursor);
+    press(app, .{ .a = true });
+    try std.testing.expectEqual(app_mod.Screen.game, app.screen);
+}
+
+test "help: Start on release opens it, A toggles sound, B closes; not under the chord" {
+    const app = fresh();
+    press(app, .{ .a = true });
+    app.update(.{ .start = true });
+    try std.testing.expect(!app.help);
+    app.update(.{});
+    try std.testing.expect(app.help);
+    const s0 = app.sound;
+    const answers = app.answers;
+    press(app, .{ .a = true });
+    try std.testing.expectEqual(!s0, app.sound);
+    try std.testing.expectEqual(answers, app.answers); // A did not answer
+    press(app, .{ .b = true });
+    try std.testing.expect(!app.help);
+    // Start then Select (the chord), released: no help.
+    app.update(.{ .start = true });
+    app.update(.{ .start = true, .select = true });
+    app.update(.{ .select = true });
+    app.update(.{});
+    try std.testing.expect(!app.help);
+    try std.testing.expectEqual(app_mod.Screen.game, app.screen);
+}
+
+test "scenes: a death shows the tombstone between pages, the end screen after" {
+    const app = fresh();
+    var bot: autoplay.Bot = .{};
+    bot.set(0x22, 5); // starve
+    var saw_scene = false;
+    var saw_knell = false;
+    var frames: u32 = 0;
+    while (app.games_over < 1 and frames < 200_000) : (frames += 1) {
+        app.update(bot.step(app));
+        if (app.phase == .scene) {
+            saw_scene = true;
+            try std.testing.expectEqual(app_mod.Scene.tomb, app.scene);
+            try std.testing.expectEqualStrings("STARVED", app.tomb_cause);
+        }
+        if (app.sfx == .knell) saw_knell = true;
+        app.sfx = .none;
+    }
+    try std.testing.expect(saw_scene and saw_knell);
+    try std.testing.expectEqual(G.PromptKind.game_over, app.prompt().kind);
+    try std.testing.expectEqual(app_mod.Scene.tomb, app.scene);
+    // The month shortened to three letters: "MAR 29 1847".
+    try std.testing.expectEqual(@as(?usize, 3), std.mem.indexOfScalar(u8, app.tomb_date_text(), ' '));
+    try std.testing.expect(std.mem.endsWith(u8, app.tomb_date_text(), " 1847"));
+}
+
+test "strip: the wagon slides to the new mileage within a second" {
+    const app = fresh();
+    var bot: autoplay.Bot = .{};
+    bot.set(0x12, 3);
+    var frames: u32 = 0;
+    while (app.hud.mileage_true < 300 and frames < 100_000) : (frames += 1) app.update(bot.step(app));
+    try std.testing.expect(app.hud.mileage_true >= 300);
+    for (0..@as(usize, @intCast(knobs.slide_frames)) + 1) |_| app.update(.{});
+    try std.testing.expectEqual(app.hud.mileage_true, app.wagon_miles);
 }

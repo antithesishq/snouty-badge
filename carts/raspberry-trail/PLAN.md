@@ -93,6 +93,12 @@ interface is its own `art.zig` (L and U do not touch it). U calls it in M2.
   (oracle PASS, previews: a game, plain presses, a starvation, an arrival,
   8 shots; bench worst 2.11 ms / mean 1.21 ms busy over five autoplayed
   3000-frame runs; size 67.6 KB). docs/preview_m1.gif.
+- 2026-10-05: U's M2 presentation on trail/ui (with A's art): art title
+  and menu (NEW GAME, SOUND, CREDITS), trail strip with the sliding wagon,
+  event vignettes in the log, shooting scenes with flash and hit/miss,
+  tombstone and arrival scenes, help on Start, credits, sound through
+  tone_stream (off by default). Gate green: bench worst 3.27 ms / mean
+  1.70 ms busy (hunting with sound), size 108.1 KB. docs/preview_m2.gif.
 
 ## Deferred questions (defaults taken)
 

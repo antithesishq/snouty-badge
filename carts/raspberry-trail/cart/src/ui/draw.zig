@@ -162,3 +162,19 @@ fn glyph(ch: u8, x0: i32, y0: i32, p: cart.Pixel, scale: i32) void {
         }
     }
 }
+
+/// The art module's pixel sink (cart/src/art/art.zig): every call arrives
+/// clipped to the screen, transparent pixels already skipped.
+pub const Sink = struct {
+    pub fn put(_: Sink, x: i32, y: i32, c: anytype) void {
+        cart.framebuffer[@intCast(x)][@intCast(y)] = cart.Pixel.from_color(@bitCast(c));
+    }
+
+    pub fn span(_: Sink, x0: i32, x1: i32, y: i32, c: anytype) void {
+        const p = cart.Pixel.from_color(@bitCast(c));
+        const yy: usize = @intCast(y);
+        var x = x0;
+        while (x < x1) : (x += 1) cart.framebuffer[@intCast(x)][yy] = p;
+    }
+};
+pub const sink: Sink = .{};

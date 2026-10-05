@@ -15,11 +15,15 @@ const dir = "carts/raspberry-trail/";
 /// import it as "game".
 const game_root = dir ++ "cart/src/game/game.zig";
 
+/// The `art` module: track A's generated pictures and their draw API
+/// (cart/src/art/, from tools/gen_art.py). No cart API; the UI imports it.
+const art_root = dir ++ "cart/src/art/art.zig";
+
 /// Set by `add` before `os_cart.add` calls `build_cart_modules`.
 var build_options: ?*Build.Step.Options = null;
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
-    // -Dsound seeds the sound toggle (docs/SOUND.md); M2 adds the sound.
+    // -Dsound seeds the sound toggle (docs/SOUND.md).
     const options = b.addOptions();
     options.addOption(bool, "sound", opts.sound);
     build_options = options;
@@ -50,10 +54,23 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .root_source_file = b.path(dir ++ "cart/src/ui/tests.zig"),
             .target = b.graph.host,
             .optimize = .Debug,
-            .imports = &.{.{ .name = "game", .module = game_module(b, b.graph.host, .Debug) }},
+            .imports = &.{
+                .{ .name = "game", .module = game_module(b, b.graph.host, .Debug) },
+                .{ .name = "art", .module = b.createModule(.{ .root_source_file = b.path(art_root), .target = b.graph.host, .optimize = .Debug }) },
+            },
         }),
     });
     opts.test_step.dependOn(&b.addRunArtifact(ui_tests).step);
+
+    const art_tests = b.addTest(.{
+        .filters = if (opts.test_filter) |f| &.{f} else &.{},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "cart/src/art/tests.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    opts.test_step.dependOn(&b.addRunArtifact(art_tests).step);
 
     // `zig build raspberry-trail-oracle`: the engine side of the oracle
     // (tools/oracle_runner.zig) on the host, installed as
@@ -79,12 +96,13 @@ fn game_module(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.Op
     });
 }
 
-/// Adds `game`, `build_options` and `tone_stream` to the cart module (the
-/// firmware's and the wasm's target).
+/// Adds `game`, `art`, `build_options` and `tone_stream` to the cart module
+/// (the firmware's and the wasm's target).
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     _ = step;
     cart.addImport("game", b.createModule(.{ .root_source_file = b.path(game_root) }));
+    cart.addImport("art", b.createModule(.{ .root_source_file = b.path(art_root) }));
     if (build_options) |o| cart.addImport("build_options", o.createModule());
     cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
 }

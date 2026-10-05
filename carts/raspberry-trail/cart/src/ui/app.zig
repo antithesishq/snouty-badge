@@ -10,6 +10,7 @@ const G = @import("game");
 const L = @import("layout.zig");
 const log_mod = @import("log.zig");
 const text = @import("text.zig");
+const art = @import("art");
 
 pub const Buttons = packed struct(u8) {
     start: bool = false,
@@ -22,11 +23,22 @@ pub const Buttons = packed struct(u8) {
     right: bool = false,
 };
 
-pub const Screen = enum(u8) { title, game, history };
+pub const Screen = enum(u8) { title, game, history, credits };
+
+/// The title menu (SPEC 5).
+pub const TitleItem = enum(u8) { new_game, sound, credits };
+
+/// A full picture between pages: the tombstone after a death's lines, the
+/// arrival scene after the arrival's.
+pub const Scene = enum(u8) { none, tomb, arrival };
+
+/// Sound effects (SPEC 5), raised by the UI and played by main.zig when
+/// the sound is on.
+pub const Sfx = enum(u8) { none, crack, bell, knell, fanfare };
 
 /// Where a game screen is: paging through new lines ("A: MORE"), at a
 /// prompt, or in one of the shooting cue's three steps (SPEC 4.4).
-pub const Phase = enum(u8) { more, prompt, shot_ready, shot_cue, shot_done };
+pub const Phase = enum(u8) { more, prompt, shot_ready, shot_cue, shot_done, scene };
 
 /// Knobs, in one place.
 pub const knobs = struct {
@@ -40,6 +52,8 @@ pub const knobs = struct {
     /// The result ("1.13 SEC", "MISFIRE!") stays this long before the game
     /// goes on.
     pub const shot_result_frames: u32 = 50;
+    /// The strip's wagon slides to a new mileage over this many frames.
+    pub const slide_frames: i32 = 60;
     /// Held d-pad keys repeat after 0.4 s, then 10 per second.
     pub const repeat_delay: u32 = 24;
     pub const repeat_period: u32 = 6;
@@ -184,6 +198,13 @@ pub fn outcome_text(o: Outcome) []const u8 {
     };
 }
 
+/// Per-batch bookkeeping while the game's lines go into the log.
+const Ingest = struct {
+    /// Pictures already shown in this batch (bit per art.Pic).
+    pics: u64 = 0,
+    bell: bool = false,
+};
+
 /// A printed line's outline: leading spaces, length and last character.
 const Shape = struct { lead: usize, len: usize, last: u8 };
 
@@ -291,6 +312,26 @@ pub const App = struct {
     shot: Shot = .{},
     /// The log history's scroll, in rows up from the newest.
     hist_scroll: u32 = 0,
+    title_cursor: TitleItem = .new_game,
+    /// The help overlay (Start) is up.
+    help: bool = false,
+    /// Sound on (main.zig seeds it from -Dsound; the title menu and the
+    /// help overlay toggle it).
+    sound: bool = false,
+    /// The effect to play this frame (main.zig takes it).
+    sfx: Sfx = .none,
+    /// The strip's wagon (miles), sliding toward hud.mileage_true.
+    wagon_miles: i32 = 0,
+    slide_step: i32 = 1,
+    /// A scene waits at log row `scene_at` of the current batch.
+    scene: Scene = .none,
+    scene_pending: bool = false,
+    scene_at: u32 = 0,
+    /// The tombstone's words (static strings) and date.
+    tomb_cause: []const u8 = "",
+    tomb_cause2: []const u8 = "",
+    tomb_date: [24]u8 = undefined,
+    tomb_date_len: u8 = 0,
 
     prev: Buttons = .{},
     rep_up: Repeat = .{},
@@ -298,6 +339,7 @@ pub const App = struct {
     rep_left: Repeat = .{},
     rep_right: Repeat = .{},
     select_armed: bool = false,
+    start_armed: bool = false,
 
     frame: u32 = 0,
     /// Frames since the screen or phase last changed (blinks, the title).
@@ -317,6 +359,7 @@ pub const App = struct {
 
     pub fn init(app: *App, seed_source: *const fn () u64) void {
         app.* = .{ .seed_source = seed_source };
+        app.tomb_date_len = 0;
         app.log.reset();
     }
 
@@ -333,7 +376,9 @@ pub const App = struct {
     pub fn log_bottom(app: *const App) i32 {
         return switch (app.phase) {
             .more => L.height - L.footer_h,
-            else => L.height - L.prompt_height(app.prompt()),
+            .shot_ready, .shot_cue, .shot_done => L.scene_y,
+            .scene => L.log_top,
+            .prompt => L.height - L.prompt_height(app.prompt()),
         };
     }
 
@@ -348,6 +393,11 @@ pub const App = struct {
         app.hud = .{};
         app.copy_hud();
         app.screen = .game;
+        app.help = false;
+        app.scene = .none;
+        app.scene_pending = false;
+        app.tomb_cause = "";
+        app.wagon_miles = 0;
         app.games_started += 1;
         G.start(app.game);
         app.ingest();
@@ -365,6 +415,7 @@ pub const App = struct {
         // does anything while both are held.
         if (now.start and now.select) {
             app.select_armed = false;
+            app.start_armed = false;
             app.rep_up = .{};
             app.rep_down = .{};
             app.rep_left = .{};
@@ -378,12 +429,34 @@ pub const App = struct {
         if (pressed.select) app.select_armed = true;
         const select_click = app.select_armed and !now.select and before.select;
         if (!now.select) app.select_armed = false;
+        // Start (help) acts on release too.
+        if (pressed.start) app.start_armed = true;
+        const start_click = app.start_armed and !now.start and before.start;
+        if (!now.start) app.start_armed = false;
+
+        if (app.help) {
+            // The help overlay: A toggles the sound, Start or B closes it.
+            if (start_click or pressed.b) app.help = false;
+            if (pressed.a) app.sound = !app.sound;
+            app.tick_timers();
+            return;
+        }
+        const shooting = app.screen == .game and (app.phase == .shot_ready or app.phase == .shot_cue or app.phase == .shot_done);
+        if (start_click and (app.screen == .title or app.screen == .game) and !shooting) {
+            app.help = true;
+            app.tick_timers();
+            return;
+        }
 
         switch (app.screen) {
-            .title => if (pressed.a) app.new_game(),
+            .title => app.title_input(now, pressed),
+            .credits => if (pressed.a or pressed.b or start_click) {
+                app.screen = .title;
+                app.phase_frames = 0;
+            },
             .history => app.history_input(now, pressed, select_click),
             .game => {
-                if (select_click and app.phase != .shot_cue and app.phase != .shot_ready) {
+                if (select_click and !shooting) {
                     app.screen = .history;
                     app.hist_scroll = 0;
                     return;
@@ -394,10 +467,33 @@ pub const App = struct {
         app.tick_timers();
     }
 
+    fn title_input(app: *App, now: Buttons, pressed: Buttons) void {
+        const n: u8 = 3;
+        var c: u8 = @backingInt(app.title_cursor);
+        if (app.rep_up.fire(now.up)) c = if (c == 0) n - 1 else c - 1;
+        if (app.rep_down.fire(now.down)) c = if (c + 1 >= n) 0 else c + 1;
+        app.title_cursor = @fromBackingInt(@intCast(c));
+        if (!pressed.a) return;
+        switch (app.title_cursor) {
+            .new_game => app.new_game(),
+            .sound => app.sound = !app.sound,
+            .credits => {
+                app.screen = .credits;
+                app.phase_frames = 0;
+            },
+        }
+    }
+
     /// The shooting cue's clocks run every frame, chord or not (time
-    /// passes either way).
+    /// passes either way); the strip's wagon slides.
     fn tick_timers(app: *App) void {
         if (app.screen != .game) return;
+        const target = if (app.hud.valid) app.hud.mileage_true else 0;
+        if (app.wagon_miles != target) {
+            const d = target - app.wagon_miles;
+            const step = @min(@as(i32, @intCast(@abs(d))), app.slide_step);
+            app.wagon_miles += if (d > 0) step else -step;
+        }
         switch (app.phase) {
             .shot_ready => {
                 if (app.shot.ready_left > 0) app.shot.ready_left -= 1;
@@ -432,6 +528,10 @@ pub const App = struct {
         switch (app.phase) {
             .more => if (pressed.a) {
                 app.seen = app.view_end;
+                app.next_page();
+            },
+            .scene => if (pressed.a) {
+                app.scene = .none;
                 app.next_page();
             },
             .prompt => switch (p.kind) {
@@ -496,6 +596,7 @@ pub const App = struct {
     }
 
     fn end_shot(app: *App, correct: bool) void {
+        app.sfx = .crack;
         app.shot.correct = correct;
         app.shot.result_left = knobs.shot_result_frames;
         app.set_phase(.shot_done);
@@ -541,6 +642,8 @@ pub const App = struct {
 
     fn copy_hud(app: *App) void {
         app.hud = app.game.hud;
+        const target = if (app.hud.valid) app.hud.mileage_true else 0;
+        app.slide_step = @max(1, @divTrunc(@as(i32, @intCast(@abs(target - app.wagon_miles))) + knobs.slide_frames - 1, knobs.slide_frames));
         const n = @min(app.hud.date_text.len, app.date_buf.len);
         @memcpy(app.date_buf[0..n], app.hud.date_text[0..n]);
     }
@@ -552,27 +655,32 @@ pub const App = struct {
         app.copy_hud();
         const lg = app.log;
         app.batch_start = lg.total;
+        app.scene_pending = false;
+        app.scene = .none;
         var para: Para = .{};
+        var ctx: Ingest = .{};
         for (app.game.printed()) |ln| {
             switch (ln.tag) {
-                .question, .mileage, .status_header, .status_values => para.flush(lg),
+                .question, .mileage, .status_header, .status_values => app.flush(&para, &ctx),
                 .date => {
-                    para.flush(lg);
+                    app.flush(&para, &ctx);
                     lg.rule(ln.text);
                 },
                 else => {
+                    if (ln.tag == .bell) ctx.bell = true;
                     const sh = shape(ln.text);
                     if (sh.len == 0) {
-                        para.flush(lg);
+                        app.flush(&para, &ctx);
                         lg.gap();
                     } else if (!para.join(ln.tag, ln.text, sh)) {
-                        para.flush(lg);
+                        app.flush(&para, &ctx);
                         para.begin(ln.tag, ln.text, sh);
                     }
                 },
             }
         }
-        para.flush(lg);
+        app.flush(&para, &ctx);
+        if (ctx.bell and app.scene != .arrival) app.sfx = .bell;
         // A rule can land before the first new row: it belongs to the batch.
         app.batch_end = lg.total;
         app.batch_start = @max(@min(app.batch_start, app.batch_end), lg.oldest());
@@ -580,10 +688,102 @@ pub const App = struct {
         app.next_page();
     }
 
+    /// Writes a paragraph to the log: its event picture first (once per
+    /// batch), and notes where a death's or the arrival's scene goes.
+    fn flush(app: *App, p: *Para, ctx: *Ingest) void {
+        if (!p.active) return;
+        const missed = p.tag == .hunt_result and std.mem.indexOf(u8, p.buf[0..p.len], "MISSED") != null;
+        if (if (missed) null else art.vignetteForLine(p.tag, p.buf[0..p.len])) |pic| {
+            const bit = @as(u64, 1) << @intCast(@backingInt(pic) & 63);
+            if (ctx.pics & bit == 0) {
+                ctx.pics |= bit;
+                app.log.picture(@backingInt(pic));
+            }
+        }
+        const tag = p.tag;
+        p.flush(app.log);
+        switch (tag) {
+            .death => {
+                app.scene = .tomb;
+                app.scene_pending = true;
+                app.scene_at = app.log.total;
+                app.set_tomb(p.buf[0..p.len]);
+            },
+            .arrival => {
+                app.scene = .arrival;
+                app.scene_pending = true;
+                app.scene_at = app.log.total;
+            },
+            else => {},
+        }
+    }
+
+    /// The tombstone's words from the death line(s).
+    fn set_tomb(app: *App, t: []const u8) void {
+        const has = struct {
+            fn f(hay: []const u8, needle: []const u8) bool {
+                return std.mem.indexOf(u8, hay, needle) != null;
+            }
+        }.f;
+        app.tomb_cause2 = "";
+        if (has(t, "STARVED")) {
+            app.tomb_cause = "STARVED";
+        } else if (has(t, "PNEUMONIA")) {
+            app.tomb_cause = "DIED OF";
+            app.tomb_cause2 = "PNEUMONIA";
+        } else if (has(t, "INJURIES")) {
+            app.tomb_cause = "DIED OF";
+            app.tomb_cause2 = "INJURIES";
+        } else if (has(t, "SNAKEBITE")) {
+            app.tomb_cause = "SNAKEBITE";
+        } else if (has(t, "MASSACRED")) {
+            app.tomb_cause = "MASSACRED";
+        } else if (has(t, "WINTER") or has(t, "TOO LONG")) {
+            app.tomb_cause = "LOST TO";
+            app.tomb_cause2 = "WINTER";
+        } else if (app.tomb_cause.len == 0) {
+            // "YOU CAN'T AFFORD A DOCTOR": the cause follows in the next line.
+            app.tomb_cause = "R.I.P.";
+        }
+        // The month, shortened to fit the stone ("AUG 16 1847").
+        const d = app.date_text();
+        var n: usize = 0;
+        var i: usize = 0;
+        var word: usize = 0;
+        while (i < d.len and n < app.tomb_date.len) : (i += 1) {
+            if (d[i] == ' ') {
+                word += 1;
+            } else if (word == 0 and i >= 3) continue;
+            app.tomb_date[n] = d[i];
+            n += 1;
+        }
+        app.tomb_date_len = @intCast(n);
+    }
+
+    pub fn tomb_date_text(app: *const App) []const u8 {
+        return app.tomb_date[0..app.tomb_date_len];
+    }
+
     /// Shows the rest of the batch with the prompt if it fits above the
-    /// prompt box, else the next page with "A: MORE".
+    /// prompt box, else the next page with "A: MORE". A pending scene is a
+    /// page break of its own.
     fn next_page(app: *App) void {
         const lg = app.log;
+        if (app.scene_pending) {
+            if (app.seen >= app.scene_at) {
+                app.scene_pending = false;
+                app.view_end = app.seen;
+                app.set_phase(.scene);
+                app.sfx = if (app.scene == .tomb) .knell else .fanfare;
+                return;
+            }
+            const room = L.height - L.footer_h - L.log_top;
+            var from0 = app.seen;
+            if (from0 > app.batch_start and lg.get(from0 - 1).kind == .text) from0 -= 1;
+            app.view_end = @max(lg.fit_from(from0, app.scene_at, room), app.seen + 1);
+            app.set_phase(.more);
+            return;
+        }
         const room_prompt = L.height - L.prompt_height(app.prompt()) - L.log_top;
         if (lg.height(app.seen, app.batch_end) <= room_prompt) {
             app.view_end = app.batch_end;
@@ -609,6 +809,8 @@ pub const App = struct {
             .number => app.spin = Spinner.init(p),
             .shoot => app.start_shot(p.word),
             .game_over => {
+                app.scene = if (p.outcome == .arrived) .arrival else .tomb;
+                if (p.outcome == .none) app.scene = .none;
                 app.games_over += 1;
                 app.last_outcome = p.outcome;
                 if (p.outcome == .arrived) app.arrivals += 1 else app.deaths += 1;

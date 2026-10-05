@@ -10,6 +10,8 @@ const app_mod = @import("ui/app.zig");
 const autoplay = @import("ui/autoplay.zig");
 const draw = @import("ui/draw.zig");
 const render = @import("ui/render.zig");
+const sound = @import("ui/sound.zig");
+const build_options = @import("build_options");
 const G = @import("game");
 
 comptime {
@@ -27,10 +29,14 @@ var bot: autoplay.Bot = .{};
 /// 3 hunter; ui/autoplay.zig).
 var bench_seed: u32 = 0;
 var bench_autoplay: u32 = 0;
+/// `--poke raspberry_trail_sound=1`: start with the sound on (times the
+/// streaming-audio renderer).
+var bench_sound: u32 = 0;
 comptime {
     if (!cart.is_wasm) {
         @export(&bench_seed, .{ .name = "raspberry_trail_seed" });
         @export(&bench_autoplay, .{ .name = "raspberry_trail_autoplay" });
+        @export(&bench_sound, .{ .name = "raspberry_trail_sound" });
     }
 }
 
@@ -40,6 +46,7 @@ pub fn start() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     draw.init();
     app.init(&next_seed);
+    app.sound = build_options.sound or bench_sound != 0;
     if (bench_autoplay != 0) bot.set(bench_autoplay, 0x5EED0000 + @as(u64, bench_seed));
 }
 
@@ -79,6 +86,7 @@ pub fn update() void {
         b = @bitCast(@as(u8, @bitCast(b)) | @as(u8, @bitCast(auto)));
     }
     app.update(b);
+    sound.update(&app);
     render.frame(&app);
     if (cart.is_wasm) present_wasm();
 }
@@ -111,6 +119,8 @@ comptime {
         @export(&debug_deaths, .{ .name = "debug_deaths" });
         @export(&debug_log_rows, .{ .name = "debug_log_rows" });
         @export(&debug_autoplay, .{ .name = "debug_autoplay" });
+        @export(&debug_sound, .{ .name = "debug_sound" });
+        @export(&debug_help, .{ .name = "debug_help" });
         @export(&cart_framebuffer_address, .{ .name = "cart_framebuffer_address" });
     }
 }
@@ -118,11 +128,12 @@ comptime {
 fn debug_frame() callconv(.c) u32 {
     return app.frame;
 }
-/// 0 title, 1 game, 2 log history.
+/// 0 title, 1 game, 2 log history, 3 credits.
 fn debug_screen() callconv(.c) u32 {
     return @backingInt(app.screen);
 }
-/// 0 paging (A: MORE), 1 prompt, 2 GET READY, 3 the cue, 4 the shot's result.
+/// 0 paging (A: MORE), 1 prompt, 2 GET READY, 3 the cue, 4 the shot's
+/// result, 5 a scene (the tombstone or the arrival).
 fn debug_phase() callconv(.c) u32 {
     return @backingInt(app.phase);
 }
@@ -195,6 +206,12 @@ fn debug_log_rows() callconv(.c) u32 {
 fn debug_autoplay(v: u32) callconv(.c) u32 {
     bot.set(v, 0x5EED0000 ^ app.frame);
     return 1;
+}
+fn debug_sound() callconv(.c) u32 {
+    return @intFromBool(app.sound);
+}
+fn debug_help() callconv(.c) u32 {
+    return @intFromBool(app.help);
 }
 fn cart_framebuffer_address() callconv(.c) usize {
     return @intFromPtr(cart.framebuffer);

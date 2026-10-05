@@ -18,6 +18,11 @@ pub const rule_y: i32 = strip_y + strip_h;
 pub const log_top: i32 = rule_y + 3;
 pub const text_x: i32 = 2;
 
+/// The shooting scenes (160x80) sit at the bottom of the screen.
+pub const scene_y: i32 = height - 80;
+/// The tombstone and the arrival (160x96) fill the log area.
+pub const end_y: i32 = height - 96;
+
 /// The "A: MORE" bar while paging.
 pub const footer_h: i32 = 11;
 
@@ -54,6 +59,11 @@ pub fn body_height(p: *const G.Prompt) i32 {
 
 /// The prompt box's height for this prompt, rule included.
 pub fn prompt_height(p: *const G.Prompt) i32 {
+    // The end screen (the tombstone or the arrival) takes the whole log
+    // area: every closing line is read on its own pages first.
+    if (p.kind == .game_over) return height - log_top;
+    // The shooting scene fills the bottom 80 px.
+    if (p.kind == .shoot) return height - scene_y;
     const q: i32 = if (p.kind == .game_over) 0 else @intCast(question_rows(p.question));
     return 1 + box_pad_top + q * question_h + body_height(p) + box_pad_bottom;
 }

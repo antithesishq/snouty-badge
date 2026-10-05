@@ -10,7 +10,7 @@
 #   build    zig build -Dcart=raspberry-trail (ELF, UF2, wasm) at the repository root
 #   test     zig build test -Dcart=raspberry-trail (the engine's and the UI's host tests)
 #   gen      the committed generated files are up to date: tools/gen_font.py
-#            --check, and tools/gen_art.py --check once track A's file is there
+#            --check and tools/gen_art.py --check
 #   oracle   zig build raspberry-trail-oracle, then tools/oracle/compare.py
 #            (every named script) and tools/oracle/fuzz.py $ORACLE_FUZZ_ARGS
 #            (default "--games 2000 --seed 1": the fixed fuzz set, its
@@ -30,7 +30,8 @@
 #   bench    badge-bench, calibrated, on the ELF with the autoplayer
 #            (--poke raspberry_trail_autoplay=V, --poke raspberry_trail_seed=N):
 #            seeds BENCH_SEEDS (default "1 2 3") at the fast pace, plus one
-#            human-pace run and one hunting run, BENCH_FRAMES (default 3000)
+#            human-pace run and one hunting run with the sound on
+#            (--poke raspberry_trail_sound=1), BENCH_FRAMES (default 3000)
 #            frames each, the title included; every run's worst `busy ms`
 #            <= BENCH_MAX_MS (default 8) and mean <= BENCH_MEAN_MS (default 3)
 #   size     size -A of the ELF: .text + .data + .bss (and the ARM unwind
@@ -90,11 +91,7 @@ if want gen; then
     step "gen: generated files up to date"
     status=0
     python3 "$here/gen_font.py" --check || status=1
-    if [ -f "$here/gen_art.py" ]; then
-        python3 "$here/gen_art.py" --check || status=1
-    else
-        echo "check: no tools/gen_art.py yet (track A); font only"
-    fi
+    python3 "$here/gen_art.py" --check || status=1
     result gen $status
 fi
 
@@ -156,7 +153,7 @@ if want preview; then
 fi
 
 if want bench; then
-    step "bench: badge-bench (calibrated), autoplayed games: seeds $bench_seeds fast, seed 4 human pace, seed 5 hunting"
+    step "bench: badge-bench (calibrated), autoplayed games: seeds $bench_seeds fast, seed 4 human pace, seed 5 hunting with sound"
     if [ ! -f "$elf" ]; then
         echo "check: no $elf (run the build step)"
         result bench 1
@@ -166,11 +163,12 @@ if want bench; then
         "$bench" --help > /dev/null 2>&1   # create the venv once before the parallel runs
         runs=()
         for s in $bench_seeds; do runs+=("fast$s:2:$s"); done
-        runs+=("human4:1:4" "hunt5:50:5")
+        runs+=("human4:1:4" "hunt5:50:5:1")
         pids=()
         for r in "${runs[@]}"; do
-            IFS=: read -r name v s <<< "$r"
+            IFS=: read -r name v s snd <<< "$r"
             "$bench" "$elf" --no-config --poke raspberry_trail_autoplay="$v" --poke raspberry_trail_seed="$s" \
+                --poke raspberry_trail_sound="${snd:-0}" \
                 --frames "$bench_frames" --every 1000 --json --symbols \
                 --out "$out/bench/$name" > "$out/bench/$name.txt" 2>&1 &
             pids+=($!)

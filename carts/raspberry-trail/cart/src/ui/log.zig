@@ -19,6 +19,9 @@ pub const Kind = enum(u8) {
     /// A divider where a new turn's date was printed: the date, small,
     /// between two dashed lines (the HUD shows the current date).
     rule,
+    /// An event's picture (a 64x40 vignette, M2): `buf[0]` is the art
+    /// module's `Pic` number.
+    picture,
 };
 
 pub const Style = enum(u8) {
@@ -35,6 +38,7 @@ pub const Style = enum(u8) {
 pub const text_h: i32 = 9;
 pub const gap_h: i32 = 4;
 pub const rule_h: i32 = 10;
+pub const picture_h: i32 = 44;
 
 pub const Row = struct {
     kind: Kind = .text,
@@ -53,6 +57,7 @@ pub const Row = struct {
             .text => text_h,
             .gap => gap_h,
             .rule => rule_h,
+            .picture => picture_h,
         };
     }
 };
@@ -110,6 +115,14 @@ pub const Log = struct {
         }
         r.len = @intCast(@min(t.len, cols));
         @memcpy(r.buf[0..r.len], t[0..r.len]);
+        l.append(r);
+    }
+
+    /// An event's picture, above the event's text.
+    pub fn picture(l: *Log, pic: u8) void {
+        l.gap_pending = false;
+        var r: Row = .{ .kind = .picture, .len = 1 };
+        r.buf[0] = pic;
         l.append(r);
     }
 

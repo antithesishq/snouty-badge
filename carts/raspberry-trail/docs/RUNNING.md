@@ -52,7 +52,7 @@ tools/check.sh preview bench   # just those steps
 | `gen` | the committed generated files match their generators (`gen_font.py --check`, `gen_art.py --check`) |
 | `oracle` | the engine against the unmodified listing run by `tools/oracle/basic.py`: `compare.py` (every named script) and `fuzz.py --games 2000 --seed 1` (2000 random games plus the coverage report; `ORACLE_FUZZ_ARGS` overrides) |
 | `preview` | headless wasm runs without a trap: an autoplayed game (frames in `out/check/game/`), plain A presses (`tools/scripts/press_a.json`), a starvation, the careful autoplayer until it arrives, the hunting autoplayer for 8 shots |
-| `bench` | badge-bench, calibrated, on autoplayed games (seeds 1-3 fast, 4 at a human pace, 5 hunting; 3000 frames each): worst `busy ms` <= 8 (`BENCH_MAX_MS`), mean <= 3 (`BENCH_MEAN_MS`) |
+| `bench` | badge-bench, calibrated, on autoplayed games (seeds 1-3 fast, 4 at a human pace, 5 hunting with the sound on; 3000 frames each): worst `busy ms` <= 8 (`BENCH_MAX_MS`), mean <= 3 (`BENCH_MEAN_MS`) |
 | `size` | `size -A`: `.text` + `.data` + `.bss` (+ unwind tables) <= 160 KB (`SIZE_MAX_KB`) |
 
 ## 4. Flash it
@@ -63,16 +63,26 @@ the cart runs: the badge OS has no save storage for carts.
 
 ## 5. Controls
 
-The screen, top to bottom: the HUD (the date and the mileage as the
+The title: the painted wagon under THE RASPBERRY TRAIL and a menu, NEW
+GAME (seeded from the clock at that press), SOUND: ON/OFF and CREDITS.
+
+The game screen, top to bottom: the HUD (the date and the mileage as the
 original last printed them, then `F` food, `B` bullets, `C` clothing, `M`
-miscellaneous supplies, `$` cash), the trail strip (the wagon at the true
-mileage; the ticks are South Pass and the Blue Mountains), the log (what
-the program printed, word-wrapped, a dated divider per turn, your answers
-in raspberry), and at the bottom either `A: MORE` or the prompt box.
+miscellaneous supplies, `$` cash), the trail strip (Independence, South
+Pass, the Blue Mountains and Oregon City; the wagon slides to the true
+mileage when a turn's travel lands), the log (what the program printed,
+reflowed into paragraphs, an event's picture above its text, a dated
+divider per turn, your answers in raspberry), and at the bottom either
+`A: MORE` or the prompt box. Shots play over a scene (the hunt, riders,
+bandits, wolves) with a muzzle flash and a hit or a miss; a death shows
+the tombstone with its cause before the formalities, the arrival shows
+Oregon City before President Polk's letter, and the game ends on that
+picture.
 
 | Screen | Input | Action |
 |---|---|---|
-| Title | A | Start a game (seeded from the clock at that press) |
+| Title | Up / Down, A | Move, pick (NEW GAME, SOUND toggles, CREDITS; A or B leaves the credits) |
+| Title or game | Start | Help: the button legend (released, not pressed); A toggles the sound, Start or B closes it (not during a shot) |
 | Reading | A | Next page (`A: MORE`); after the last page the prompt appears |
 | Any game screen | Select | The log history (released, not pressed): Up/Down scroll (held: repeat), A, B or Select close it |
 | Menu (YES/NO, choices) | Up / Down, A | Move the cursor (held: repeat), pick |
@@ -80,11 +90,17 @@ in raspberry), and at the bottom either `A: MORE` or the prompt box.
 | Amount | Up / Down | Add / subtract at the caret's place (carries; clamped to what you can spend; held: repeat after 0.4 s, 10 per second) |
 | Amount | B, A | Back to the default, enter |
 | Shooting | the cued buttons | `GET READY`, then the word appears with one button per letter (arrows, A, B): press them in order. A press before the cue is a misfire, a wrong button misses (the original's wrong word). Time is counted from the cue: seconds = frames / 60 x 0.75 (`shot_time_scale`), capped at 10 s |
+| Tombstone / arrival | A | Go on |
 | End | A | Back to the title |
 
 Start and Select together belong to the OS (exit, or its settings box):
 no button does anything while both are held. The joystick click belongs to
 the OS too.
+
+Sound (SPEC 5) is off at boot (`-Dsound=true` builds a sound-on set) and
+toggled on the title or in help: a bell for a big kill and at the arrival,
+a crack for each shot, a knell at a death, a fanfare at the arrival. The
+badge streams it through `lib/tone_stream.zig` (never `tone2`).
 
 ## 6. Web simulator
 
@@ -116,8 +132,16 @@ node ../../tools/preview.mjs ../../zig-out/bin/raspberry-trail.wasm --seed 11 --
 python3 ../../tools/make_gif.py out/gif docs/preview_m1.gif --scale 2 --ms 200
 ```
 
-That is `docs/preview_m1.gif`: A on the title, YES to the instructions,
-then the autoplayer plays a whole game (a starvation for seed 11).
+That was `docs/preview_m1.gif` (the M1 text UI: YES to the instructions,
+then a whole autoplayed game). `docs/preview_m2.gif` is the presentation:
+the title, NO to the instructions, then the autoplayer plays to Oregon City:
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/raspberry-trail.wasm --seed 13 --frames 7100 --every 24 \
+    --raw-colors --script tools/scripts/gif_m2.json --call-at "241 debug_autoplay:1" \
+    --call-at "6885 debug_autoplay:0" --out out/gif2
+python3 ../../tools/make_gif.py out/gif2 docs/preview_m2.gif --scale 2 --ms 200
+```
 
 `--call debug_autoplay:V` (or `--call-at "T debug_autoplay:V"`) hands the
 buttons to the autoplayer (`cart/src/ui/autoplay.zig`), which presses them
@@ -129,8 +153,8 @@ game after game. Examples: 1 (human, normal), 18 (fast, careful), 34
 (fast, starve), 50 (fast, hunter).
 
 Debug exports (wasm only): `debug_frame`, `debug_screen` (0 title, 1 game,
-2 log history), `debug_phase` (0 paging, 1 prompt, 2 GET READY, 3 the cue,
-4 the shot's result), `debug_prompt_kind` (0 yes_no, 1 number, 2 choice,
+2 log history, 3 credits), `debug_phase` (0 paging, 1 prompt, 2 GET READY,
+3 the cue, 4 the shot's result, 5 the tombstone or the arrival), `debug_prompt_kind` (0 yes_no, 1 number, 2 choice,
 3 shoot, 4 game_over), `debug_prompt_line` (the BASIC INPUT line),
 `debug_turn`, `debug_mileage` (shown), `debug_mileage_true`, `debug_food`,
 `debug_cash`, `debug_cursor`, `debug_value` (the spinner), `debug_answers`,
@@ -139,7 +163,8 @@ Debug exports (wasm only): `debug_frame`, `debug_screen` (0 title, 1 game,
 `debug_deaths`, `debug_outcome` (the last finished game's `Outcome`: 1
 arrived, 2 starved, 3 no money for a doctor, 4 no medical supplies, 5
 pneumonia, 6 injuries, 7 winter, 8 massacred, 9 snakebite),
-`debug_log_rows`, `debug_autoplay(V)`, `cart_framebuffer_address`.
+`debug_log_rows`, `debug_sound`, `debug_help`, `debug_autoplay(V)`,
+`cart_framebuffer_address`.
 
 ## 8. badge-bench
 
@@ -150,4 +175,5 @@ pneumonia, 6 injuries, 7 winter, 8 massacred, 9 snakebite),
 
 `raspberry_trail_autoplay=V` lets the autoplayer play from the title, game
 after game (V as above); `raspberry_trail_seed=N` seeds game k with N + k
-instead of the clock. The badge emulator runs about 25 frames a second.
+instead of the clock; `raspberry_trail_sound=1` starts with the sound on.
+The badge emulator runs about 25 frames a second.

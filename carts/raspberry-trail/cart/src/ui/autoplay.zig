@@ -91,6 +91,7 @@ pub const Bot = struct {
         k = k * 65536 + (app.seen & 0xFFFF);
         k = k * 8 + app.shot.idx;
         k = k * 1024 + (app.games_started & 0x3FF);
+        k = k * 2 + @intFromBool(app.help);
         return k;
     }
 
@@ -117,7 +118,7 @@ pub const Bot = struct {
     fn on_new_state(b: *Bot, app: *const App) void {
         switch (app.screen) {
             .title => b.wait = b.delay(50, 110),
-            .history => b.wait = b.delay(20, 40),
+            .history, .credits => b.wait = b.delay(20, 40),
             .game => switch (app.phase) {
                 .more => b.wait = b.reading_delay(app),
                 .prompt => {
@@ -134,6 +135,7 @@ pub const Bot = struct {
                     b.wait = if (app.shot.idx == 0) b.cue_delay(20, 40) else b.cue_delay(8, 18);
                 },
                 .shot_done => b.wait = 1_000_000,
+                .scene => b.wait = b.delay(90, 150),
             },
         }
     }
@@ -150,17 +152,19 @@ pub const Bot = struct {
     }
 
     fn decide(b: *Bot, app: *const App) Buttons {
+        if (app.help) return .{ .b = true };
         switch (app.screen) {
             .title => {
                 b.wait = b.delay(30, 60);
+                if (app.title_cursor != .new_game) return .{ .up = true };
                 return .{ .a = true };
             },
-            .history => return .{ .b = true },
+            .history, .credits => return .{ .b = true },
             .game => {},
         }
         const p = app.prompt();
         switch (app.phase) {
-            .more => {
+            .more, .scene => {
                 b.wait = b.delay(10, 20);
                 return .{ .a = true };
             },
