@@ -97,7 +97,7 @@ both orientations that counts fights and lost bytes.
 
 ## 3. Plan
 
-### M0: the link and a test cart (done, hardware check open)
+### M0: the link and a test cart (done, verified on hardware)
 
 - `lib/link.zig`, `lib/link_rp2350.zig`, `lib/link_virtual.zig`,
   `lib/tests/link_unit.zig` (in `zig build test`).
@@ -137,7 +137,7 @@ CONNECTED, the cable kind, RTT around 100-300 us, RX climbing about 60 a
 second, LOST and CRC at 0, and each badge lighting the other's buttons.
 If it stays SEARCHING, note PIN1/PIN3 on both screens and the cable kind.
 
-### M1: Game Boy link cable in Snouty Boy (done, hardware check open)
+### M1: Game Boy link cable in Snouty Boy (done, verified on hardware)
 
 - `carts/snouty-boy/core/serial.zig`: byte-level cable. The master's
   internal-clock transfer sends a request (SB, sequence number) and keeps
@@ -170,6 +170,9 @@ drive, UART headers joined. "Link cable connected" shows on both; on each,
 Start, Right to 2PLAYER, then Start on one badge first (it becomes the
 master) and on the other; both reach MARIO VS. LUIGI and play the same
 pieces. Pulling the cable shows "Link cable unplugged".
+
+**Hardware, 2026-10-05 (show day).** Adrian played a full 2-player Tetris
+game between two badges over the probe kit's JST-SH cable: works.
 
 ### M2: two-player Snouty Zero, M3: Snoutenstein deathmatch
 
