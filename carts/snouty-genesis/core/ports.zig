@@ -298,7 +298,7 @@ pub fn jcart_refresh(md: *Md) void {
 }
 
 /// A byte write into the register: bit 0 is TH.
-pub fn jcart_write(md: *Md, v: u8) void {
+pub noinline fn jcart_write(md: *Md, v: u8) void {
     md.ports.jcart_th = v & 1 != 0;
     jcart_refresh(md);
 }

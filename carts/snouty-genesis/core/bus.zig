@@ -292,7 +292,7 @@ fn sram_control(md: *Md, v: u8) void {
 /// Register `r` = (address >> 1) & F: 0 version, 1-3 data (port 1, port
 /// 2, EXT: what is plugged in is `md.setup.cfg`, core/ports.zig), 4-6
 /// control, 7-F serial (TxData FF, the rest 00).
-fn io_read(md: *const Md, r: u4) u8 {
+noinline fn io_read(md: *const Md, r: u4) u8 {
     return switch (r) {
         0 => version,
         1, 2 => port_read(md.io.data[r - 1], md.io.ctrl[r - 1], ports.lines(md, @intCast(r - 1))),
