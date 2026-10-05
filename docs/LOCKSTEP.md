@@ -6,7 +6,10 @@ hold the same World and step it with the same pair of input bytes, one
 byte per human per tick; nothing else crosses the cable during a race.
 It came out of Snouty GC's M4 net code (`carts/snouty-gc/cart/src/net.zig`
 at 90683be4, verified on two badges as tag `snouty-gc/m4-hw`) and is
-shared by Snouty GC, Snouty Cycles and Snouty Zero. New to it? Start
+shared by Snouty GC, Snouty Cycles, Snouty Zero, Snoutenstein's
+deathmatch and Snouty Genesis (two players on one emulated Genesis,
+carts/snouty-genesis/docs/LINK_PLAY.md: the World is the console, a tick
+two Genesis frames, a 6-byte rules offer with the ROM's CRC32). New to it? Start
 with `carts/snouty-pong` (README.md there): the smallest game on it,
 written as a walkthrough.
 
@@ -361,6 +364,7 @@ The app-id registry (`lockstep.apps`, `lockstep.app_name`):
 | `'Z'` | Snouty Zero | `SNOUTY ZERO` |
 | `'S'` | Snoutenstein | `SNOUTENSTEIN` |
 | `'P'` | Snouty Pong (the example game, `carts/snouty-pong`) | `SNOUTY PONG` |
+| `'M'` | Snouty Genesis (two players, `carts/snouty-genesis/docs/LINK_PLAY.md`) | `SNOUTY GENESIS` |
 
 Anything else is `ANOTHER CART`. A new cart takes a free letter and adds
 it to both tables.

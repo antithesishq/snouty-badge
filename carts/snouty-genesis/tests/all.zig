@@ -26,4 +26,5 @@ test {
     _ = @import("ports_unit.zig");
     _ = @import("mp_bomberman.zig");
     _ = @import("mp_party.zig");
+    _ = @import("link_play.zig");
 }

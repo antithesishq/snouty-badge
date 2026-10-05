@@ -19,21 +19,22 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Scale, Smooth H40, Sound, Debug overlay). On the Reset row
-//! Left/Right pick what the reset plugs in (docs/MULTIPLAYER.md: one pad,
-//! two pads, a Team Player on port 1, 2 or both, the 4 Way Play, a
-//! J-Cart; it opens on what is plugged in now, the ROM's own choice at
-//! first) and A resets with it: games look for their multitap at power on. A Scale or Smooth
-//! H40 change takes effect on the first frame after resuming (app.zig
-//! calls `video.apply` whenever the menu closes) or on the next scrub step,
-//! which redraws the whole screen.
+//! (Buttons, Scale, Smooth H40, Sound, Debug overlay). In the party cart,
+//! on the Reset row Left/Right pick what the reset plugs in
+//! (docs/MULTIPLAYER.md: one pad, two pads, a Team Player on port 1, 2 or
+//! both, the 4 Way Play, a J-Cart; it opens on what is plugged in now, the
+//! ROM's own choice at first) and A resets with it: games look for their
+//! multitap at power on. A Scale or Smooth H40 change takes effect on the
+//! first frame after resuming (app.zig calls `video.apply` whenever the
+//! menu closes) or on the next scrub step, which redraws the whole screen.
 //!
 //! RAM cart (PLAN.md M5): no Sound row (`audio.available`), no scrub line
 //! and no scrubbing (`rewind.available`); the rest as in the XIP cart.
 //!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Gear's UI. On
-//! every row that is not a setting (Resume, where the menu opens, Pick
-//! ROM, About; not Reset, whose Left/Right pick the peripheral) Left/Right step time back/forward one record (0.5 s),
+//! every row that is not a setting (Resume, where the menu opens, Reset,
+//! Pick ROM, About; the party cart, whose Reset row picks the peripheral,
+//! has no scrubber) Left/Right step time back/forward one record (0.5 s),
 //! repeating 4 times a second while held; a Left/Right held over from the
 //! game does nothing (app.zig suppresses held buttons on open, and the
 //! repeat only starts from a press). The panel's bottom line
@@ -81,16 +82,38 @@ pub const Result = enum {
     party,
     /// Leave the running party race; the game goes on locally.
     leave_party,
+    /// Close and show the link screen (docs/LINK_PLAY.md; every other
+    /// build).
+    link,
+    /// Leave the running link race; the game goes on locally.
+    leave_link,
 };
 
-/// The Party row exists (`build_options.party`: the party cart). Party
-/// builds have no scrubber, so the tenth row takes the scrub line's place.
+/// The Party row exists (`build_options.party`: the party cart), the Link
+/// row in every other build. Party builds have no scrubber, so the Party
+/// row takes the scrub line's place.
 pub const party_available = @import("build_options").party;
 /// A party race drives the console (app.zig sets it): Reset and Pick ROM
 /// hide, the Party row leaves the race.
 pub var party_racing: bool = false;
+/// A link race drives the console (app.zig sets it): Reset and Pick ROM
+/// hide, the scrubber is off, the Link row leaves the race.
+pub var link_racing: bool = false;
+/// Either race drives the console (comptime false for the other build's).
+inline fn racing() bool {
+    return if (party_available) party_racing else link_racing;
+}
 
-const Item = enum { resume_game, party, buttons, scale, smooth, sound, debug, reset, pick_rom, about };
+/// The rows. The second is Party in the party cart and Link elsewhere
+/// (`multi`): each build's enum has only its own, so the menu code of each
+/// is what it was before the other existed (an eleventh value that never
+/// shows grew the XIP cart's `update` by 0.6 KB).
+const Item = if (party_available)
+    enum { resume_game, party, buttons, scale, smooth, sound, debug, reset, pick_rom, about }
+else
+    enum { resume_game, link, buttons, scale, smooth, sound, debug, reset, pick_rom, about };
+/// This build's multiplayer row: Party or Link.
+const multi: Item = if (party_available) .party else .link;
 const item_count = @typeInfo(Item).@"enum".field_names.len;
 
 /// The Pick ROM row exists only for a drive build that found candidates;
@@ -101,9 +124,12 @@ fn pick_available() bool {
 
 fn visible(item: Item) bool {
     return switch (item) {
-        .pick_rom => pick_available() and !party_racing,
-        .reset => !party_racing,
-        .party => party_available,
+        .pick_rom => pick_available() and !racing(),
+        .reset => !racing(),
+        // The tenth row takes the scrub line's place: Party always (the
+        // party cart has no scrubber); Link in the RAM cart (no scrubber),
+        // with one (XIP cart, simulator) only while Pick ROM hides.
+        multi => party_available or !rewind.available or !pick_available() or link_racing,
         // The RAM cart has no sound (no Z80) and no scrubber (PLAN.md M5).
         .sound => audio.available,
         else => true,
@@ -111,8 +137,8 @@ fn visible(item: Item) bool {
 }
 
 var cursor: Item = .resume_game;
-/// What the Reset row resets into (core/ports.zig), set to the console's
-/// on `open`.
+/// What the Reset row resets into (core/ports.zig; the party cart), set
+/// to the console's on `open`.
 var reset_kind: core.ports.Kind = .pad1;
 var showing_about: bool = false;
 /// After a scrub step the panel would hide the restored frame, so only the
@@ -146,7 +172,7 @@ var updates_open: u32 = 0;
 /// reached, before anything is drawn; the caller then calls `update` once
 /// in the same update.
 pub fn open(md: *const core.Md) void {
-    reset_kind = md.setup.cfg.kind;
+    if (party_available) reset_kind = md.setup.cfg.kind;
     showing_about = false;
     scrub_view = false;
     select_armed = false;
@@ -203,16 +229,19 @@ pub fn update(md: *core.Md, e: input.Edge) Result {
                     // `Md.reset` writes the memories directly, past the
                     // undo hooks: forget the history. app.zig re-applies
                     // the scale on resume too (Vdp.reset puts line_mode
-                    // back to squeeze). A new peripheral starts empty of
-                    // 6-button and absent pads.
-                    if (md.setup.cfg.kind != reset_kind) md.setup.cfg = .{ .kind = reset_kind };
+                    // back to squeeze). A new peripheral (the party cart)
+                    // starts empty of 6-button and absent pads.
+                    if (party_available and md.setup.cfg.kind != reset_kind) md.setup.cfg = .{ .kind = reset_kind };
                     md.reset();
                     rewind.reset(md);
                     video.apply(md);
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
-                .party => return if (party_racing) .leave_party else .party,
+                multi => return if (party_available)
+                    (if (party_racing) .leave_party else .party)
+                else
+                    (if (link_racing) .leave_link else .link),
                 .about => showing_about = true,
                 else => adjust(1),
             }
@@ -236,7 +265,7 @@ fn move(d: i2) void {
 fn is_setting(item: Item) bool {
     return switch (item) {
         .buttons, .scale, .smooth, .sound, .debug => true,
-        .resume_game, .party, .reset, .pick_rom, .about => false,
+        .resume_game, multi, .reset, .pick_rom, .about => false,
     };
 }
 
@@ -249,7 +278,7 @@ fn on_scrub(md: *core.Md, dir: i2) void {
 /// Left/Right: cycle a setting on a setting row, else scrub with
 /// auto-repeat. The repeat starts only from a press in the menu.
 fn left_right(md: *core.Md, e: input.Edge) void {
-    if (cursor == .reset) {
+    if (party_available and cursor == .reset) {
         repeat.stop();
         const n = core.ports.Kind.count;
         const i: u32 = @backingInt(reset_kind);
@@ -262,7 +291,7 @@ fn left_right(md: *core.Md, e: input.Edge) void {
         if (e.pressed(.left)) adjust(-1) else if (e.pressed(.right)) adjust(1);
         return;
     }
-    if (!rewind.available) return;
+    if (!rewind.available or link_racing) return;
     const d = repeat.step(e);
     if (d != 0) on_scrub(md, d);
 }
@@ -276,7 +305,7 @@ fn adjust(d: i2) void {
         .smooth => video.smooth = !video.smooth,
         .sound => audio.enabled = !audio.enabled,
         .debug => debug.enabled = !debug.enabled,
-        .resume_game, .party, .reset, .pick_rom, .about => {},
+        .resume_game, multi, .reset, .pick_rom, .about => {},
     }
 }
 
@@ -303,8 +332,9 @@ const first_row_y = panel_y + 2;
 /// the rows, or on Resume the rewind hint (`hint.resume_line`). Fixed
 /// below the ninth row even when Pick ROM is hidden.
 pub const scrub_line_y = first_row_y + base_rows * row_h;
-/// Rows before the scrub line: every row but Party, which only party
-/// builds have (and they have no scrubber, so it takes the line's place).
+/// Rows above the scrub line: every row but one (the party cart has no
+/// scrubber, so the Party row takes the line's place; elsewhere Link and
+/// Pick ROM never show together where the line exists, `visible`).
 const base_rows = item_count - 1;
 /// The footer (y 119): how to leave the menu (`hint.back`), taking turns
 /// every 2 s with how to fast forward (`fast_hint`) and to rewind from it
@@ -336,12 +366,12 @@ const title = "SNOUTY GENESIS";
 const tagline_1 = "verified by";
 const tagline_2 = "deterministic replay";
 const back_hint = "B: back";
-/// The Reset row per `core.ports.Kind`.
-/// The peripheral's short name (the lobby's PADS line).
+/// The peripheral's short name (the party lobby's PADS line).
 pub fn kind_name(k: core.ports.Kind) []const u8 {
     return reset_labels[@backingInt(k)]["Reset: ".len..];
 }
 
+/// The Reset row per `core.ports.Kind` (the party cart).
 const reset_labels = [core.ports.Kind.count][]const u8{
     "Reset: 1 pad",
     "Reset: 2 pads",
@@ -355,13 +385,16 @@ const reset_labels = [core.ports.Kind.count][]const u8{
 fn label(item: Item) []const u8 {
     return switch (item) {
         .resume_game => "Resume",
-        .party => if (party_racing) "Party: leave" else "Party",
+        multi => if (party_available)
+            (if (party_racing) "Party: leave" else "Party")
+        else
+            (if (link_racing) "Link: leave" else "Link: 2 players"),
         .buttons => input.layout.label(),
         .scale => if (video.scale == .squeeze) "Scale: Squeeze" else "Scale: Crop",
         .smooth => if (video.smooth) "Smooth H40: On" else "Smooth H40: Off",
         .sound => if (audio.enabled) "Sound: On" else "Sound: Off",
         .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",
-        .reset => reset_labels[@backingInt(reset_kind)],
+        .reset => if (party_available) reset_labels[@backingInt(reset_kind)] else "Reset",
         .pick_rom => "Pick ROM",
         .about => "About",
     };
@@ -410,7 +443,7 @@ fn draw(md: *const core.Md) void {
         }
         y += row_h;
     }
-    if (rewind.available) draw_scrub_line(&buf);
+    if (rewind.available and !link_racing) draw_scrub_line(&buf);
     const footer = footers[(updates_open -% 1) / footer_turn % footers.len];
     text.draw(footer, text_x, footer_y, dim_color, panel_color);
 }
@@ -620,6 +653,7 @@ comptime {
     check_width("Debug overlay: Off", panel_cols);
     check_width("Reset: 4 Way Play", panel_cols);
     check_width("Reset: Taps 1+2", panel_cols);
+    check_width("Link: 2 players", panel_cols);
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
     check_width("Region JUE SRAM", panel_cols);

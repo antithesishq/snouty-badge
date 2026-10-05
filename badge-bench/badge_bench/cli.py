@@ -62,6 +62,9 @@ def build_parser():
                     help='--png shows the modelled LCD: only each present\'s dirty rect reaches it, '
                          'as on the badge (pixels a .copy_forward cart writes without '
                          'mark_dirty_rect stay off the screen)')
+    ap.add_argument('--stack', action='store_true',
+                    help='RAM cart: report the stack\'s high-water mark (free RAM painted at load, '
+                         'scanned at the end)')
     ap.add_argument('--listing', action='store_true',
                     help='write DIR/listing.lst: annotated disassembly of the top 5 functions')
     ap.add_argument('--symbols', action='store_true', help='print the hot-function table')
@@ -176,7 +179,7 @@ def _main(a):
                   max_frame_ms=a.max_frame_ms, on_trace=on_trace,
                   log=progress if a.progress else None, flash_cycles=a.flash_cycles,
                   romfs=romfs_img, flash_read_cycles=a.flash_read_cycles, lcd=a.lcd,
-                  keep_audio=bool(a.wav))
+                  keep_audio=bool(a.wav), stack=a.stack)
     if cal:
         add_busy(res.frames, cal)
         st = R.stats(res.frames, budget, key='busy_ms')

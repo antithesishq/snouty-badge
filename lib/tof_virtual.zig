@@ -64,6 +64,13 @@ pub const Fault = struct {
     no_range: bool = false,
     /// The SPAD page reads back with SPAD (0, 0)'s enable bit flipped.
     spad_corrupt: bool = false,
+    /// A CPU reset or power-on with powerup_select = 2 hangs (ENABLE
+    /// reads 0x21, cpu_ready never comes) instead of starting the RAM
+    /// application: what a badge showed after the driver had set 2.
+    ps2_hang: bool = false,
+    /// A CPU reset (0xF0) with the PLL still on (0xEC bit 6) hangs: the
+    /// ams driver always turns it off first.
+    reset_needs_pll_off: bool = false,
 };
 
 pub const timing = struct {
@@ -119,6 +126,8 @@ pub const Model = struct {
     nack_until: u64 = 0,
     pon: bool = false,
     powerup_select: u2 = 0,
+    /// 0xEC bit 6 (undocumented PLL bit); on whenever the CPU runs.
+    pll_on: bool = true,
     int_status: u8 = 0,
     int_enab: u8 = 0,
     regs: [256]u8 = @splat(0),
@@ -194,11 +203,21 @@ pub const Model = struct {
         return m.mode == .bootloader or m.mode == .app;
     }
 
+    /// Where a CPU reset or power-on goes: the RAM application with
+    /// powerup_select 2 and a valid image, else the bootloader; `dead`
+    /// under the hang faults.
+    fn boot_target_now(m: *const Model, cpu_reset: bool) Mode {
+        if (m.powerup_select == 2 and m.fault.ps2_hang) return .dead;
+        if (cpu_reset and m.pll_on and m.fault.reset_needs_pll_off) return .dead;
+        return if (m.powerup_select == 2 and m.image_valid) .app else .bootloader;
+    }
+
     fn reset_to(m: *Model, target: Mode) void {
         m.mode = .booting;
         m.boot_target = target;
         m.ready_at = m.t_us + if (target == .app) @as(u64, timing.app_boot_us) else timing.boot_us;
         m.nack_until = m.t_us + timing.reset_nack_us;
+        m.pll_on = true;
         m.measuring = false;
         m.hist_next = null;
         m.int_status = 0;
@@ -365,17 +384,14 @@ pub const Model = struct {
         }
     }
 
-    fn write_reg(m: *Model, a: u8, v: u8) void {
+    pub fn write_reg(m: *Model, a: u8, v: u8) void {
         switch (a) {
             tof.reg.enable => {
                 m.powerup_select = @truncate(v >> 4);
                 const was = m.pon;
                 m.pon = v & 1 != 0;
                 if (!was and m.pon) {
-                    if (m.mode == .standby) {
-                        const target: Mode = if (m.powerup_select == 2 and m.image_valid) .app else .bootloader;
-                        m.reset_to(target);
-                    }
+                    if (m.mode == .standby) m.reset_to(m.boot_target_now(false));
                 } else if (was and !m.pon) {
                     m.mode = .standby;
                     m.measuring = false;
@@ -394,9 +410,9 @@ pub const Model = struct {
             },
             tof.reg.int_enab => m.int_enab = v,
             tof.reg.reset => if (v == 0x80) {
-                const target: Mode = if (m.powerup_select == 2 and m.image_valid) .app else .bootloader;
-                m.reset_to(target);
+                m.reset_to(m.boot_target_now(true));
             },
+            tof.reg.pll => m.pll_on = v & 0x40 != 0,
             else => if (m.cpu_ready() and a < 0xE0) {
                 m.regs[a] = v;
             },
@@ -410,6 +426,7 @@ pub const Model = struct {
             tof.reg.int_enab => if (m.cpu_ready()) m.int_enab else 0,
             tof.reg.id => if (m.cpu_ready()) tof.chip_id else 0,
             tof.reg.id + 1 => if (m.cpu_ready()) 0x01 else 0,
+            tof.reg.pll => if (m.pll_on) 0x40 else 0,
             else => blk: {
                 if (!m.cpu_ready() or a >= 0xE0) break :blk 0;
                 if (a == tof.reg.cmd_stat) {

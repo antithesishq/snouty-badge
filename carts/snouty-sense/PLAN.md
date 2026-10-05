@@ -3,6 +3,33 @@
 The time-of-flight probe cart and the driver under it (docs/TOF.md
 section 4). SPEC.md has the design, docs/RUNNING.md how to build and run.
 
+## M2.1: recovery fix from the first badge run (2026-10-05)
+
+On Adrian's badge snouty-sense measured on LIVE, then (with a hand over
+the unmounted breakout) failed and never came back: `STARTING SENSOR ...
+FIRMWARE 2476/2476 ERR cpu_timeout @wait_ready R0021 RETRYING`, on every
+page. ENABLE 0x21 = PON with powerup_select 2 and cpu_ready never set.
+The first boot (the ams driver's sequence) is proven on hardware; the
+recovery path was not, and differed from the C in two ways:
+
+- Every other retry set powerup_select = 2 before RAMREMAP_RESET (a
+  DS 8.9.5 variant). It survives resets and standby, so the next CPU
+  reset started a stale "RAM application" and hung. Removed; a 2 found
+  at remap time is cleared (`bl_clear_ps`), and every CPU reset writes 1.
+- The CPU reset skipped the C's PLL-off step (0xEC bit 6). Added.
+- New: cpu_ready late -> one forced CPU reset, then a standby cycle, then
+  the error (`stats.rescues`, DIAG `RS`).
+- The status screen and DIAG now show the FIRST error of a failure run
+  (`1ST ...`): the latest one is usually the recovery's, not the cause.
+  What tripped the first failure is still unknown (the photo of `1ST`
+  will say).
+
+Model: `Fault.ps2_hang` and `Fault.reset_needs_pll_off` reproduce both;
+host tests: a chip left at 2 recovers on reload, a hung chip is rescued
+by a forced reset within the first attempt, resets never hang on the
+PLL, and 24 injected failures of every kind all come back with no
+powerup_select 2 remap.
+
 ## M0: driver, model and probe cart (branch `tof/m0`)
 
 Status: built, host-tested and benched against the model; **waiting for

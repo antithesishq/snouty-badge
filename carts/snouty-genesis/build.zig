@@ -100,6 +100,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .custom_builder = &build_cart_modules_ram,
         .xip_custom_builder = &build_cart_modules_xip,
         .wasm_from = .xip,
+        // The SDK's script with a 20 KB stack reservation (the measured
+        // peak is about 6 KB): room for the link beside the sound.
+        .ram_linker_script = b.path(dir ++ "cart/cart_ram.ld"),
     });
 
     // The party cart (docs/MULTIPLAYER.md): a third binary, RAM mode, with
@@ -187,6 +190,24 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .{ .name = "party_lib", .module = party_host },
         },
     });
+    // Two-player link play over the virtual cable (tests/link_play.zig):
+    // the session module with the real core, lib/link.zig and
+    // lib/link_virtual.zig under one root (`link_host`).
+    const lockstep_host = b.createModule(.{
+        .root_source_file = b.path("lib/lockstep.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
+    const linkplay_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/linkplay.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "lockstep", .module = lockstep_host },
+        },
+    });
+    const link_host = link_host_module(b, test_optimize);
     const tests = b.addTest(.{
         .name = "snouty-genesis-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -202,6 +223,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "input", .module = input_host },
                 .{ .name = "players", .module = players_host },
                 .{ .name = "party_lib", .module = party_host },
+                .{ .name = "lockstep", .module = lockstep_host },
+                .{ .name = "linkplay", .module = linkplay_host },
+                .{ .name = "link_host", .module = link_host },
             },
         }),
     });
@@ -231,6 +255,18 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                     .target = b.graph.host,
                     .optimize = test_optimize,
                 }) },
+                // Link play on the RAM cart's core (tests/link_play.zig).
+                .{ .name = "lockstep", .module = lockstep_host },
+                .{ .name = "linkplay", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "cart/src/frontend/linkplay.zig"),
+                    .target = b.graph.host,
+                    .optimize = test_optimize,
+                    .imports = &.{
+                        .{ .name = "core", .module = core_host_ram },
+                        .{ .name = "lockstep", .module = lockstep_host },
+                    },
+                }) },
+                .{ .name = "link_host", .module = link_host },
             },
         }),
     });
@@ -321,6 +357,19 @@ fn party_lib_module(b: *Build, optimize: ?std.builtin.OptimizeMode, target: ?Bui
     }
     const root = wf.add("party_lib.zig", "pub const lockstep_n = @import(\"lockstep_n.zig\");\npub const cart_serial = @import(\"cart_serial.zig\");\npub const party_virtual = @import(\"party_virtual.zig\");\n");
     return b.createModule(.{ .root_source_file = root, .optimize = optimize, .target = target });
+}
+
+/// lib/link.zig and its virtual cable copied under one root, as
+/// `link_host.link` and `link_host.virtual` (link_virtual.zig imports
+/// link.zig by path, and a file can belong to only one module): Snouty
+/// Pong's.
+fn link_host_module(b: *Build, optimize: std.builtin.OptimizeMode) *Build.Module {
+    const wf = b.addWriteFiles();
+    inline for (.{ "link.zig", "link_rp2350.zig", "link_virtual.zig" }) |f| {
+        _ = wf.addCopyFile(b.path("lib/" ++ f), f);
+    }
+    const root = wf.add("link_host.zig", "pub const link = @import(\"link.zig\");\npub const virtual = @import(\"link_virtual.zig\");\n");
+    return b.createModule(.{ .root_source_file = root, .target = b.graph.host, .optimize = optimize });
 }
 
 /// `-Dmd-rom` as given: `~/x.bin` (expanded here, the shell leaves `=~`
@@ -512,6 +561,19 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "party_lib", .module = party_mod },
         },
     });
+    // Two-player link play (docs/LINK_PLAY.md): the link
+    // cable, the lockstep and the session over them (cart-api-free, so
+    // the host tests share it).
+    const lockstep = b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig"), .optimize = modes.cold });
+    const link = b.createModule(.{ .root_source_file = b.path("lib/link.zig"), .optimize = modes.cold });
+    const linkplay = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/linkplay.zig"),
+        .optimize = modes.cold,
+        .imports = &.{
+            .{ .name = "core", .module = core },
+            .{ .name = "lockstep", .module = lockstep },
+        },
+    });
     const app = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/app.zig"),
         .optimize = modes.cold,
@@ -528,6 +590,9 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "audio_feed", .module = audio_feed },
             .{ .name = "players", .module = players },
             .{ .name = "party_lib", .module = party_mod },
+            .{ .name = "link", .module = link },
+            .{ .name = "lockstep", .module = lockstep },
+            .{ .name = "linkplay", .module = linkplay },
         },
     });
     cart.addImport("core", core);

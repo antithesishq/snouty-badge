@@ -57,11 +57,12 @@ party firmware (fork main 8ca6da6) is untested on hardware.
     window (`Md.sram` bytes 0-1, refreshed each frame and on a TH write),
     so the ROM read path gets no new check; a J-Cart game's header SRAM
     (none of the known ones) would be ignored.
-- **Menu override**: the Reset row reads "Reset: Tap in 1" and so on;
-  Left/Right pick what the reset plugs in, A resets with it (games look
-  for their multitap at power on). It opens on what is plugged in now.
-  Displaced: Left/Right on the Reset row used to scrub (XIP cart and
-  simulator only; the RAM cart has no scrubber). `docs/mp_menu_reset.png`.
+- **Menu override** (the party cart only since the merge with main's
+  link cable; the other carts keep a plain Reset row): the Reset row
+  reads "Reset: Tap in 1" and so on; Left/Right pick what the reset plugs
+  in, A resets with it (games look for their multitap at power on). It
+  opens on what is plugged in now. The party cart has no scrubber, so
+  nothing is displaced. `docs/mp_menu_reset.png`.
 - **Lockstep mode** (`Md.setup.lockstep`) and the **poll hook**
   (`Md.setup.poll_hook`), sections 3 and 7.
 - **`Md.state_hash()`**: 32 bits over the whole console (`Md.Small` plus

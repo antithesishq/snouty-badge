@@ -50,6 +50,10 @@ pub const Options = struct {
     /// the wasm from the XIP variant's modules (snouty-genesis: the RAM cart
     /// drops the Z80 and the scrubber, the simulator keeps them).
     wasm_from: WasmFrom = .ram,
+    /// The RAM firmware's linker script when it must differ from the SDK's
+    /// `cart_ram.ld` (snouty-genesis: the same script with a smaller stack
+    /// reservation, its measured peak being a fraction of the SDK's 32 KB).
+    ram_linker_script: ?Build.LazyPath = null,
 };
 
 pub const WasmFrom = enum { ram, xip };
@@ -123,7 +127,7 @@ fn add_ram_firmware(b: *Build, dep: *Build.Dependency, options: Options) ?RamFir
         .optimize = options.optimize,
         .root_source_file = options.root_source_file,
         .linker_script = .{
-            .file = dep.builder.path("src/cart/cart_ram.ld"),
+            .file = options.ram_linker_script orelse dep.builder.path("src/cart/cart_ram.ld"),
             .generate = .none,
             .assert_microzig_main = false,
         },

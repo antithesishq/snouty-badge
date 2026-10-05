@@ -38,3 +38,9 @@ pub const ff_max_frames = 8;
 /// here: a rendered Genesis frame costs about 1.5x an unrendered one.)
 /// Fast forward never steps fewer than the 1x pair.
 pub const ff_budget_us = 28_000;
+
+/// A link race (docs/LINK_PLAY.md): the update pumps the link
+/// until this long after it began (the vsync wait between updates would
+/// otherwise leave the receive FIFO unread), and waits for the partner's
+/// pad only while the tick (its last cost) still ends before it.
+pub const link_pump_until_us: u64 = 31_000;

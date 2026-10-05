@@ -53,7 +53,7 @@ sharing two cores).
 
 ```
 badge-bench <cart.elf> [--script FILE.json] [--press BTN:T1-T2 ...] [--frames N]
-            [--every K] [--budget-ms 16.7] [--out DIR] [--png [K]] [--lcd] [--listing]
+            [--every K] [--budget-ms 16.7] [--out DIR] [--png [K]] [--lcd] [--stack] [--listing]
             [--symbols] [--top N] [--poke SYM=VALUE ...] [--json] [--seed N]
             [--max-frame-ms 1000] [--traces N] [--config FILE | --no-config]
             [--progress] [--calibrate FILE.toml] [--flash-cycles N]
@@ -73,6 +73,7 @@ try to read the ELF path as one).
 | `--out DIR` | Where files go (default `out/<cart>` under the current directory). |
 | `--png [K]` | Write `DIR/frame_NNNN.png` for every K-th frame (default K = `--every`). |
 | `--lcd` | The PNGs show the modelled LCD instead of the presented framebuffer: as on the badge, a present sends only its dirty rect (none at all when a `set_double_buffer_mode` cart marks nothing), so pixels a `.copy_forward` cart writes directly without `mark_dirty_rect` stay off the screen. The web simulator shows the whole framebuffer and hides such bugs. `tests/test_lcd_scrub.sh` uses it on the emulator menu's scrubber. |
+| `--stack` | RAM cart: paint the RAM from the end of `.bss` to the stack top before `_start` and report the stack's high-water mark at the end (`stack: peak N bytes`, with the linker's reservation). Valid for carts that use no RAM past `.bss` other than the stack (no heap or arena there). |
 | `--listing` | Write `DIR/listing.lst`: capstone disassembly of the 5 hottest functions, each instruction annotated with executions and modelled cycles per frame. |
 | `--symbols` | Print the hot-function table (top 20, `--top N`). |
 | `--poke SYM=VALUE` | Write VALUE into global SYM (its ELF symbol size if 1, 2 or 4 bytes, else a u32) after loading and before `_start`, like the reflections runner did for `dither.mode`. Repeatable. `start()` runs after the poke and may overwrite it. |
