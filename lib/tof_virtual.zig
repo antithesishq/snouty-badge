@@ -26,6 +26,14 @@
 //!   subpackets (rid 0x81), each published after the host clears bit 3 of
 //!   the previous one, then the result. A result the host has not cleared
 //!   is overwritten (`stats.overwritten`).
+//! - User SPAD masks (M2): command 0x17 loads the SPAD page (cid 0x17,
+//!   registers 0x24..0x90, lib/tof_spad.zig's layout); WRITE_CONFIG with
+//!   that page decodes it and checks the datasheet's rules (STAT_ERR_CONFIG
+//!   0x02 if broken, STAT_WARNING 0x0A "ignored" unless the common page
+//!   already has spad_map_id 14); it reads back as written. MEASURE with
+//!   spad_map_id 14 and no valid page fails with 0x02 (the device's
+//!   behaviour there is unknown). Results under a user mask come from the
+//!   SPAD-level scene (lib/tof_scene.zig): channel c in zone c - 1.
 //! - A synthetic scene, deterministic in time: a wall at about 900 mm and
 //!   a hand blob at 300..450 mm wandering over the zones (two objects
 //!   where it partly covers a zone), with histograms to match: reference
@@ -35,6 +43,8 @@ const std = @import("std");
 const tof = @import("tof.zig");
 const i2c = @import("i2c_rp2350.zig");
 const types = @import("tof_types.zig");
+const spad = @import("tof_spad.zig");
+const spad_scene = @import("tof_scene.zig");
 
 pub const Error = i2c.Error;
 
@@ -52,6 +62,8 @@ pub const Fault = struct {
     corrupt_ram: bool = false,
     /// The firmware has no active range commands (register 0x19 reads 0).
     no_range: bool = false,
+    /// The SPAD page reads back with SPAD (0, 0)'s enable bit flipped.
+    spad_corrupt: bool = false,
 };
 
 pub const timing = struct {
@@ -78,6 +90,11 @@ pub const Stats = struct {
     /// RAMREMAP_RESET issued with powerup_select = 2 set.
     remaps_ps2: u32 = 0,
     boots: u32 = 0,
+    /// SPAD pages accepted, rejected (rules broken), ignored (map not 14).
+    spad_writes: u32 = 0,
+    spad_rejects: u32 = 0,
+    spad_ignored: u32 = 0,
+    spad_loads: u32 = 0,
 };
 
 /// One measurement as the model published it (tests compare the driver's
@@ -123,7 +140,12 @@ pub const Model = struct {
     spad_map: u8 = 1,
     hist_dump: bool = false,
     active_range: u8 = 0x6F,
-    page_loaded: bool = false,
+    /// The configuration page in 0x20.. (0 none, 0x16 common, 0x17 SPAD).
+    loaded_cid: u8 = 0,
+    /// The user SPAD page as last accepted, and its mask.
+    spad_page: spad.Page = @splat(0),
+    user_mask: spad.Mask = .{},
+    user_valid: bool = false,
     measuring: bool = false,
     next_meas_at: u64 = 0,
     result_num: u8 = 0,
@@ -206,7 +228,9 @@ pub const Model = struct {
                 m.kiter = 550;
                 m.spad_map = 1;
                 m.hist_dump = false;
-                m.page_loaded = false;
+                m.loaded_cid = 0;
+                m.spad_page = @splat(0);
+                m.user_valid = false;
                 m.cmd_status = 0;
                 m.cmd_busy_until = 0;
             },
@@ -239,7 +263,10 @@ pub const Model = struct {
     fn measure(m: *Model, t: u64) void {
         m.result_num +%= 1;
         m.pending = .{ .t_us = t };
-        m.pending.hand_on = scene(t, &m.pending.frame.zones);
+        if (m.spad_map == spad.map_id) {
+            spad_scene.zone_results(t, &m.user_mask, &m.pending.frame.zones);
+            m.pending.hand_on = true;
+        } else m.pending.hand_on = scene(t, &m.pending.frame.zones);
         const f = &m.pending.frame;
         f.seq = m.result_num;
         f.time_us = t;
@@ -456,6 +483,26 @@ pub const Model = struct {
         }
     }
 
+    /// WRITE_CONFIG with the SPAD page loaded: decode, check, keep.
+    fn write_spad_page(m: *Model) void {
+        if (m.spad_map != spad.map_id) {
+            m.cmd_status = spad.stat_ignored;
+            m.stats.spad_ignored += 1;
+            return;
+        }
+        const page: *const spad.Page = m.regs[spad.reg.enable..][0..spad.page_len];
+        const d = spad.decode(page);
+        if (d.bad_size or d.ch0 > 0 or spad.validate(&d.mask) != null) {
+            m.cmd_status = 2; // STAT_ERR_CONFIG
+            m.stats.spad_rejects += 1;
+            return;
+        }
+        m.spad_page = page.*;
+        m.user_mask = d.mask;
+        m.user_valid = true;
+        m.stats.spad_writes += 1;
+    }
+
     fn app_command(m: *Model, c: u8) void {
         m.stats.app_commands += 1;
         m.cmd_cur = c;
@@ -475,17 +522,32 @@ pub const Model = struct {
                 m.regs[0x35] = 0x04; // ALG_SETTING_0: report distances
                 m.regs[tof.reg.hist_dump] = @intFromBool(m.hist_dump);
                 m.regs[0x3B] = @as(u8, tof.address) << 1;
-                m.page_loaded = true;
+                m.loaded_cid = tof.rid.common;
+            },
+            spad.cmd_load => {
+                m.tid +%= 1;
+                @memset(m.regs[0x20..0xE0], 0);
+                m.regs[0x20] = spad.cid;
+                m.regs[0x21] = m.tid;
+                m.regs[0x22] = spad.page_len;
+                @memcpy(m.regs[spad.reg.enable..][0..spad.page_len], &m.spad_page);
+                if (m.fault.spad_corrupt) m.regs[spad.reg.enable] ^= 1;
+                m.loaded_cid = spad.cid;
+                m.stats.spad_loads += 1;
             },
             tof.cmd.write_config => {
-                if (!m.page_loaded or m.regs[0x20] != tof.rid.common) {
+                if (m.loaded_cid == spad.cid and m.regs[0x20] == spad.cid) {
+                    m.write_spad_page();
+                    return;
+                }
+                if (m.loaded_cid != tof.rid.common or m.regs[0x20] != tof.rid.common) {
                     m.cmd_status = 9; // STAT_ERR_UNKNOWN_CID
                     return;
                 }
                 const period = get16(m.regs[0x24..0x26]);
                 const kiter = get16(m.regs[0x26..0x28]);
-                const spad = m.regs[tof.reg.spad_map_id];
-                const spad_ok = switch (spad) {
+                const map = m.regs[tof.reg.spad_map_id];
+                const spad_ok = switch (map) {
                     1, 2, 3, 6, 11, 12, 14 => true,
                     else => false,
                 };
@@ -495,10 +557,14 @@ pub const Model = struct {
                 }
                 m.period_ms = period;
                 m.kiter = kiter;
-                m.spad_map = spad;
+                m.spad_map = map;
                 m.hist_dump = m.regs[tof.reg.hist_dump] & 1 != 0;
             },
             tof.cmd.measure => {
+                if (m.spad_map == spad.map_id and !m.user_valid) {
+                    m.cmd_status = 2; // STAT_ERR_CONFIG
+                    return;
+                }
                 m.measuring = true;
                 m.next_meas_at = m.t_us + m.period_us();
                 m.cmd_status = 1;

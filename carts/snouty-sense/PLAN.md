@@ -78,6 +78,30 @@ whether 1 MHz works over the Qwiic cable, the default orientation.
    driver supports it. Worth it only if the hardware shows crosstalk
    problems at short range.
 
-## M2 (later): EYES and DEPTH pages
+## M2: EYES and DEPTH pages, user SPAD masks (branch `tof/m2`)
 
-See docs/TOF.md section 4.
+Status: in progress. Plan (docs/TOF.md section 4):
+
+- [ ] `lib/tof_spad.zig`: the user SPAD mask (up to 18x10, channel per
+      SPAD, Q1 offsets), the datasheet's constraints as a validator, the
+      SPAD configuration page (cid 0x17, registers 0x24..0x90) encoder and
+      decoder in the ams driver's layout, the depth-scan layouts.
+- [ ] `lib/tof.zig`: `set_user_mask` (validate, then stop -> common page
+      with spad_map_id 14 -> load SPAD page 0x17 -> write it -> write
+      config -> read it back and compare -> measure), mask generation per
+      frame, switch time, read-back mismatches; DIAG rows for them.
+- [ ] `lib/tof_virtual.zig` + `lib/tof_scene.zig`: the SPAD page in the
+      model (load, validate, reject, read back) and a SPAD-level scene
+      (tilted wall, floor, box, moving sphere, dead SPADs) that zone
+      results under spad_map_id 14 are rendered from.
+- [ ] `lib/tof_depth.zig`: the slow-scan depth photo (pairs: 9x10 in 10
+      shots; fine pass: 17x10 in 20), N frames per layout, missing and
+      low-confidence pixels.
+- [ ] Host tests: valid / invalid masks, encode / decode, read-back,
+      switch timing, zone results against the SPAD scene, a whole photo.
+- [ ] EYES page: nine-zone waterfall (log, crosstalk and reference
+      dimmed, targets traced), wavetable sound from the hand's histogram
+      (boots silent, A toggles, seeded from `-Dsound`).
+- [ ] DEPTH page: false-colour image, progress, scan time, spinning point
+      cloud (A), exposure (Up / Down), restart (B), fine pass (Select).
+- [ ] badge-bench: both builds, every page; docs; preview GIF.

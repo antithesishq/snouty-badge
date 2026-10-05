@@ -447,3 +447,248 @@ test "orientation maps every screen cell to a distinct zone" {
         try std.testing.expectEqual(@as(u16, 0x1FF), seen);
     }
 }
+
+// ---- user SPAD masks and the depth photo (M2) ----
+
+const spad = tof.spad;
+const scene = tof.scene;
+
+fn run_until_mask(rig: *Rig, gen: u32, limit_us: u64) !void {
+    const t0 = rig.now;
+    while (rig.now - t0 < limit_us) {
+        try rig.tick();
+        if (rig.drv.frame_mask_gen == gen and rig.drv.stats.frames > 0) return;
+    }
+    std.debug.print("state {s} step {s} err {s} raw {x}\n", .{
+        @tagName(rig.drv.state), rig.drv.step.name(), rig.drv.err.code.name(), rig.drv.err.raw,
+    });
+    return error.MaskNeverActive;
+}
+
+test "a user mask: written with spad_map_id 14, read back, results from the SPAD scene" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    try rig.run_until_frames(5, 1_000_000);
+    const shot = spad.shot(.coarse, 4);
+    try std.testing.expectEqual(@as(?spad.Problem, null), rig.drv.set_user_mask(&shot.mask));
+    const gen = rig.drv.mask_gen;
+    try run_until_mask(&rig, gen, 1_000_000);
+    try std.testing.expectEqual(spad.map_id, rig.model.spad_map);
+    try std.testing.expectEqual(@as(u32, 1), rig.model.stats.spad_writes);
+    try std.testing.expectEqual(@as(u32, 0), rig.model.stats.spad_rejects + rig.model.stats.spad_ignored);
+    try std.testing.expectEqual(@as(u32, 1), rig.drv.stats.mask_writes);
+    try std.testing.expectEqual(@as(u32, 0), rig.drv.stats.spad_mismatch);
+    try std.testing.expectEqual(@as(?u16, null), spad.diff(&shot.mask, &rig.model.user_mask));
+    try std.testing.expectEqual(tof.ErrCode.none, rig.drv.err.code);
+    // Switch time: the request to the first frame with the mask, well
+    // under a fifth of a second at 400 kHz on the 3 ms budget.
+    try std.testing.expectEqual(@as(u32, 1), rig.drv.stats.mask_switches);
+    try std.testing.expect(rig.drv.stats.mask_switch_us > 30_000 and rig.drv.stats.mask_switch_us < 200_000);
+    // Frames decode to what the model measured, which is the SPAD scene
+    // seen through the mask: each channel's pair, two objects on edges.
+    var frames: u32 = 0;
+    var last = rig.drv.stats.frames;
+    while (frames < 20) {
+        try rig.tick();
+        if (rig.drv.stats.frames == last) continue;
+        last = rig.drv.stats.frames;
+        // By the device's result number: frame.seq counts frames across a
+        // reconfiguration (results lost while stopped are not counted).
+        const snap = &rig.model.history[rig.drv.last_num.? % 8];
+        try std.testing.expectEqual(rig.drv.last_num.?, @as(u8, @truncate(snap.frame.seq)));
+        var want: [9]types.Zone = undefined;
+        scene.zone_results(snap.t_us, &shot.mask, &want);
+        for (want, rig.drv.frame.zones) |w, g| {
+            try std.testing.expectEqual(w.near, g.near);
+            try std.testing.expectEqual(w.far, g.far);
+        }
+        frames += 1;
+    }
+    // Every channel of the shot sees something (no dead pair in shot 4).
+    for (rig.drv.frame.zones) |z| try std.testing.expect(z.near.valid());
+}
+
+test "invalid masks are refused before anything is sent" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    var bad = spad.shot(.coarse, 0).mask;
+    bad.ch[0][1] = 0; // channel 1 down to one SPAD
+    const gen = rig.drv.mask_gen;
+    const p = rig.drv.set_user_mask(&bad) orelse return error.Accepted;
+    try std.testing.expectEqual(spad.Kind.lonely, p.kind);
+    try std.testing.expectEqual(gen, rig.drv.mask_gen);
+    try std.testing.expectEqual(@as(u32, 1), rig.drv.stats.mask_rejects);
+    try rig.run(300_000);
+    try std.testing.expectEqual(@as(u8, 1), rig.model.spad_map);
+    try std.testing.expectEqual(@as(u32, 0), rig.model.stats.spad_loads);
+    try std.testing.expectEqual(tof.State.measuring, rig.drv.state);
+}
+
+/// Send an application command straight through the bus and wait for it.
+fn raw_cmd(rig: *Rig, c: u8) !u8 {
+    try rig.drv.bus.write(tof.address, &.{ tof.reg.cmd_stat, c });
+    var b: [1]u8 = .{0x10};
+    var n: u32 = 0;
+    while (b[0] >= 0x10) : (n += 1) {
+        if (n > 100) return error.Busy;
+        try rig.drv.bus.write_read(tof.address, &.{tof.reg.cmd_stat}, &b);
+    }
+    return b[0];
+}
+
+test "the model checks the SPAD page: rejected if broken, ignored without map 14" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    _ = try raw_cmd(&rig, tof.cmd.stop);
+    rig.drv.state = .off; // keep the driver off the bus
+    var page: [1 + spad.page_len]u8 = undefined;
+    page[0] = spad.reg.enable;
+    // A valid page while the common page has map 1: ignored (DS 0x0A).
+    spad.encode(&spad.shot(.coarse, 0).mask, page[1..]);
+    try std.testing.expectEqual(@as(u8, 0), try raw_cmd(&rig, spad.cmd_load));
+    try rig.drv.bus.write(tof.address, &page);
+    try std.testing.expectEqual(spad.stat_ignored, try raw_cmd(&rig, tof.cmd.write_config));
+    try std.testing.expect(!rig.model.user_valid);
+    // MEASURE on map 14 without a valid page fails.
+    rig.model.spad_map = spad.map_id;
+    try std.testing.expectEqual(@as(u8, 2), try raw_cmd(&rig, tof.cmd.measure));
+    // A broken page on map 14: STAT_ERR_CONFIG, nothing kept.
+    // (A row mixing channel 1 with 8 or 9 cannot even be encoded: with
+    // the row's select bit set, 1 reads back as 9. The driver's validator
+    // catches it before encoding.)
+    var bad = spad.shot(.coarse, 0).mask;
+    bad.ch[0][1] = 0; // channel 1 down to one SPAD
+    spad.encode(&bad, page[1..]);
+    _ = try raw_cmd(&rig, spad.cmd_load);
+    try rig.drv.bus.write(tof.address, &page);
+    try std.testing.expectEqual(@as(u8, 2), try raw_cmd(&rig, tof.cmd.write_config));
+    try std.testing.expectEqual(@as(u32, 1), rig.model.stats.spad_rejects);
+    // A good one is kept and reads back byte for byte.
+    spad.encode(&spad.shot(.coarse, 0).mask, page[1..]);
+    _ = try raw_cmd(&rig, spad.cmd_load);
+    try rig.drv.bus.write(tof.address, &page);
+    try std.testing.expectEqual(@as(u8, 0), try raw_cmd(&rig, tof.cmd.write_config));
+    _ = try raw_cmd(&rig, spad.cmd_load);
+    var back: [4 + spad.page_len]u8 = undefined;
+    try rig.drv.bus.write_read(tof.address, &.{tof.reg.config_result}, &back);
+    try std.testing.expectEqual(spad.cid, back[0]);
+    try std.testing.expectEqualSlices(u8, page[1..], back[4..]);
+}
+
+test "a read-back that differs is counted and shown, not fatal" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    rig.model.fault.spad_corrupt = true;
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    const shot = spad.shot(.coarse, 0);
+    try std.testing.expectEqual(@as(?spad.Problem, null), rig.drv.set_user_mask(&shot.mask));
+    try run_until_mask(&rig, rig.drv.mask_gen, 1_000_000);
+    try std.testing.expectEqual(@as(u32, 1), rig.drv.stats.spad_mismatch);
+    try std.testing.expectEqual(@as(u16, 0x0000), rig.drv.stats.spad_diff); // row 0, column 0
+    try std.testing.expectEqual(tof.State.measuring, rig.drv.state);
+}
+
+test "mask switches while measuring skip the common page; normal map comes back" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    for (0..4) |k| {
+        const shot = spad.shot(.fine, @intCast(k));
+        try std.testing.expectEqual(@as(?spad.Problem, null), rig.drv.set_user_mask(&shot.mask));
+        try run_until_mask(&rig, rig.drv.mask_gen, 1_000_000);
+        try std.testing.expectEqual(@as(?u16, null), spad.diff(&shot.mask, &rig.model.user_mask));
+    }
+    try std.testing.expectEqual(@as(u32, 4), rig.drv.stats.mask_writes);
+    // Mask-only switches are quicker than the first (no common page).
+    try std.testing.expect(rig.drv.stats.mask_switch_us <= rig.drv.stats.mask_switch_max_us);
+    try std.testing.expect(rig.drv.stats.mask_switch_us < 150_000);
+    rig.drv.configure(.{});
+    try rig.run(300_000);
+    try std.testing.expectEqual(@as(u8, 1), rig.model.spad_map);
+    try std.testing.expectEqual(@as(u32, 0), rig.drv.frame_mask_gen);
+    try rig.run_until_frames(rig.drv.stats.frames + 3, 1_000_000);
+    const snap = &rig.model.history[rig.drv.last_num.? % 8];
+    for (rig.drv.frame.zones, snap.frame.zones) |got, want| try std.testing.expectEqual(want, got);
+    // After a reload (fresh application, page gone) map 14 is rewritten.
+    try std.testing.expectEqual(@as(?spad.Problem, null), rig.drv.set_user_mask(&spad.grid_3x3()));
+    try run_until_mask(&rig, rig.drv.mask_gen, 1_000_000);
+    rig.drv.reload();
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    try std.testing.expect(rig.model.user_valid);
+    try rig.run_until_frames(rig.drv.stats.frames + 3, 1_000_000);
+    try std.testing.expectEqual(rig.drv.mask_gen, rig.drv.frame_mask_gen);
+}
+
+/// The scene's first-object depth for image pixel (col, row) at `t_us`.
+fn scene_pixel(t_us: u64, col: u8, row: u8) types.Target {
+    var m: spad.Mask = .{};
+    m.ch[row][col] = 1;
+    m.ch[row][col + 1] = 1;
+    var z: [9]types.Zone = undefined;
+    scene.zone_results(t_us, &m, &z);
+    return z[0].near;
+}
+
+test "a depth photo: 9x10 in 10 shots, then 17x10 with the fine pass, matching the scene" {
+    for ([_]bool{ false, true }) |fine| {
+        var rig: Rig = undefined;
+        rig.init(400_000);
+        rig.drv.budget_us = 6000;
+        _ = try rig.run_until_state(.measuring, 2_000_000);
+        var scan: tof.depth.Scan = .{ .fine = fine, .exposure = 2, .repeat = false };
+        const t_start = rig.now;
+        while (scan.phase != .done) {
+            try rig.tick();
+            scan.update(&rig.drv, rig.now);
+            if (rig.now - t_start > 20_000_000) return error.ScanTooSlow;
+            try std.testing.expect(scan.phase != .failed);
+        }
+        const t_end = rig.now;
+        try std.testing.expectEqual(@as(u32, 1), scan.photos);
+        try std.testing.expectEqual(@as(u32, if (fine) 20 else 10), rig.drv.stats.mask_writes);
+        try std.testing.expectEqual(@as(u32, 0), rig.drv.stats.spad_mismatch);
+        // Model numbers (docs/TOF.md): about 2 s a 9x10 photo at N = 2.
+        try std.testing.expect(scan.last_photo_us < if (fine) @as(u32, 5_000_000) else 2_500_000);
+        var ok: u32 = 0;
+        var compared: u32 = 0;
+        for (0..tof.depth.height) |r| for (0..tof.depth.width) |c| {
+            const p = scan.img[r][c];
+            const in_pass = fine or c % 2 == 0;
+            if (!in_pass) {
+                try std.testing.expectEqual(tof.depth.State.unset, p.state);
+                continue;
+            }
+            try std.testing.expect(p.state != .unset);
+            if (p.has_depth()) ok += 1;
+            // The pixel is the scene's depth at that pair at some moment of
+            // the scan (the ball moves), within the jitter.
+            if (!p.has_depth()) continue;
+            var t = t_start;
+            var match = false;
+            while (t <= t_end and !match) : (t += 16_667) {
+                const want = scene_pixel(t, @intCast(c), @intCast(r));
+                match = want.valid() and @abs(@as(i32, p.mm) - want.mm) < 30;
+            }
+            if (!match) std.debug.print("pixel {d},{d}: {any}\n", .{ c, r, p });
+            try std.testing.expect(match);
+            compared += 1;
+        };
+        // The dead pair (SPADs 6 and 7 of physical row 4 = image row 3).
+        try std.testing.expectEqual(tof.depth.State.missing, scan.img[3][6].state);
+        try std.testing.expect(ok >= scan.pixels() - 4);
+        try std.testing.expect(compared >= scan.pixels() * 2 / 3);
+        // The box (700 mm) is in the right half, the floor (nearer than
+        // the wall) in the bottom row.
+        var box: u32 = 0;
+        var floor: u32 = 0;
+        for (0..tof.depth.height) |r| for (tof.depth.width / 2..tof.depth.width) |c| {
+            if (scan.img[r][c].has_depth() and @abs(@as(i32, scan.img[r][c].mm) - 700) < 30) box += 1;
+        };
+        for (scan.img[9]) |p| floor += @intFromBool(p.has_depth() and p.mm < 700);
+        try std.testing.expect(box >= 6);
+        try std.testing.expect(floor >= 4);
+    }
+}
