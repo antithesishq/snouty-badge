@@ -1,11 +1,17 @@
-//! Hand pose from the TMF8820's 3x3 zones (docs/TOF.md; design and honest
-//! limits in carts/snouty-morph/SPEC.md section 2). Pure: no hardware, no
-//! cart API, no allocation; f32 only (the M33 FPU is single precision)
-//! and no libm, so it builds into a cart unchanged. Runs once per sensor
-//! frame (30 Hz), roughly ten microseconds.
+//! Hand pose from the TMF8820's zones (docs/TOF.md; design and honest
+//! limits in carts/snouty-morph/SPEC.md section 2, M5 in docs/TOF.md).
+//! Pure: no hardware, no cart API, no allocation; f32 only (the M33 FPU
+//! is single precision) and no libm, so it builds into a cart unchanged.
+//! Runs once per sensor frame (30 Hz), roughly ten microseconds.
 //!
 //!     var est: tof_pose.Estimator = .{};            // .{ .config = ... }
+//!     est.set_layout(.stripes);                     // GRID by default
 //!     const pose = est.update(&frame, hist_or_null, orientation);
+//!
+//! Any zone layout of lib/tof_zones.zig (the 3x3 grid, the 8 stripes):
+//! the estimator works from each zone's screen tangents, so one code path
+//! serves both. Frames measured with another layout than the estimator's
+//! (the ones in flight around a switch) are ignored.
 //!
 //! What it does per frame:
 //! 1. Background model per zone: learned while the zone sees no hand
@@ -14,13 +20,21 @@
 //!    `absorb_frames` becomes background). Nothing beyond `max_mm` is ever
 //!    a hand.
 //! 2. Hand zones and their covered fraction (histogram peak areas when
-//!    available, confidences otherwise).
-//! 3. Coverage centroid with a sub-zone shift for partly covered zones
-//!    (x, y), weighted mean distance with outlier rejection (z), a ridge
-//!    least-squares plane through the hand points (pitch, roll, each with
-//!    a confidence from the points' spread), second moments of the blob
-//!    (yaw, confidence from its elongation).
-//! 4. One Euro filters per DoF (steady when still, quick when moving),
+//!    available, the near/far signal ratio or confidences otherwise).
+//! 3. Arm rejection (M5): each hand zone's distance as a perpendicular
+//!    height; the near cluster (within `cluster_mm` of the nearest) gives
+//!    the lateral position and `height_mm`, the hand body (within
+//!    `body_mm`) the distance, tilt and yaw. A finger pointing down
+//!    tracks the fingertip; a forearm sloping in from one side does not
+//!    drag x.
+//! 4. Coverage centroid with a sub-zone shift for partly covered zones
+//!    (x, y) over the near cluster, weighted mean distance with outlier
+//!    rejection (z), a ridge least-squares plane through the hand points
+//!    (pitch, roll, each with a confidence from the points' spread),
+//!    second moments of the blob (yaw, confidence from its elongation).
+//!    An axis the layout does not resolve (y for STRIPES) stays 0 with
+//!    zero confidence for the angles that need it.
+//! 5. One Euro filters per DoF (steady when still, quick when moving),
 //!    velocities from their derivative stage, presence with hysteresis.
 //!
 //! Coordinates: screen cells after the orientation (col 0 left, row 0
@@ -30,7 +44,12 @@ pub const types = @import("tof_types.zig");
 /// Synthetic frames from a hand scene (tests, snouty-morph's ghost hand).
 pub const synth = @import("tof_synth.zig");
 
+/// Zone layouts and their geometry.
+pub const zones = @import("tof_zones.zig");
+
 const Frame = types.Frame;
+const Layout = types.Layout;
+const Geometry = zones.Geometry;
 const Histograms = types.Histograms;
 const Orientation = types.Orientation;
 
@@ -44,12 +63,21 @@ pub const FilterParams = struct {
 };
 
 pub const Config = struct {
-    /// Field of view (SPAD map 1: 33 x 32 degrees).
+    /// GRID's field of view (SPAD map 1: 33 x 32 degrees; map 6: 41 x 52).
+    /// STRIPES takes its geometry from the SPAD array (lib/tof_zones.zig).
     fov_x_deg: f32 = 33,
     fov_y_deg: f32 = 32,
     /// Hand range along the zone ray.
     min_mm: f32 = 15,
+    /// STRIPES' near limit: a user SPAD mask has no crosstalk calibration,
+    /// so very near returns may be the package's own (docs/TOF.md M5).
+    min_mm_stripes: f32 = 40,
     max_mm: f32 = 600,
+    /// Arm rejection (docs/TOF.md M5), perpendicular heights: hand zones
+    /// within `cluster_mm` of the nearest give x, y and `height_mm`;
+    /// within `body_mm` the distance, tilt and yaw.
+    cluster_mm: f32 = 40,
+    body_mm: f32 = 100,
     /// Targets below this confidence are ignored.
     min_confidence: u8 = 6,
     /// A target nearer than background - max(margin_mm, margin_frac * bg)
@@ -99,15 +127,35 @@ pub const Pose = struct {
     seen: bool = false,
     /// Hand zones this frame.
     zones: u8 = 0,
+    /// The layout and its screen cells (`coverage`, `depth_mm`, `cluster`
+    /// are row-major over `cols` x `rows`: GRID 3x3, STRIPES 8x1, or 1x8
+    /// when the orientation transposes).
+    layout: Layout = .grid,
+    cols: u8 = 3,
+    rows: u8 = 3,
+    /// The layout resolves this screen axis (STRIPES: x only, or y only
+    /// when transposed); an unresolved x or y stays 0.
+    has_x: bool = true,
+    has_y: bool = true,
     /// Covered fraction per screen cell (row-major, row 0 top), 0 = not hand.
     coverage: [types.zones]f32 = @splat(0),
-    /// Lateral position, -1..1: +-1 at the outer cells' centres.
+    /// Perpendicular height per screen cell this frame, 0 = not hand.
+    depth_mm: [types.zones]f32 = @splat(0),
+    /// Screen cells in the near cluster (bit per cell): what x and y and
+    /// `height_mm` came from.
+    cluster: u16 = 0,
+    /// Lateral position, -1..1: +-1 at the outer zones' centres.
     x: f32 = 0,
     y: f32 = 0,
     x_mm: f32 = 0,
     y_mm: f32 = 0,
-    /// Perpendicular distance from the sensor.
+    /// Perpendicular distance from the sensor (the hand body, filtered).
     z_mm: f32 = 0,
+    /// This frame's nearest hand point and the near cluster's mean height
+    /// (perpendicular, unfiltered; 0 when no hand was seen): what an
+    /// instrument plays, steadier than any one zone.
+    near_mm: f32 = 0,
+    height_mm: f32 = 0,
     /// Radians. pitch > 0: top farther; roll > 0: right side farther; yaw
     /// > 0: long axis turned counter-clockwise from vertical. yaw is
     /// continuous (unwrapped), not limited to +-pi/2.
@@ -176,6 +224,9 @@ const Cell = struct {
 
 pub const Estimator = struct {
     config: Config = .{},
+    /// The layout this estimator reads (`set_layout`).
+    layout: Layout = .grid,
+    /// Background per device zone (frame.zones index).
     cells: [types.zones]Cell = @splat(.{}),
     pose: Pose = .{},
     absent: u8 = 0,
@@ -188,19 +239,42 @@ pub const Estimator = struct {
     f_pitch: OneEuro = .{},
     f_roll: OneEuro = .{},
     f_yaw: OneEuro = .{},
+    geom: Geometry = .{},
+    geom_ok: bool = false,
+
+    /// Read `layout` from now on: everything learned is dropped (zone i
+    /// looks elsewhere now), the configuration is kept.
+    pub fn set_layout(e: *Estimator, layout: Layout) void {
+        if (layout == e.layout) return;
+        e.* = .{ .config = e.config, .layout = layout };
+    }
+
+    /// The geometry for `orient` (cached).
+    pub fn geometry(e: *Estimator, orient: Orientation) *const Geometry {
+        if (!e.geom_ok or !std.meta.eql(e.geom.orient, orient) or e.geom.layout != e.layout) {
+            e.geom = Geometry.init(e.layout, orient, e.config.fov_x_deg, e.config.fov_y_deg);
+            e.geom_ok = true;
+        }
+        return &e.geom;
+    }
 
     /// Takes `frame` as the background (every zone's near target, or
     /// nothing), e.g. while the user holds a button with no hand in view.
     pub fn relearn(e: *Estimator, frame: *const Frame, orient: Orientation) void {
-        for (0..types.zones) |ci| {
-            const z = frame.zones[orient.index(@intCast(ci % 3), @intCast(ci / 3))];
-            e.cells[ci] = .{ .bg = if (usable(z.near, e.config.min_confidence)) @floatFromInt(z.near.mm) else 0 };
+        _ = orient;
+        if (frame.layout != e.layout) return;
+        for (frame.zones, 0..) |z, zi| {
+            e.cells[zi] = .{ .bg = if (usable(z.near, e.config.min_confidence)) @floatFromInt(z.near.mm) else 0 };
         }
     }
 
-    /// The pose after `frame` (and its histograms, if the driver dumps them).
+    /// The pose after `frame` (and its histograms, if the driver dumps
+    /// them). A frame of another layout is ignored (the last pose returned).
     pub fn update(e: *Estimator, frame: *const Frame, hist: ?*const Histograms, orient: Orientation) Pose {
+        if (frame.layout != e.layout) return e.pose;
         const cfg = &e.config;
+        const g = e.geometry(orient);
+        const nz: usize = g.n;
         var dt = cfg.default_dt;
         if (e.last_time_us != 0 and frame.time_us > e.last_time_us) {
             dt = @as(f32, @floatFromInt(@min(frame.time_us - e.last_time_us, 1_000_000))) * 1e-6;
@@ -208,9 +282,7 @@ pub const Estimator = struct {
         dt = std.math.clamp(dt, 0.004, 0.25);
         e.last_time_us = frame.time_us;
 
-        // 1-2. Background model, hand zones and their coverage.
-        const cell_x = tan_deg(cfg.fov_x_deg / 3.0);
-        const cell_y = tan_deg(cfg.fov_y_deg / 3.0);
+        // 1-2. Background model, hand zones and their coverage (by screen cell).
         var hand: [types.zones]bool = @splat(false);
         var cov: [types.zones]f32 = @splat(0);
         var dist: [types.zones]f32 = @splat(0);
@@ -219,33 +291,33 @@ pub const Estimator = struct {
         var amp_far: [types.zones]f32 = @splat(-1);
         var max_conf: f32 = 1;
         var max_amp: f32 = 1e-6;
-        for (0..types.zones) |ci| {
-            const zi = orient.index(@intCast(ci % 3), @intCast(ci / 3));
+        for (0..nz) |ci| {
+            const zi = g.zones[ci].dev;
             const z = frame.zones[zi];
-            if (!e.classify(ci, z)) continue;
+            if (!e.classify(zi, z)) continue;
             hand[ci] = true;
             dist[ci] = @floatFromInt(z.near.mm);
             conf[ci] = @floatFromInt(z.near.confidence);
             max_conf = @max(max_conf, conf[ci]);
             if (hist) |h| {
-                amp[ci] = peak_area(&h.bins[zi + 1], dist[ci], cfg) * dist[ci] * dist[ci];
+                amp[ci] = peak_area(&h.bins[@as(usize, zi) + 1], dist[ci], cfg) * dist[ci] * dist[ci];
                 max_amp = @max(max_amp, amp[ci]);
                 if (usable(z.far, cfg.min_confidence)) {
                     const fm: f32 = @floatFromInt(z.far.mm);
-                    amp_far[ci] = peak_area(&h.bins[zi + 1], fm, cfg) * fm * fm;
+                    amp_far[ci] = peak_area(&h.bins[@as(usize, zi) + 1], fm, cfg) * fm * fm;
                 }
             }
         }
         var n: u8 = 0;
         var total: f32 = 0;
-        for (0..types.zones) |ci| {
+        for (0..nz) |ci| {
             if (!hand[ci]) continue;
-            const zi = orient.index(@intCast(ci % 3), @intCast(ci / 3));
+            const zi = g.zones[ci].dev;
             const z = frame.zones[zi];
             var c: f32 = 1;
             if (hist != null) {
                 c = if (amp_far[ci] >= 0) amp[ci] / @max(amp[ci] + amp_far[ci], 1e-6) else amp[ci] / max_amp;
-            } else if (usable(z.far, cfg.min_confidence) and e.far_is_background(ci, z)) {
+            } else if (usable(z.far, cfg.min_confidence) and e.far_is_background(zi, z)) {
                 // Confidence grows with the returned signal, which falls as
                 // 1/d^2: compensate both before comparing.
                 const cf: f32 = @floatFromInt(z.far.confidence);
@@ -263,7 +335,16 @@ pub const Estimator = struct {
         var p = e.pose;
         p.seq = frame.seq;
         p.zones = n;
+        p.layout = g.layout;
+        p.cols = g.cols;
+        p.rows = g.rows;
+        p.has_x = g.has_x;
+        p.has_y = g.has_y;
         p.coverage = cov;
+        p.depth_mm = @splat(0);
+        p.cluster = 0;
+        p.near_mm = 0;
+        p.height_mm = 0;
         const seen = total >= cfg.present_coverage;
         p.seen = seen;
         if (seen) e.seen_run +|= 1 else e.seen_run = 0;
@@ -296,45 +377,85 @@ pub const Estimator = struct {
         const fresh = !p.present;
         p.present = true;
 
-        // 3a. Centroid in tangent space, then the sub-zone shift.
-        var tx: [types.zones]f32 = undefined;
-        var ty: [types.zones]f32 = undefined;
-        for (0..types.zones) |ci| {
-            tx[ci] = (@as(f32, @floatFromInt(ci % 3)) - 1.0) * cell_x;
-            ty[ci] = (1.0 - @as(f32, @floatFromInt(ci / 3))) * cell_y;
+        // 3. Arm rejection: perpendicular heights from the zone centres'
+        // tangents; the near cluster and the hand body.
+        var tx: [types.zones]f32 = @splat(0);
+        var ty: [types.zones]f32 = @splat(0);
+        var lat: [types.zones]bool = @splat(false);
+        var body: [types.zones]bool = @splat(false);
+        var near: f32 = std.math.floatMax(f32);
+        for (0..nz) |ci| {
+            tx[ci] = g.zones[ci].tx;
+            ty[ci] = g.zones[ci].ty;
+            if (!hand[ci]) continue;
+            p.depth_mm[ci] = dist[ci] / @sqrt(1.0 + tx[ci] * tx[ci] + ty[ci] * ty[ci]);
+            near = @min(near, p.depth_mm[ci]);
         }
-        var c0 = centroid(&hand, &cov, &tx, &ty);
-        for (0..types.zones) |ci| {
-            if (!hand[ci] or cov[ci] >= 0.95) continue;
+        var h_sum: f32 = 0;
+        var h_n: f32 = 0;
+        for (0..nz) |ci| {
+            if (!hand[ci]) continue;
+            lat[ci] = p.depth_mm[ci] <= near + cfg.cluster_mm;
+            body[ci] = p.depth_mm[ci] <= near + cfg.body_mm;
+            if (lat[ci]) {
+                p.cluster |= @as(u16, 1) << @intCast(ci);
+                h_sum += p.depth_mm[ci];
+                h_n += 1;
+            }
+        }
+        p.near_mm = near;
+        p.height_mm = h_sum / h_n;
+
+        // 4a. Centroid of the near cluster in tangent space, then the
+        // sub-zone shift: a partly covered zone's centre moves toward the
+        // blob by (1 - coverage) / 2 of its width (exactly the covered
+        // part's centre for a straight edge), on the axes the layout resolves.
+        // A stripe is never wholly covered (it spans the field's height),
+        // so on a 1-D layout the across-stripe fraction is the coverage
+        // relative to the best-covered stripe of the cluster.
+        var lc = cov;
+        if (!(g.has_x and g.has_y)) {
+            var top: f32 = 0;
+            for (0..nz) |ci| if (lat[ci]) {
+                top = @max(top, cov[ci]);
+            };
+            for (0..nz) |ci| lc[ci] = if (lat[ci]) std.math.clamp(cov[ci] / top, cfg.min_coverage, 1.0) else 0;
+        }
+        var c0 = centroid(&lat, &lc, &tx, &ty);
+        for (0..nz) |ci| {
+            if (!lat[ci] or lc[ci] >= 0.95) continue;
+            const wx = g.zones[ci].wx;
+            const wy = g.zones[ci].wy;
             const ox = c0[0] - tx[ci];
             const oy = c0[1] - ty[ci];
-            const k = (1.0 - cov[ci]) * 0.5;
-            if (@abs(ox) > 0.25 * cell_x) tx[ci] += std.math.sign(ox) * k * cell_x;
-            if (@abs(oy) > 0.25 * cell_y) ty[ci] += std.math.sign(oy) * k * cell_y;
+            const k = (1.0 - lc[ci]) * 0.5;
+            if (g.has_x and @abs(ox) > 0.25 * wx) tx[ci] += std.math.sign(ox) * k * wx;
+            if (g.has_y and @abs(oy) > 0.25 * wy) ty[ci] += std.math.sign(oy) * k * wy;
         }
-        c0 = centroid(&hand, &cov, &tx, &ty);
+        c0 = centroid(&lat, &lc, &tx, &ty);
 
-        // 3b. Distance: weighted mean of perpendicular depths, outliers dropped.
-        var depth: [types.zones]f32 = undefined;
-        var w: [types.zones]f32 = undefined;
-        for (0..types.zones) |ci| {
+        // 4b. Distance: weighted mean of the hand body's perpendicular
+        // depths, outliers dropped.
+        var depth: [types.zones]f32 = @splat(0);
+        var w: [types.zones]f32 = @splat(0);
+        for (0..nz) |ci| {
             depth[ci] = dist[ci] / @sqrt(1.0 + tx[ci] * tx[ci] + ty[ci] * ty[ci]);
-            w[ci] = if (hand[ci]) cov[ci] * @max(conf[ci], 1.0) / 255.0 else 0;
+            w[ci] = if (body[ci]) cov[ci] * @max(conf[ci], 1.0) / 255.0 else 0;
         }
         var z0 = weighted_mean(&w, &depth);
         var kept: u8 = 0;
-        for (0..types.zones) |ci| {
+        for (0..nz) |ci| {
             if (w[ci] > 0 and @abs(depth[ci] - z0) > cfg.outlier_mm) w[ci] = 0;
             if (w[ci] > 0) kept += 1;
         }
         if (kept > 0) z0 = weighted_mean(&w, &depth);
 
-        // 3c. Tilt: ridge least squares z = a + b x + c y over the hand
-        // points (mm), centred on their weighted mean.
+        // 4c. Tilt: ridge least squares z = a + b x + c y over the hand
+        // body's points (mm), centred on their weighted mean.
         var sw: f32 = 0;
         var mx: f32 = 0;
         var my: f32 = 0;
-        for (0..types.zones) |ci| {
+        for (0..nz) |ci| {
             sw += w[ci];
             mx += w[ci] * tx[ci] * depth[ci];
             my += w[ci] * ty[ci] * depth[ci];
@@ -351,7 +472,7 @@ pub const Estimator = struct {
             var sxy: f32 = 0;
             var sxz: f32 = 0;
             var syz: f32 = 0;
-            for (0..types.zones) |ci| {
+            for (0..nz) |ci| {
                 if (w[ci] == 0) continue;
                 const px = tx[ci] * depth[ci] - mx;
                 const py = ty[ci] * depth[ci] - my;
@@ -362,9 +483,10 @@ pub const Estimator = struct {
                 sxz += w[ci] * px * pz;
                 syz += w[ci] * py * pz;
             }
-            // Cell spacing on the hand (mm) sets the scale of "spread".
-            const sx_mm = cell_x * z0;
-            const sy_mm = cell_y * z0;
+            // GRID cell spacing on the hand (mm) sets the scale of
+            // "spread" in every layout.
+            const sx_mm = g.ref_x * z0;
+            const sy_mm = g.ref_y * z0;
             const lx = 0.01 * sx_mm * sx_mm * sw;
             const ly = 0.01 * sy_mm * sy_mm * sw;
             const a11 = sxx + lx;
@@ -379,30 +501,31 @@ pub const Estimator = struct {
             // Spread (standard deviation in cells) to confidence.
             const spread_x = @sqrt(sxx / sw) / sx_mm;
             const spread_y = @sqrt(syy / sw) / sy_mm;
-            conf_roll = std.math.clamp((spread_x - 0.25) / 0.35, 0.0, 1.0);
-            conf_pitch = std.math.clamp((spread_y - 0.25) / 0.35, 0.0, 1.0);
+            if (g.has_x) conf_roll = std.math.clamp((spread_x - 0.25) / 0.35, 0.0, 1.0);
+            if (g.has_y) conf_pitch = std.math.clamp((spread_y - 0.25) / 0.35, 0.0, 1.0);
         }
 
-        // 3d. Yaw from the blob's second moments (cell units; each zone
-        // adds its own extent so a single zone is round).
+        // 4d. Yaw from the hand body's second moments (GRID cell units;
+        // each zone adds its own extent so a single zone is round). Needs
+        // both axes: none for STRIPES.
         var sum_c: f32 = 0;
         var bx: f32 = 0;
         var by: f32 = 0;
-        for (0..types.zones) |ci| {
-            if (!hand[ci]) continue;
+        for (0..nz) |ci| {
+            if (!body[ci]) continue;
             sum_c += cov[ci];
-            bx += cov[ci] * tx[ci] / cell_x;
-            by += cov[ci] * ty[ci] / cell_y;
+            bx += cov[ci] * tx[ci] / g.ref_x;
+            by += cov[ci] * ty[ci] / g.ref_y;
         }
         bx /= sum_c;
         by /= sum_c;
         var mxx: f32 = 0;
         var myy: f32 = 0;
         var mxy: f32 = 0;
-        for (0..types.zones) |ci| {
-            if (!hand[ci]) continue;
-            const dx = tx[ci] / cell_x - bx;
-            const dy = ty[ci] / cell_y - by;
+        for (0..nz) |ci| {
+            if (!body[ci]) continue;
+            const dx = tx[ci] / g.ref_x - bx;
+            const dy = ty[ci] / g.ref_y - by;
             // A partly covered zone is a strip: thinner across its shift.
             mxx += cov[ci] * (dx * dx + cov[ci] * cov[ci] / 12.0);
             myy += cov[ci] * (dy * dy + cov[ci] * cov[ci] / 12.0);
@@ -413,13 +536,13 @@ pub const Estimator = struct {
         // Long axis angle from +x, then from vertical.
         const theta = 0.5 * atan2(2.0 * mxy, mxx - myy);
         var raw_yaw = wrap_half_pi(theta - std.math.pi / 2.0);
-        const conf_yaw: f32 = if (n >= 3) std.math.clamp((elong - 0.15) / 0.45, 0.0, 1.0) else 0;
+        const conf_yaw: f32 = if (n >= 3 and g.has_x and g.has_y) std.math.clamp((elong - 0.15) / 0.45, 0.0, 1.0) else 0;
 
-        // 4. Filters.
-        const half_x = cell_x; // x = +-1 at the outer cells' centres
-        const half_y = cell_y;
-        const raw_x = c0[0] / half_x;
-        const raw_y = c0[1] / half_y;
+        // 5. Filters.
+        const half_x = g.half_x; // x = +-1 at the outer zones' centres
+        const half_y = g.half_y;
+        const raw_x = if (g.has_x) c0[0] / half_x else 0;
+        const raw_y = if (g.has_y) c0[1] / half_y else 0;
         if (fresh) {
             e.f_x.reset(raw_x);
             e.f_y.reset(raw_y);
@@ -470,8 +593,8 @@ pub const Estimator = struct {
         return p;
     }
 
-    /// Updates zone `ci`'s background from its targets; true if the near
-    /// target is a hand.
+    /// Updates device zone `ci`'s background from its targets; true if
+    /// the near target is a hand.
     fn classify(e: *Estimator, ci: usize, z: types.Zone) bool {
         const cfg = &e.config;
         const cell = &e.cells[ci];
@@ -511,7 +634,7 @@ pub const Estimator = struct {
             cell.still_count = 0;
             return false;
         }
-        if (m < cfg.min_mm) return false;
+        if (m < (if (e.layout == .stripes) cfg.min_mm_stripes else cfg.min_mm)) return false;
         // A hand candidate. The background behind it keeps learning from
         // the far target when that matches.
         if (cell.bg != 0 and usable(z.far, cfg.min_confidence)) {
@@ -894,4 +1017,235 @@ test "pose: swirl follows circling" {
         if (i > 30) acc += p.swirl;
     }
     try testing.expect(acc > 0);
+}
+
+// ---------------------------------------------------------------------------
+// M5: stripes and arm rejection (docs/TOF.md M5).
+
+/// A hand sweeping sideways in 2 mm steps, each position settled with a
+/// fresh estimator: how finely and how truly x follows it.
+const Sweep = struct {
+    /// Largest jump of x_mm between neighbouring positions (truth: 2 mm).
+    max_step_mm: f32 = 0,
+    /// Worst |x_mm - truth|.
+    worst_mm: f32 = 0,
+    /// Positions where x_mm moved by more than 0.5 mm: distinct readings.
+    steps: u32 = 0,
+    /// x never went backwards by more than 0.5 mm.
+    monotonic: bool = true,
+};
+
+/// The hands swept: a flat palm 25 cm up, a fingertip pointing down 15 cm up.
+const palm: synth.Hand = .{ .z_mm = 250, .half_w = 40, .half_h = 90 };
+const fingertip: synth.Hand = .{ .z_mm = 150, .half_w = 9, .half_h = 12 };
+
+fn sweep(layout: Layout, saturate: bool, hand: synth.Hand) Sweep {
+    var out: Sweep = .{};
+    var prev: ?f32 = null;
+    // Over the middle of the field: +-60 mm at 25 cm, +-36 mm at 15 cm.
+    const span = 0.24 * hand.z_mm;
+    var xm: f32 = -span;
+    while (xm <= span + 0.01) : (xm += 2) {
+        var est: Estimator = .{ .config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650 } };
+        est.set_layout(layout);
+        var t: u64 = 0;
+        var seed: u32 = 3;
+        var h = hand;
+        h.x_mm = xm;
+        var scene: synth.Scene = .{ .layout = layout, .saturate = saturate, .fov_x_deg = 41, .fov_y_deg = 52, .hand = h };
+        scene.background_mm = @splat(1300);
+        const p = run(&est, &scene, 12, false, .{}, &t, &seed);
+        if (!p.present) {
+            out.monotonic = false;
+            continue;
+        }
+        out.worst_mm = @max(out.worst_mm, @abs(p.x_mm - xm));
+        if (prev) |q| {
+            out.max_step_mm = @max(out.max_step_mm, @abs(p.x_mm - q));
+            if (@abs(p.x_mm - q) > 0.5) out.steps += 1;
+            if (p.x_mm < q - 0.5) out.monotonic = false;
+        }
+        prev = p.x_mm;
+    }
+    return out;
+}
+
+test "pose M5: stripes follow a sideways sweep far more finely than the grid" {
+    // Confidence that tracks coverage (the synthetic model's), then the
+    // pessimistic case where every target reports 255 (the hardware may
+    // saturate): sub-zone interpolation then has only zone membership.
+    for ([_]bool{ false, true }) |sat| {
+        const g = sweep(.grid, sat, palm);
+        const s = sweep(.stripes, sat, palm);
+        const gf = sweep(.grid, sat, fingertip);
+        const sf = sweep(.stripes, sat, fingertip);
+        try testing.expect(s.monotonic and g.monotonic);
+        if (!sat) {
+            // Coverage-tracking confidence: both interpolate; the stripes
+            // with smaller steps and more distinct readings.
+            try testing.expect(s.worst_mm < 7);
+            try testing.expect(s.max_step_mm < 8 and s.max_step_mm < g.max_step_mm);
+            try testing.expect(s.steps > g.steps);
+        } else {
+            // Saturated: stripe membership alone gives half-stripe steps
+            // (an inner stripe is 21 mm wide at 250 mm); the grid steps
+            // between whole-cell answers (its rows give a few more).
+            try testing.expect(s.max_step_mm < 13 and s.worst_mm < 12);
+            try testing.expect(g.worst_mm > 15 and s.worst_mm * 1.5 < g.worst_mm);
+            try testing.expect(s.max_step_mm < g.max_step_mm);
+        }
+        // A fingertip: one cell of the grid, one or two stripes. Either
+        // confidence model (the tip covers too little for it to matter).
+        try testing.expect(sf.monotonic and gf.monotonic);
+        try testing.expect(sf.max_step_mm < 8 and sf.worst_mm < 6);
+        try testing.expect(gf.max_step_mm > 15 and gf.worst_mm > 10);
+        try testing.expect(sf.steps >= 2 * gf.steps);
+    }
+}
+
+/// A hand with an optional forearm: x_mm and height of the settled pose.
+fn arm_pose(layout: Layout, hand: synth.Hand, arm: ?synth.Arm, cfg: Config) Pose {
+    var est: Estimator = .{ .config = cfg };
+    est.set_layout(layout);
+    var t: u64 = 0;
+    var seed: u32 = 5;
+    var scene: synth.Scene = .{ .layout = layout, .fov_x_deg = 41, .fov_y_deg = 52, .hand = hand, .arm = arm, .noise_mm = 1.5 };
+    scene.background_mm = @splat(1300);
+    return run(&est, &scene, 15, false, .{}, &t, &seed);
+}
+
+test "pose M5: a forearm sloping in from the left does not drag x" {
+    const base: Config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650 };
+    var off = base;
+    off.cluster_mm = 1e4;
+    off.body_mm = 1e4;
+    off.outlier_mm = 1e4;
+    const hand: synth.Hand = .{ .x_mm = 30, .z_mm = 220, .half_w = 40, .half_h = 80 };
+    const arm: synth.Arm = .{ .dir = std.math.pi, .slope = 0.6 };
+    for ([_]Layout{ .grid, .stripes }) |l| {
+        const alone = arm_pose(l, hand, null, base);
+        const with = arm_pose(l, hand, arm, base);
+        const naive = arm_pose(l, hand, arm, off);
+        // Without rejection the arm pulls x left (by ~25 mm); with it the
+        // stripes stay put and the height is the hand's. A grid zone
+        // holding both the hand and the arm's first part cannot be split:
+        // GRID keeps about half the drag.
+        const drag = alone.x_mm - naive.x_mm;
+        try testing.expect(drag > 15);
+        if (l == .stripes) {
+            try testing.expect(@abs(with.x_mm - alone.x_mm) < 3);
+        } else {
+            try testing.expect(@abs(with.x_mm - alone.x_mm) < 0.6 * drag);
+        }
+        try testing.expect(@abs(with.height_mm - 220) < 8);
+        try testing.expect(@abs(with.z_mm - alone.z_mm) < 16);
+    }
+}
+
+test "pose M5: a finger pointing down tracks the fingertip" {
+    const cfg: Config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650 };
+    var off = cfg;
+    off.cluster_mm = 1e4;
+    // The fingertip 15 cm up, the hand and forearm rising steeply behind
+    // it toward the upper left.
+    const tip: synth.Hand = .{ .x_mm = 25, .z_mm = 150, .half_w = 9, .half_h = 12 };
+    const arm: synth.Arm = .{ .dir = 2.6, .slope = 2.0, .half_w = 30, .length = 250 };
+    for ([_]Layout{ .grid, .stripes }) |l| {
+        const p = arm_pose(l, tip, arm, cfg);
+        const naive = arm_pose(l, tip, arm, off);
+        try testing.expect(p.present);
+        try testing.expect(naive.x_mm < p.x_mm - 8);
+        // The stripes holding the tip also hold the arm just above it
+        // (the synthetic zone reports their mean): the height reads a
+        // little high, far less than without the cluster.
+        try testing.expect(@abs(p.height_mm - 150) < 25 and p.height_mm < naive.height_mm - 20);
+        if (l == .stripes) {
+            // One or two 13 mm stripes at 15 cm: within a stripe of the tip.
+            try testing.expect(@abs(p.x_mm - 25) < 8);
+        } else {
+            // A 37 mm cell: the tip's side of the grid, not the arm's.
+            try testing.expect(p.x_mm > 10);
+        }
+    }
+}
+
+test "pose M5: tilt survives the arm, roll is measured in stripes, pitch and yaw are not" {
+    const cfg: Config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650 };
+    // A palm rolled 25 deg (right side away) over most of the field, the
+    // forearm coming in from below.
+    const hand: synth.Hand = .{ .z_mm = 200, .half_w = 110, .half_h = 110, .roll = deg(25) };
+    const arm: synth.Arm = .{ .dir = -std.math.pi / 2.0, .slope = 0.8, .half_w = 35 };
+    const g = arm_pose(.grid, hand, arm, cfg);
+    try testing.expect(@abs(to_deg(g.roll) - 25) < 8);
+    try testing.expect(g.conf_roll > 0.5);
+    // The body window keeps a palm tilted 45 deg; the near cluster alone
+    // would drop its far half and lose the tilt.
+    var tight = cfg;
+    tight.body_mm = cfg.cluster_mm;
+    const steep: synth.Hand = .{ .z_mm = 200, .half_w = 100, .half_h = 100, .pitch = deg(45) };
+    const t = arm_pose(.grid, steep, null, tight);
+    const b = arm_pose(.grid, steep, null, cfg);
+    try testing.expect(@abs(to_deg(b.pitch) - 45) < 8 and b.conf_pitch > 0.8);
+    try testing.expect(@abs(to_deg(t.pitch) - 45) > 20);
+    const s = arm_pose(.stripes, hand, arm, cfg);
+    try testing.expect(@abs(to_deg(s.roll) - 25) < 8);
+    try testing.expect(s.conf_roll > 0.5);
+    try testing.expectEqual(@as(f32, 0), s.conf_pitch);
+    try testing.expectEqual(@as(f32, 0), s.conf_yaw);
+    try testing.expectEqual(@as(f32, 0), s.y);
+    try testing.expect(!s.has_y and s.has_x);
+}
+
+test "pose M5: frames of the other layout are ignored, switching starts afresh" {
+    var est: Estimator = .{ .config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650 } };
+    var t: u64 = 0;
+    var seed: u32 = 31;
+    var scene: synth.Scene = .{ .fov_x_deg = 41, .fov_y_deg = 52, .hand = .{ .x_mm = -40, .z_mm = 250 } };
+    scene.background_mm = @splat(1300);
+    const p = run(&est, &scene, 10, false, .{}, &t, &seed);
+    try testing.expect(p.present and p.layout == .grid);
+    // A stripes frame in flight changes nothing.
+    var stripes = scene;
+    stripes.layout = .stripes;
+    const q = run(&est, &stripes, 3, false, .{}, &t, &seed);
+    try testing.expectEqual(p.seq, q.seq);
+    // Switching drops the background and the filters; stripes frames then work.
+    est.set_layout(.stripes);
+    try testing.expect(!est.pose.present);
+    try testing.expectEqual(@as(f32, 0), est.cells[4].bg);
+    const r = run(&est, &stripes, 10, false, .{}, &t, &seed);
+    try testing.expect(r.present and r.layout == .stripes and r.cols == 8 and r.rows == 1);
+    try testing.expect(@abs(r.x_mm + 40) < 6);
+    // The grid frames now in flight are ignored in turn.
+    const u = run(&est, &scene, 2, false, .{}, &t, &seed);
+    try testing.expectEqual(r.seq, u.seq);
+}
+
+test "pose M5: stripes under MIRROR and transpose" {
+    const cfg: Config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650 };
+    var scene: synth.Scene = .{ .layout = .stripes, .fov_x_deg = 41, .fov_y_deg = 52, .hand = .{ .x_mm = 35, .y_mm = -20, .z_mm = 240, .half_w = 35, .half_h = 70 } };
+    scene.background_mm = @splat(1300);
+    // The scene is in screen space: any flip gives the same pose.
+    var a: Estimator = .{ .config = cfg };
+    var b: Estimator = .{ .config = cfg };
+    a.set_layout(.stripes);
+    b.set_layout(.stripes);
+    var ta: u64 = 0;
+    var tb: u64 = 0;
+    var sa: u32 = 41;
+    var sb: u32 = 41;
+    const pa = run(&a, &scene, 12, false, .{}, &ta, &sa);
+    const pb = run(&b, &scene, 12, false, .{ .flip_x = true, .flip_y = true }, &tb, &sb);
+    try testing.expectApproxEqAbs(pa.x, pb.x, 1e-4);
+    try testing.expect(pa.x_mm > 28 and pa.x_mm < 42);
+    // Transposed, the stripes run across the screen: y is measured, x is not.
+    var c: Estimator = .{ .config = cfg };
+    c.set_layout(.stripes);
+    var tc: u64 = 0;
+    var sc: u32 = 41;
+    const pc = run(&c, &scene, 12, false, .{ .transpose = true }, &tc, &sc);
+    try testing.expect(pc.present and !pc.has_x and pc.has_y);
+    try testing.expectEqual(@as(f32, 0), pc.x);
+    try testing.expect(pc.y_mm < -12 and pc.y_mm > -28);
+    try testing.expect(pc.cols == 1 and pc.rows == 8);
 }
