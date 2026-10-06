@@ -25,9 +25,6 @@ pub const cpu_scale: u16 = scale_one;
 /// (`build_options.z80`, carts/snouty-genesis/build.zig): the XIP cart and
 /// the simulator have the Z80, the RAM cart has the stub (PLAN.md M5).
 pub const z80_enabled: bool = @import("build_options").z80;
-// With the stub, `-Dgenesis_s1dac=true` adds a fake of Sonic 1's Z80
-// sample driver to the RAM cart (core/s1dac.zig, `build_options.s1dac`):
-// that game's drums and SEGA chant play, other games are untouched.
 
 /// The RAM cart's FM synthesis rate (core/ym2612.zig `Fm`, core/sound.zig):
 /// the six FM channels are evaluated every `fm_rate_div`-th 44.1 kHz

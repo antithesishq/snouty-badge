@@ -77,23 +77,6 @@ Options:
   no-ROM screen); `embed` uses only the embedded ROM. The wasm build
   always embeds.
 - `-Dcart-optimize=fast|small|safe|debug` (default `fast`).
-- `-Dgenesis_s1dac=true` (default off): the RAM cart plays Sonic 1's DAC
-  drums, timpani and SEGA chant through a fake of that game's Z80 sample
-  driver (core/s1dac.zig, PLAN.md "Sonic 1 DAC fake"):
-
-  ```sh
-  zig build -Dcart=snouty-genesis -Dgenesis_s1dac=true   # add -Dsound=true to boot with sound on
-  ```
-
-  It switches on only for Sonic 1 REV01 (`GM 00004049-01`, checksum
-  AFC7, and the 68000 code it was written against); every other ROM runs
-  as without the flag. The RAM cart's Z80 RAM is then kept in its 8 KB
-  SRAM buffer (Sonic 1 has none), so the console state differs from a
-  build without the flag and link play refuses to pair the two (OTHER
-  BUILD, docs/LINK_PLAY.md). It costs 2.4 KB of the RAM window (600 B
-  left) and, in Sonic 1 with sound on, about 0.2 ms per update on
-  average, 0.4 ms at the worst (PLAN.md). The XIP cart and the wasm do
-  not change (they run the real Z80).
 
 Sizes: `size -A zig-out/firmware/snouty-genesis.elf` (RAM cart: `.text` +
 `.data` + `.bss` share the 306,944 B window with the 32 KB stack, so at
@@ -117,24 +100,7 @@ core as the XIP cart and the simulator build it) and
 `snouty-genesis-ram-tests` (`tests/ram_variant.zig`, the RAM cart's core:
 the Z80 stub as the 68000 sees it, the trimmed test ROM, and the golden
 runs of the test ROM and Miniplanets with the stub, which give the full
-core's pictures); and `snouty-genesis-s1dac-tests` (`tests/s1dac_unit.zig`,
-the RAM cart's core with `-Dgenesis_s1dac` and the trace probe: every
-RAM-cart test again, then the fake on a synthetic ROM and driver image,
-then Sonic 1 itself from `~/roms/genesis/sonic1.bin`, skipped without it).
-
-The Sonic 1 DAC fake against the real Z80 (PLAN.md "Sonic 1 DAC fake"):
-
-```sh
-zig build s1dac-trace -Dcart=snouty-genesis -- ~/roms/genesis/sonic1.bin /tmp/s1dac
-python3 carts/snouty-genesis/tools/s1dac_compare.py /tmp/s1dac
-```
-
-runs about 11,300 frames of Sonic 1 (the SEGA chant, the title, Green
-Hill, every music id) twice, on the full core with the real Z80 and on the
-RAM cart's core with the fake, and compares every sample the driver
-plays (values, length, timing) and the two WAVs (RMS and correlation per
-section). Its logs and WAVs are made from the ROM: keep them out of the
-repository.
+core's pictures).
 
 Without `tests/roms/68000/*.json.gz` (`tools/fetch_test_roms.sh`) the
 default run reports the SingleStepTests as skipped, not passed;

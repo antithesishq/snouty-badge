@@ -10,12 +10,6 @@
 //! and stay silent, as does all of a Z80-driven game such as Miniplanets'
 //! Echo engine). The XIP cart and the simulator keep `Md.tone()`.
 //!
-//! Built with `-Dgenesis_s1dac=true` (core/s1dac.zig, PLAN.md "Sonic 1 DAC
-//! fake"), Sonic 1's drums and SEGA chant play too: a fake of its Z80
-//! driver feeds the DAC (`Sound.dac`, added per output sample after the FM,
-//! whose own DAC term is then 0), and `sync` renders up to a BUSREQ write
-//! while a sample plays.
-//!
 //! Timing: a sample's bin is 1/44,100 s of console time. Positions are
 //! Q12 samples from the frame's first bin: `phase` (the carried fraction
 //! of the last frame's straddling bin) plus master clocks x `q12_per_clock`.
@@ -34,8 +28,6 @@ const ym2612 = @import("ym2612.zig");
 const psg = @import("psg.zig");
 const vdp = @import("vdp.zig");
 const tunables = @import("tunables.zig");
-const probe = @import("probe.zig");
-const s1dac = @import("s1dac.zig");
 
 pub const enabled: bool = ym2612.synth_enabled;
 
@@ -48,7 +40,7 @@ pub const max_samples: u32 = tunables.render_every * frame_max;
 const line_clocks: u32 = 3420;
 const frame_clocks: u32 = vdp.lines_per_frame * line_clocks;
 /// Q12 samples per master clock, Q20: 44100 * 4096 / 53693175 * 2^20.
-pub const q12_per_clock: u64 = 3_527_600;
+const q12_per_clock: u64 = 3_527_600;
 const frame_q12: u32 = @intCast((@as(u64, frame_clocks) * q12_per_clock) >> 20);
 
 /// The mix to 8 bits: (FM + PSG) * mix_gain >> 16, after the DC blocker.
@@ -86,9 +78,6 @@ pub const Sound = struct {
     /// The DC blocker's last input and output (`render_to`).
     dc_x: i32 = 0,
     dc_y: i32 = 0,
-    /// The Sonic 1 DAC fake's player (core/s1dac.zig; `-Dgenesis_s1dac`
-    /// builds only).
-    dac: if (s1dac.enabled) s1dac.Player else void = if (s1dac.enabled) .{} else {},
 
     /// Set up a `Sound` in place (it is ~2 KB: never build one by value),
     /// not rendering; `Md.snd` points at it.
@@ -103,7 +92,6 @@ pub const Sound = struct {
         s.fm_div = 0;
         s.dc_x = 0;
         s.dc_y = 0;
-        if (comptime s1dac.enabled) s.dac = .{};
         s.psg.reset();
         for (&s.fm.op) |*ops| for (ops) |*o| {
             o.* = .{};
@@ -124,8 +112,7 @@ pub const Sound = struct {
     /// Start over from the registers (the console's power-on, its Z80
     /// RESET line, or rendering switched on).
     pub fn resync(s: *Sound, md: *const Md) void {
-        if (comptime s1dac.enabled) s.fm_resync(md) else s.fm.resync(&md.ym);
-        if (comptime s1dac.enabled) s.dac.stop();
+        s.fm.resync(&md.ym);
         s.psg.reset();
         s.fm_val = 0;
         s.fm_div = 0;
@@ -162,16 +149,6 @@ pub const Sound = struct {
         s.len = s.base + s.done;
     }
 
-    /// `Fm.resync`; with the Sonic 1 DAC fake driving the DAC its level
-    /// comes from the player, not from register 2A.
-    pub fn fm_resync(s: *Sound, md: *const Md) void {
-        s.fm.resync(&md.ym);
-        if (s1dac.on(md)) {
-            s.dac.level = md.ym.regs[0][0x2A];
-            s.fm.dac = 0;
-        }
-    }
-
     /// Render up to master clock `t` of the frame.
     fn catch_up(s: *Sound, md: *const Md, t: u32) void {
         const pos = s.phase + @as(u32, @intCast((@as(u64, @min(t, frame_clocks)) * q12_per_clock) >> 20));
@@ -196,16 +173,6 @@ pub const Sound = struct {
                 if (s.fm_div == tunables.fm_rate_div) s.fm_div = 0;
                 v.* = s.fm_val;
             }
-            // The Sonic 1 DAC fake: its DAC at the output rate.
-            if (comptime s1dac.enabled) {
-                if (s1dac.on(md)) {
-                    if (comptime probe.enabled) {
-                        s1dac.probe_bin0 = i - s.base;
-                        s1dac.probe_phase = s.phase;
-                    }
-                    s.dac.mix(md, m, s.fm.ch[5].pan, md.ym.dac_enabled());
-                }
-            }
             s.psg.next_bins(bins[0..n]);
             s.psg.add(&md.psg, bins[0..n], m);
             for (m, s.out[i..][0..n]) |x, *d| {
@@ -224,12 +191,8 @@ pub const Sound = struct {
 };
 
 /// Console time now, master clocks into the frame: the 68000's line and
-/// its cycle in the line (the only CPU that writes the chips here; the
-/// trace tool's full-core build has the Z80 too and sets `probe.z80_t`).
-pub inline fn now(md: *const Md) u32 {
-    if (comptime probe.enabled) {
-        if (probe.z80_t) |t| return t;
-    }
+/// its cycle in the line (the only CPU that writes the chips here).
+inline fn now(md: *const Md) u32 {
     const c: u32 = @min(md.vdp.line_cycles, vdp.m68k_cycles_per_line);
     return @as(u32, md.vdp.line) * line_clocks + c * 7;
 }
@@ -256,12 +219,6 @@ noinline fn ym_data_render(s: *Sound, md: *Md, part: u1, v: u8) void {
         s.catch_up(md, now(md));
     md.ym.write_data(part, v);
     s.fm.written(&md.ym, part, r);
-    if (comptime s1dac.enabled) {
-        if (part == 0 and r == 0x2A and s1dac.on(md)) {
-            s.dac.level = v;
-            s.fm.dac = 0;
-        }
-    }
 }
 
 /// A PSG port write (C00011 or Z80 7F11).
@@ -280,16 +237,7 @@ noinline fn psg_write_render(s: *Sound, md: *Md, v: u8) void {
 
 /// After `md.ym` was reset (power on, Z80 RESET).
 pub inline fn ym_was_reset(md: *Md) void {
-    // The Sonic 1 DAC fake hears of the Z80's RESET (out of line: the
-    // 68000's hot loop inlines this).
-    if (comptime s1dac.enabled) return s1dac.z80_reset(md);
     if (comptime enabled) {
         if (active(md)) |s| s.fm.resync(&md.ym);
     }
-}
-
-/// Render up to now (the Sonic 1 DAC fake: before BUSREQ changes while a
-/// sample plays, and before its driver takes a command).
-pub fn sync(md: *const Md) void {
-    if (active(md)) |s| s.catch_up(md, now(md));
 }
