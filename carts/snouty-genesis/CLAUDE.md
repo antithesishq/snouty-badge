@@ -91,10 +91,7 @@ only (it calls this cart's `build.zig` `pub fn add`).
   builds the XIP cart and the wasm only. The variants differ only through
   `build_options` (`z80`, `scrub`, `synth`, `sound`; the core imports it too:
   `tunables.z80_enabled`, `undo.enabled`, `sound.enabled` = the RAM
-  cart's FM + PSG synthesis, `tunables.fm_rate_div` its FM rate; `s1dac`,
-  the RAM cart's fake of Sonic 1's Z80 driver, off unless
-  `-Dgenesis_s1dac=true`, core/s1dac.zig; `probe`, host trace tools
-  only, core/probe.zig) and module optimize modes (RAM
+  cart's FM + PSG synthesis, `tunables.fm_rate_div` its FM rate) and module optimize modes (RAM
   cart: `app`, `drive`, `romfs`, `rom`, `iris`, `hint` and cart-api
   ReleaseSmall; `core` and `video` ReleaseFast), plus the RAM cart's
   trimmed test ROM in embed builds (`tools/trim_rom.zig`). Keep the RAM
@@ -132,17 +129,11 @@ only (it calls this cart's `build.zig` `pub fn add`).
   placeholder ROM chosen that way. Decide from options only.
 - `zig build test-genesis -Dcart=snouty-genesis` → this
   cart's host tests only (`snouty-genesis-tests` for the full core,
-  `snouty-genesis-ram-tests` for the RAM cart's, `tests/ram_variant.zig`,
-  `snouty-genesis-s1dac-tests` for the RAM cart's with the Sonic 1 DAC
-  fake, `tests/s1dac_unit.zig`); `zig build test` → every built cart's (plus
+  `snouty-genesis-ram-tests` for the RAM cart's, `tests/ram_variant.zig`); `zig build test` → every built cart's (plus
   lib/). `-Dtest-filter=smoke` (names carry an area prefix: `smoke:`,
   `md:`, `rom:`), `-Dtest-optimize=`.
 - `size -A zig-out/firmware/snouty-genesis.elf` and `-xip.elf` against
   SPEC.md section 13.
-- `zig build s1dac-trace -Dcart=snouty-genesis -- ~/roms/genesis/sonic1.bin <dir>`
-  then `python3 carts/snouty-genesis/tools/s1dac_compare.py <dir>`: the
-  Sonic 1 DAC fake against the real Z80 (PLAN.md "Sonic 1 DAC fake"; the
-  outputs come from the ROM: keep them out of the repository).
 - Headless: `node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 60 --every 30 --out carts/snouty-genesis/out/`
   (from the root), then look at the PNGs.
 - `zig fmt carts/snouty-genesis` before committing.

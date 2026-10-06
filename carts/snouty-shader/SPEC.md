@@ -6,8 +6,9 @@ Qwiic port (docs/TOF.md). Each program is a full-screen per-pixel
 function of (x, y, time, uniforms); the uniforms come from the sensor.
 The hand reaches into the image: nearer is stronger, moving is flow, a
 punch (a fast jab toward the sensor) is a shockwave, a flash and a
-palette jump. With no sensor (simulator, host, unplugged) a ghost hand
-drives it, so it always looks alive.
+palette jump. With no hand in view (or no sensor: simulator, host,
+unplugged) nothing fakes one: the field stays empty and each program
+runs on its own clock, so any reaction on screen is a real hand.
 
 ## 1. Uniforms (`cart/src/uniforms.zig`, `field.zig`)
 
@@ -93,12 +94,13 @@ program (and again every 30 s); any button or a sensed hand resets it.
 ## 4. Sources (`cart/src/hand.zig`, from snouty-morph)
 
 Priority: a sensed hand, then recent stick input (B + stick; 4 s), then
-the ghost: snouty-morph's scripted 16 s hand routine (drift, approach,
-circle with yaw, wind up and punch, a big rocking hand) rendered into
-synthetic frames by lib/tof_synth and run through its own pose
-estimator, so attract shows what the real estimator makes of a hand. The
-stick hand's field comes from tof_synth's per-cell coverage of a hand at
-the stick position.
+the sensor with no hand in view (SENSOR, an empty field), then none (NO
+SENSOR). The field only lights while the pose estimator reports a hand,
+so a stray reading it rejects lights nothing. The stick hand's field
+comes from tof_synth's per-cell coverage of a hand at the stick
+position. (M1 had a ghost: a scripted attract hand whenever no hand was
+in view. Removed 2026-10-06, Adrian: it made the sensor hard to demo,
+since the image moved with nothing in front of it.)
 
 ## 5. Sound (optional, boots silent)
 

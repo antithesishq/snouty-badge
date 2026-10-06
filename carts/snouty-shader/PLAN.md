@@ -70,6 +70,26 @@ builds; the GIF shows several programs driven by the ghost.
 - `zig build`, `zig build test`, `zig build check-float` green; preview
   GIF `docs/preview_tour.gif`.
 
+### M1.1: DONE 2026-10-06 (tag `snouty-shader/m1.1`): no ghost
+
+- Adrian: with no sensor, or the sensor pointed at nothing, the shader
+  still reacted now and then, which made the sensor hard to demo. Cause:
+  the GHOST attract hand (snouty-morph's 16 s routine) took over 2 s after
+  the last sensed hand; its far drift gave a faint wandering bump and its
+  punch a flash and palette jump every 16 s. Removed: sources are SENSOR
+  (the breakout; no hand in view = an empty field), STICK, NO SENSOR
+  (inputs panel label), `config.hand_timeout` dropped. The field also
+  lights only while the estimator reports a hand (`cells_from` returns
+  nothing for a pose that is not present), so a one-frame stray reading
+  it rejects no longer lights a cell for a frame.
+- Not changed: the estimator's `min_confidence = 6` (a lone low-confidence
+  return in one zone reads as full coverage of it); if stray ceiling
+  returns still flicker on hardware, raise it for this cart.
+- badge-bench (calibrated): tour worst 8.76 / mean 5.03 ms (no ghost
+  frames; was 10.44 / 5.51), `-Dtof-fake=true` worst 11.20 / mean 6.12.
+  `docs/preview_tour.gif` regenerated (programs idle on their own clock,
+  INK with B + stick).
+
 ## Deferred decisions (defaults taken; Adrian may flip any)
 
 1. The programs: INK, RIPPLE, LAVA, ECHO, CELLS, KALEIDO (all six
@@ -79,14 +99,14 @@ builds; the GIF shows several programs driven by the ghost.
 3. The stick moves the virtual hand only while B is held (B + stick, B + A
    punches): plain Left/Right/Up/Down/A are program, parameter and
    palette, so steering lives under B with the inputs panel. Holding B
-   alone never takes over from the ghost or the sensor.
+   alone never takes over from the sensor.
 4. Start toggles sound and Select toggles MIRROR, both on release and
    only if the other button never joined the hold, so the Start+Select
    chord never flips either. Select was unbound, so MIRROR displaces
    nothing. MIRROR flips flip_x relative to snouty-morph's default
    (`.{ .flip_x = true }`) and restarts the estimator's background.
 5. Attract: 30 s with no sensed hand and no button moves to the next
-   program, then every 30 s; the ghost never counts as play, and buttons
+   program, then every 30 s; buttons
    pressed under the Start+Select chord do not count either.
 6. Each program keeps its own palette and parameter (0..8, default 4)
    while the cart runs; nothing is saved.

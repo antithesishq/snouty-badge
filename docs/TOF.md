@@ -250,10 +250,10 @@ commands 40 us).
 
 - A demoscene mesh (torus knot, Boing ball, Snouty head, Iris mark) that
   follows the hand in 6DoF and deforms with it (reach, jelly, twist,
-  punch shockwave); a ghost hand in attract mode, stick fallback.
+  punch shockwave); stick fallback.
 - `lib/tof_pose.zig`: hand pose from the 3x3 frame (background model,
   coverage centroid, plane-fit tilt, moment yaw, One Euro filters) and
-  `lib/tof_synth.zig` (synthetic frames for tests and the ghost hand).
+  `lib/tof_synth.zig` (synthetic frames for tests and the stick field).
   Design and honest limits in carts/snouty-morph/SPEC.md.
 
 ### M3.5: Snouty Shader (`snouty-shader`)
@@ -261,7 +261,7 @@ commands 40 us).
 - A Shadertoy-style gallery of six abstract per-pixel shaders whose
   uniforms are the sensor: the 3x3 presence/depth field (Catmull-Rom
   upsampled over the screen) and the tof_pose hand pose and punches.
-  snouty-morph's sensor wiring, orientation and ghost hand. Design in
+  snouty-morph's sensor wiring and orientation. Design in
   carts/snouty-shader/SPEC.md, status and bench numbers in its PLAN.md.
 
 ### M4 (later): gestures and hand modes

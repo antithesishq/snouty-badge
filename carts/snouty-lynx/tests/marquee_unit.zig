@@ -1,6 +1,5 @@
 //! The marquee's art (frontend/marquee_art.zig, M8): title clean-up,
-//! lettering that stays inside the band, schemes, the glint, and the drive
-//! BMP check. The font is the OS font from the SDK's source, the same
+//! lettering that stays inside the band, schemes and the glint. The font is the OS font from the SDK's source, the same
 //! glyphs the cart captures from the screen.
 const std = @import("std");
 const art = @import("marquee_art");
@@ -116,70 +115,4 @@ test "marquee: schemes and glint" {
     try std.testing.expect(art.glint_at(art.glint_frames / 2) > 0);
     try std.testing.expectEqual(@as(i32, -1000), art.glint_at(art.glint_frames));
     try std.testing.expectEqual(art.glint_at(5), art.glint_at(5 + art.glint_period));
-}
-
-/// A 160x26 BMP: `bpp` 24 or 32, rows bottom-up unless `top_down`, pixel
-/// (x, y) = (x, y, x ^ y) as (R, G, B).
-fn make_bmp(buf: []u8, bpp: u16, top_down: bool) []u8 {
-    const stride: u32 = (art.w * bpp / 8 + 3) & ~@as(u32, 3);
-    const size: u32 = 54 + stride * art.h;
-    @memset(buf[0..size], 0);
-    buf[0] = 'B';
-    buf[1] = 'M';
-    std.mem.writeInt(u32, buf[2..6], size, .little);
-    std.mem.writeInt(u32, buf[10..14], 54, .little);
-    std.mem.writeInt(u32, buf[14..18], 40, .little);
-    std.mem.writeInt(i32, buf[18..22], art.w, .little);
-    std.mem.writeInt(i32, buf[22..26], if (top_down) -art.h else art.h, .little);
-    std.mem.writeInt(u16, buf[26..28], 1, .little);
-    std.mem.writeInt(u16, buf[28..30], bpp, .little);
-    for (0..art.h) |y| {
-        const row = if (top_down) y else art.h - 1 - y;
-        for (0..art.w) |x| {
-            const p = buf[54 + row * stride + x * bpp / 8 ..];
-            p[0] = @intCast(x ^ y);
-            p[1] = @intCast(y);
-            p[2] = @intCast(x);
-        }
-    }
-    return buf[0..size];
-}
-
-test "marquee: drive BMP" {
-    var buf: [54 + 640 * 26]u8 = undefined;
-    for ([_]u16{ 24, 32 }) |bpp| for ([_]bool{ false, true }) |td| {
-        const b = try art.parse_bmp(make_bmp(&buf, bpp, td));
-        try std.testing.expectEqual(@as(u8, @intCast(bpp / 8)), b.bytes_pp);
-        for ([_][2]u32{ .{ 0, 0 }, .{ 159, 25 }, .{ 37, 11 } }) |xy| {
-            const p = b.row(xy[1]) + xy[0] * b.bytes_pp;
-            try std.testing.expectEqual(@as(u8, @intCast(xy[0])), p[2]);
-            try std.testing.expectEqual(@as(u8, @intCast(xy[1])), p[1]);
-        }
-    };
-
-    var bmp = make_bmp(&buf, 24, false);
-    bmp[0] = 'X';
-    try std.testing.expectError(error.NotBmp, art.parse_bmp(bmp));
-    bmp = make_bmp(&buf, 24, false);
-    std.mem.writeInt(u32, bmp[30..34], 1, .little); // RLE8
-    try std.testing.expectError(error.Compressed, art.parse_bmp(bmp));
-    bmp = make_bmp(&buf, 24, false);
-    std.mem.writeInt(u16, bmp[28..30], 16, .little);
-    try std.testing.expectError(error.NotTrueColour, art.parse_bmp(bmp));
-    bmp = make_bmp(&buf, 24, false);
-    std.mem.writeInt(i32, bmp[22..26], 27, .little);
-    try std.testing.expectError(error.Not160x26, art.parse_bmp(bmp));
-    bmp = make_bmp(&buf, 24, false);
-    try std.testing.expectError(error.Truncated, art.parse_bmp(bmp[0 .. bmp.len - 1]));
-    // 32-bit with BI_BITFIELDS (what many editors write) is fine.
-    bmp = make_bmp(&buf, 32, false);
-    std.mem.writeInt(u32, bmp[30..34], 3, .little);
-    _ = try art.parse_bmp(bmp);
-}
-
-test "marquee: BMP beside the ROM" {
-    try std.testing.expect(art.sidecar_matches("HARDDRIV.LNX", "harddriv.bmp"));
-    try std.testing.expect(art.sidecar_matches("Hard Drivin' (USA).lnx", "Hard Drivin' (USA).BMP"));
-    try std.testing.expect(!art.sidecar_matches("A.LNX", "AB.BMP"));
-    try std.testing.expect(!art.sidecar_matches("KLAX.LNX", "KLAX.LNX.BMP"));
 }

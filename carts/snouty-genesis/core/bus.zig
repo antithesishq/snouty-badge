@@ -40,8 +40,6 @@ const z80bus = @import("z80bus.zig");
 const undo = @import("undo.zig");
 const sound = @import("sound.zig");
 const ports = @import("ports.zig");
-const probe = @import("probe.zig");
-const s1dac = @import("s1dac.zig");
 const Md = md_mod.Md;
 
 /// A10001 version register: bit 7 overseas (1), bit 6 PAL (0: NTSC), bit 5
@@ -195,9 +193,6 @@ fn read8_io(md: *Md, addr: u24) u8 {
 fn read16_io(md: *Md, addr: u24) u16 {
     if (addr >= 0xC00000) return if (addr < 0xE00000) vdp_read16(md, addr) else 0xFFFF;
     if (addr >= 0xA00000 and addr < 0xA10000) {
-        // A tail call with the fake, so the hot paths above keep their
-        // frameless leaf (core/s1dac.zig).
-        if (comptime s1dac.enabled) return s1dac.z80_read16(md, addr);
         const b = z80_read(md, addr);
         return @as(u16, b) << 8 | b;
     }
@@ -261,7 +256,6 @@ fn write16_io(md: *Md, addr: u24, v: u16) void {
 /// Track D's map) when the 68000 holds the bus. The Z80's bank window
 /// (8000-FFFF) is not reachable from the 68000 and reads FF.
 fn z80_read(md: *Md, addr: u24) u8 {
-    if (comptime s1dac.enabled) return s1dac.z80_read(md, addr);
     if (!z80_side_open(md) or addr & 0x8000 != 0) return 0xFF;
     var zb = md.z80bus_for();
     return zb.read(@truncate(addr & 0x7FFF));
@@ -269,23 +263,17 @@ fn z80_read(md: *Md, addr: u24) u8 {
 
 fn z80_write(md: *Md, addr: u24, v: u8) void {
     if (!z80_side_open(md) or addr & 0x8000 != 0) return;
-    if (comptime probe.enabled) {
-        if (addr & 0x4000 == 0) probe.note(.m68k_z80_write, md.frame_count, sound.now(md), addr & 0x1FFF, v);
-    }
     var zb = md.z80bus_for();
     zb.write(@truncate(addr & 0x7FFF), v);
 }
 
 fn set_busreq(md: *Md, on: bool) void {
-    if (comptime probe.enabled) probe.note(.busreq, md.frame_count, sound.now(md), 0, @intFromBool(on));
-    if (comptime s1dac.enabled) return s1dac.set_busreq(md, on);
     md.arbiter.busreq = on;
 }
 
 /// A11200: 0 asserts RESET (the Z80 and the YM2612 are reset and held),
 /// 1 releases it (the Z80 starts at 0000 from its reset state).
 fn set_z80_reset(md: *Md, assert: bool) void {
-    if (comptime probe.enabled) probe.note(.reset, md.frame_count, sound.now(md), 0, @intFromBool(assert));
     if (assert) {
         z80bus.reset_line(md);
         md.z80_carry = 0;

@@ -51,13 +51,6 @@ const Variant = struct {
     /// The party lobby and lockstep over the fork firmware's cart serial
     /// port (docs/MULTIPLAYER.md, root docs/LOCKSTEP_N.md).
     party: bool = false,
-    /// The Sonic 1 DAC fake (core/s1dac.zig, PLAN.md "Sonic 1 DAC fake"):
-    /// the RAM cart with `-Dgenesis_s1dac=true` only (it needs `synth`
-    /// and no Z80).
-    s1dac: bool = false,
-    /// core/probe.zig's trace points: the host trace tool only
-    /// (tools/s1dac_trace.zig), never a cart.
-    probe: bool = false,
 };
 const full: Variant = .{ .z80 = true, .scrub = true, .synth = false };
 const ram_cart: Variant = .{ .z80 = false, .scrub = false, .synth = true };
@@ -74,8 +67,6 @@ fn variant_options(b: *Build, sound: bool, debug_overlay: bool, v: Variant) *Bui
     options.addOption(bool, "scrub", v.scrub);
     options.addOption(bool, "synth", v.synth);
     options.addOption(bool, "party", v.party);
-    options.addOption(bool, "s1dac", v.s1dac);
-    options.addOption(bool, "probe", v.probe);
     return options;
 }
 
@@ -84,12 +75,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     rom_is_default = opts.md_rom == null;
     rom_source = opts.md_rom_source;
     cart_optimize = opts.cart_optimize;
-    // -Dgenesis_s1dac=true: the RAM cart fakes Sonic 1's Z80 DAC driver
-    // (PLAN.md "Sonic 1 DAC fake"); the XIP cart and the wasm have the Z80.
-    const s1dac = b.option(bool, "genesis_s1dac", "snouty-genesis: the RAM cart plays Sonic 1's DAC drums and SEGA chant through a fake of its Z80 driver; default off") orelse false;
-    var ram_variant = ram_cart;
-    ram_variant.s1dac = s1dac;
-    build_options = variant_options(b, opts.sound, opts.debug_overlay, ram_variant);
+    build_options = variant_options(b, opts.sound, opts.debug_overlay, ram_cart);
     build_options_xip = variant_options(b, opts.sound, opts.debug_overlay, full);
 
     // Two variants (PLAN.md M5): the RAM cart `snouty-genesis` (no Z80, no
@@ -219,25 +205,36 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .{ .name = "build_options", .module = variant_options(b, false, false, ram_cart).createModule() },
         },
     });
-    const ram_tests = ram_test_binary(b, opts, "snouty-genesis-ram-tests", "tests/ram_variant.zig", core_host_ram, rom_host, lockstep_host, link_host);
-    // The same with the Sonic 1 DAC fake (`-Dgenesis_s1dac`) and the trace
-    // probe: tests/s1dac_unit.zig, which runs every RAM-cart test too.
-    var s1dac_variant = ram_cart;
-    s1dac_variant.s1dac = true;
-    s1dac_variant.probe = true;
-    const core_host_s1dac = b.createModule(.{
-        .root_source_file = b.path(dir ++ "core/md.zig"),
-        .target = b.graph.host,
-        .optimize = test_optimize,
-        .imports = &.{
-            .{ .name = "z80", .module = z80_host },
-            .{ .name = "build_options", .module = variant_options(b, false, false, s1dac_variant).createModule() },
-        },
+    const ram_tests = b.addTest(.{
+        .name = "snouty-genesis-ram-tests",
+        .filters = if (opts.test_filter) |f| &.{f} else &.{},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tests/ram_variant.zig"),
+            .target = b.graph.host,
+            .optimize = test_optimize,
+            .imports = &.{
+                .{ .name = "core", .module = core_host_ram },
+                .{ .name = "rom", .module = rom_host },
+                .{ .name = "rom_ram", .module = b.createModule(.{
+                    .root_source_file = rom_module_ram(b),
+                    .target = b.graph.host,
+                    .optimize = test_optimize,
+                }) },
+                // Link play on the RAM cart's core (tests/link_play.zig).
+                .{ .name = "lockstep", .module = lockstep_host },
+                .{ .name = "linkplay", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "cart/src/frontend/linkplay.zig"),
+                    .target = b.graph.host,
+                    .optimize = test_optimize,
+                    .imports = &.{
+                        .{ .name = "core", .module = core_host_ram },
+                        .{ .name = "lockstep", .module = lockstep_host },
+                    },
+                }) },
+                .{ .name = "link_host", .module = link_host },
+            },
+        }),
     });
-    const s1dac_tests = ram_test_binary(b, opts, "snouty-genesis-s1dac-tests", "tests/s1dac_unit.zig", core_host_s1dac, rom_host, lockstep_host, link_host);
-    const s1dac_run = b.addRunArtifact(s1dac_tests);
-    s1dac_run.has_side_effects = true;
-    opts.test_step.dependOn(&s1dac_run.step);
     const ram_run = b.addRunArtifact(ram_tests);
     ram_run.has_side_effects = true;
     opts.test_step.dependOn(&ram_run.step);
@@ -250,9 +247,6 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     const test_genesis = b.step("test-genesis", "Run snouty-genesis host tests");
     test_genesis.dependOn(&run.step);
     test_genesis.dependOn(&ram_run.step);
-    test_genesis.dependOn(&s1dac_run.step);
-
-    add_s1dac_trace(b, z80_host);
 
     // Strict 68000 oracle gate (not part of `test`): SingleStepTests with
     // SNOUTY_FIXTURES=required, so absent fixtures fail instead of
@@ -271,83 +265,6 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     strict_run.setEnvironmentVariable("SNOUTY_FIXTURES", "required");
     strict_run.has_side_effects = true;
     b.step("test-m68k-strict", "Run the snouty-genesis 68000 oracle tests; fail if fixtures are absent").dependOn(&strict_run.step);
-}
-
-/// A RAM-cart test binary over `core` (a RAM variant's): the embedded test
-/// ROM, its trimmed copy, and link play over that core.
-fn ram_test_binary(b: *Build, opts: common.Options, name: []const u8, root: []const u8, core: *Build.Module, rom_host: *Build.Module, lockstep_host: *Build.Module, link_host: *Build.Module) *Build.Step.Compile {
-    const test_optimize = opts.test_optimize;
-    return b.addTest(.{
-        .name = name,
-        .filters = if (opts.test_filter) |f| &.{f} else &.{},
-        .root_module = b.createModule(.{
-            .root_source_file = b.path(b.fmt(dir ++ "{s}", .{root})),
-            .target = b.graph.host,
-            .optimize = test_optimize,
-            .imports = &.{
-                .{ .name = "core", .module = core },
-                .{ .name = "rom", .module = rom_host },
-                .{ .name = "rom_ram", .module = b.createModule(.{
-                    .root_source_file = rom_module_ram(b),
-                    .target = b.graph.host,
-                    .optimize = test_optimize,
-                }) },
-                // Link play on the RAM cart's core (tests/link_play.zig).
-                .{ .name = "lockstep", .module = lockstep_host },
-                .{ .name = "linkplay", .module = b.createModule(.{
-                    .root_source_file = b.path(dir ++ "cart/src/frontend/linkplay.zig"),
-                    .target = b.graph.host,
-                    .optimize = test_optimize,
-                    .imports = &.{
-                        .{ .name = "core", .module = core },
-                        .{ .name = "lockstep", .module = lockstep_host },
-                    },
-                }) },
-                .{ .name = "link_host", .module = link_host },
-            },
-        }),
-    });
-}
-
-/// `zig build s1dac-trace -Dcart=snouty-genesis -- <sonic1.bin> <out-dir>`
-/// (PLAN.md "Sonic 1 DAC fake", tools/s1dac_trace.zig): the trace tool
-/// over the full core with the real Z80 (`s1dac-oracle`) and over the RAM
-/// cart's core with the fake (`s1dac-fake`), both with the RAM cart's
-/// synthesis and the probe; runs both. Not part of `test`.
-fn add_s1dac_trace(b: *Build, z80_host: *Build.Module) void {
-    const step = b.step("s1dac-trace", "Run the Sonic 1 DAC oracle and the fake (args: <sonic1.bin> <out-dir>)");
-    const Tool = struct { name: []const u8, v: Variant };
-    for ([_]Tool{
-        .{ .name = "s1dac-oracle", .v = .{ .z80 = true, .scrub = false, .synth = true, .probe = true } },
-        .{ .name = "s1dac-fake", .v = .{ .z80 = false, .scrub = false, .synth = true, .s1dac = true, .probe = true } },
-    }) |t| {
-        const core = b.createModule(.{
-            .root_source_file = b.path(dir ++ "core/md.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseFast,
-            .imports = &.{
-                .{ .name = "z80", .module = z80_host },
-                .{ .name = "build_options", .module = variant_options(b, false, false, t.v).createModule() },
-            },
-        });
-        const names = b.addOptions();
-        names.addOption([]const u8, "name", t.name);
-        const exe = b.addExecutable(.{
-            .name = t.name,
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(dir ++ "tools/s1dac_trace.zig"),
-                .target = b.graph.host,
-                .optimize = .ReleaseFast,
-                .imports = &.{
-                    .{ .name = "core", .module = core },
-                    .{ .name = "trace_options", .module = names.createModule() },
-                },
-            }),
-        });
-        const run = b.addRunArtifact(exe);
-        run.addPassthruArgs();
-        step.dependOn(&run.step);
-    }
 }
 
 /// lib/link.zig and its virtual cable copied under one root, as

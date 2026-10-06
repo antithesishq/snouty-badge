@@ -28,9 +28,10 @@ Copy `snouty-shader.uf2` to the badge drive the usual way
 ([docs/INSTALL.md](../../../docs/INSTALL.md)), plug the SparkFun TMF8820
 breakout into the Qwiic port (before or after starting; replugging is
 fine) and start the cart. Hold a hand 10-40 cm in front of the sensor:
-hold B to see the inputs panel, whose top-right label turns HAND and whose
-3x3 grid lights under your hand. Without the breakout a ghost hand plays
-it (GHOST); B + stick steers a virtual hand (STICK).
+hold B to see the inputs panel, whose top-right label reads SENSOR and whose
+3x3 grid lights under your hand. With nothing in view the field stays
+empty (no attract hand fakes input). Without the breakout the label reads
+NO SENSOR; B + stick steers a virtual hand (STICK).
 
 ## 3. Controls
 
@@ -41,7 +42,7 @@ it (GHOST); B + stick steers a virtual hand (STICK).
 | Up / Down | the program's parameter 0..8 (WARP, WAVE, SPEED, TRAIL, SPEED, MIRRORS) |
 | A | next palette (eight cosine palettes, kept per program) |
 | B (hold) | inputs panel: program, palette, source, the 3x3 field, x/y/z, energy, pitch/roll/yaw (degrees), parameter, PUNCH |
-| B + stick | steer the virtual hand (STICK; hands back to the ghost 4 s after the last move) |
+| B + stick | steer the virtual hand (STICK; lets go 4 s after the last move) |
 | B + A | punch with the virtual hand |
 | Select | MIRROR: flip the sensor's left-right (the breakout dangles on its cable and can face either way; acts on release; MIRR in the panel) |
 | Start | sound on / off (acts on release; boots off) |
@@ -57,7 +58,7 @@ cd carts/snouty-shader && node ../../tools/serve-cart.mjs     # serves this cart
 cd sycl-badge/simulator && npm run dev                        # in another shell
 ```
 
-The simulator has no sensor: the ghost plays, B + arrow keys steer.
+The simulator has no sensor: the programs idle, B + arrow keys steer.
 
 ## 5. Headless preview and the GIF
 
@@ -67,14 +68,13 @@ node tools/preview.mjs zig-out/bin/snouty-shader.wasm --frames 1440 --every 4 --
 python3 tools/make_gif.py /tmp/shader carts/snouty-shader/docs/preview_tour.gif --scale 1 --ms 66
 ```
 
-`docs/preview_tour.gif` (real time, 1x to keep it near 5 MB): the ghost
-hand through all six programs, 4 s each; INK with the inputs panel, B +
-stick steering and a punch, punches in LAVA and ECHO, a palette change in
-KALEIDO.
+`docs/preview_tour.gif` (real time, 1x to keep it near 5 MB): all six
+programs, 4 s each; INK with the inputs panel, B + stick steering and a
+punch, punches in LAVA and ECHO, a palette change in KALEIDO.
 
 Debug exports (wasm): `debug_frame`, `debug_program`,
 `debug_set_program(n)`, `debug_palette`, `debug_param`, `debug_source` (0
-ghost, 1 stick, 2 sensor), `debug_present`, `debug_hand_z` (0..1000),
+none, 1 stick, 2 sensor), `debug_present`, `debug_hand_z` (0..1000),
 `debug_field_peak`, `debug_punch_age`, `debug_render_us`,
 `debug_pixel_checksum`, `debug_sound`, `debug_hud`.
 
@@ -88,6 +88,7 @@ zig build -Dcart=snouty-shader -Dtof-fake=true                               # t
 ```
 
 `badge-bench/carts/snouty-shader.toml` is the default run (each program
-for 600 ticks of the ghost, B + stick and a punch in each). The badge
+for 600 ticks, B + stick and a punch in each; a `-Dtof-fake=true` ELF adds
+the sensor model's wandering hand). The badge
 build exports `start_program` for `--poke start_program=N`. Numbers are in
 `PLAN.md`.

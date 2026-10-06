@@ -177,8 +177,7 @@ screen, which is disabled here), so it lives in the menu. Section 18 item 4.
   rows 0..101 with a status strip under it before, PLAN.md "M8 Marquee").
   Rows 0..25 above it hold the game's arcade marquee
   (`frontend/marquee.zig`: the title in big backlit lettering in a colour
-  scheme picked from the title, or the drive's `NAME.BMP` beside
-  `NAME.LNX`). Over the marquee: the debug overlay's three lines (rows
+  scheme picked from the title). Over the marquee: the debug overlay's three lines (rows
   1..24, title and ROM name, fps and step times, instructions and Suzy
   pixels) while it is on; a boot error as a red line on its bottom 10
   rows; the in-play hints and the link cable's notes on the same bottom

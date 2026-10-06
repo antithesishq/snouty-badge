@@ -79,9 +79,7 @@ owns the session.
   Player, 4 Way Play, J-Cart: pads 1 and 2 are on it or on the ports), so
   the host is pad 1 and the guest pad 2 for every game. Variant: the RAM
   cart (Z80 stub) and the full core (XIP cart, simulator) are different
-  machines and never race; nor does a RAM cart built with
-  `-Dgenesis_s1dac=true` (PLAN.md "Sonic 1 DAC fake") with one without
-  (variant 2). A guest whose CRC or variant differs never
+  machines and never race. A guest whose CRC or variant differs never
   readies, so the host's GO is never allowed. The embedded test ROM's
   "CRC" is 0 on both badges (embed builds).
 - **App id** `'M'` (`lockstep.apps.genesis`, `SNOUTY GENESIS`),

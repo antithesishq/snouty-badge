@@ -43,11 +43,9 @@ pub inline fn pad_of(byte: u8) u16 {
 
 /// The build variant in the rules: the RAM cart (Z80 stub) and the full
 /// core (XIP cart, simulator, host tests) are different machines, so a
-/// guest on the other one never readies (OTHER BUILD). So is the RAM cart
-/// built with `-Dgenesis_s1dac=true` (core/s1dac.zig: Sonic 1 keeps Z80
-/// RAM, which the state hash covers).
-pub const Variant = enum(u8) { ram = 0, full = 1, ram_s1dac = 2 };
-pub const this_variant: Variant = if (core.tunables.z80_enabled) .full else if (core.s1dac.enabled) .ram_s1dac else .ram;
+/// guest on the other one never readies (OTHER BUILD).
+pub const Variant = enum(u8) { ram = 0, full = 1 };
+pub const this_variant: Variant = if (core.tunables.z80_enabled) .full else .ram;
 
 /// The host's rules: the ROM's CRC32 (little-endian), the peripheral the
 /// race plugs in (`ports.Kind`) and the build variant.

@@ -779,16 +779,13 @@ normal play.
    the title (each game gets its own, the same every boot). Title masks
    are one u32 per column (640 B), built at boot; the picture is drawn
    every frame (the buffers swap without a copy).
-2. Your own art: `NAME.BMP` beside `NAME.LNX` on the same drive
-   (case-insensitive base name), uncompressed 24- or 32-bit BMP, 160x26,
-   either row order, contiguous on the drive (a fresh copy always is).
-   Drawn from flash each frame, no RAM copy. A missing or unusable BMP
-   falls back to the drawn marquee; About says which ("Marquee: drawn",
-   "Marquee: from BMP", "BMP: not 160x26").
+2. Your own art (dropped 2026-10-06, Adrian: "skip the bmp override"):
+   `NAME.BMP` beside `NAME.LNX` replaced the drawn marquee, read in place
+   from flash; it cost ~3 KB of scrub arena. Removed with its About line.
 3. Interface (frozen for Track B): `marquee.h` (26), `marquee.load()`
    (after every boot: start, picker, Reset; reads `romsrc`), `marquee.draw()`
    (paints rows 0..25 completely, marks no dirty rect: the game runs
-   `.no_copy_full_frame`), `marquee.about_line(buf)`.
+   `.no_copy_full_frame`).
 4. Everything that sat in the strip (Track B, an Opus agent): the debug
    overlay's three lines draw over the marquee while it is on; a boot
    error is a red line over the marquee's bottom 10 rows; the play hints
@@ -805,6 +802,11 @@ normal play.
 
 ## Status
 
+- 2026-10-06: BMP override dropped (Adrian). `.text` 139,276 -> 136,220
+  B, the scrub arena ~36.3 -> ~39.3 KB (origin/main before M8: ~49.0 KB).
+  About is back to nine lines at most. Bench unchanged from M8: m3_scrub
+  6.25 / 10.89, m2_play 6.85 / 10.39, hd_drive 8.98 / 15.68 (0 of 1800
+  over). Tests 172/173 (the two BMP tests went with it).
 - 2026-10-06: M8 Marquee done on `lynx/marquee` (tag `snouty-lynx/m8`).
   Track A (marquee.zig, marquee_art.zig, tests/marquee_unit.zig,
   `zig build marquee-lynx`) and Track B (layout move, cb374a65: picture at

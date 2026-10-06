@@ -5,7 +5,7 @@
 //!
 //! update(): input (Start next mesh, Select sound; nothing while Start and
 //! Select are both held, the OS chord; joystick click never bound), the
-//! hand (sensor, stick or ghost: hand.zig), the body's springs and
+//! hand (sensor or stick: hand.zig), the body's springs and
 //! deformations (body.zig), then the backdrop, the mesh and the HUD, and
 //! the sound.
 const std = @import("std");
@@ -142,11 +142,11 @@ fn debug_mesh() callconv(.c) u32 {
 fn debug_set_mesh(i: u32) callconv(.c) void {
     select_mesh(i % mesh.count);
 }
-/// 0 ghost, 1 stick, 2 sensor.
+/// 0 none, 1 stick, 2 sensor.
 fn debug_source() callconv(.c) u32 {
     return @backingInt(hand.source);
 }
-/// 1 while the active pose (ghost or sensor) has a hand.
+/// 1 while the sensor pose has a hand.
 fn debug_present() callconv(.c) u32 {
     return @intFromBool(hand.pose.present);
 }

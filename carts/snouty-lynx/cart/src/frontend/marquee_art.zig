@@ -1,7 +1,6 @@
 //! The marquee's art without the badge (PLAN.md "M8 Marquee: contract"):
 //! the title cleaned up for lettering, laid out as one bit mask per column,
-//! the colour scheme picked from it, and the drive BMP's header check. No
-//! cart-api, so the host tests run it (tests/marquee_unit.zig);
+//! and the colour scheme picked from it. No cart-api, so the host tests run it (tests/marquee_unit.zig);
 //! frontend/marquee.zig turns the result into pixels every frame.
 //!
 //! Lettering: the 8x8 OS font (frontend/text.zig captures it), made
@@ -491,79 +490,4 @@ pub fn render_rgb(l: *const Layout, c: *const Colors, frame: u32, out: *[h][w]u3
         letter_column(u32, &pal, &l.mask, x, &left_d, glint, &col);
         for (0..h) |y| out[y][x] = col[y];
     }
-}
-
-// ---- The drive BMP ----
-
-/// A usable BMP: `rows[y]` .. starts row y (top first), `bpp` 3 or 4
-/// bytes per pixel in B, G, R(, A) order.
-pub const Bmp = struct {
-    pixels: [*]const u8,
-    /// Bytes from one stored row to the next.
-    stride: u32,
-    bytes_pp: u8,
-    /// Rows are stored top first (negative height).
-    top_down: bool,
-
-    pub fn row(b: *const Bmp, y: u32) [*]const u8 {
-        const r = if (b.top_down) y else h - 1 - y;
-        return b.pixels + r * b.stride;
-    }
-};
-
-pub const BmpError = error{ NotBmp, Compressed, NotTrueColour, Not160x26, Truncated };
-
-/// "BMP: not 160x26" and so on, for About.
-pub fn bmp_error_text(e: BmpError) []const u8 {
-    return switch (e) {
-        error.NotBmp => "BMP: not a BMP",
-        error.Compressed => "BMP: compressed",
-        error.NotTrueColour => "BMP: not 24/32 bit",
-        error.Not160x26 => "BMP: not 160x26",
-        error.Truncated => "BMP: truncated",
-    };
-}
-
-fn rd16(p: []const u8, o: usize) u32 {
-    return @as(u32, p[o]) | @as(u32, p[o + 1]) << 8;
-}
-
-fn rd32(p: []const u8, o: usize) u32 {
-    return rd16(p, o) | rd16(p, o + 2) << 16;
-}
-
-/// Check an uncompressed 24- or 32-bit 160x26 BMP (either row order).
-pub fn parse_bmp(bytes: []const u8) BmpError!Bmp {
-    if (bytes.len < 54 or bytes[0] != 'B' or bytes[1] != 'M') return error.NotBmp;
-    const offset = rd32(bytes, 10);
-    const dib = rd32(bytes, 14);
-    if (dib < 40) return error.NotBmp;
-    const width: i32 = @bitCast(rd32(bytes, 18));
-    const height: i32 = @bitCast(rd32(bytes, 22));
-    const bpp = rd16(bytes, 28);
-    const compression = rd32(bytes, 30);
-    // 3 = BI_BITFIELDS, which 32-bit exports often use with the plain masks.
-    if (compression != 0 and !(compression == 3 and bpp == 32)) return error.Compressed;
-    if (bpp != 24 and bpp != 32) return error.NotTrueColour;
-    if (width != w or (height != h and height != -h)) return error.Not160x26;
-    const bytes_pp: u32 = bpp / 8;
-    const stride = (w * bytes_pp + 3) & ~@as(u32, 3);
-    if (offset > bytes.len or bytes.len - offset < stride * h) return error.Truncated;
-    return .{ .pixels = bytes.ptr + offset, .stride = stride, .bytes_pp = @intCast(bytes_pp), .top_down = height < 0 };
-}
-
-/// True when `bmp_name` is `rom_name` with a `.bmp` extension in place of
-/// the ROM's (case-insensitive).
-pub fn sidecar_matches(rom_name: []const u8, bmp_name: []const u8) bool {
-    const a = base(rom_name);
-    const b = base(bmp_name);
-    if (a.len != b.len or a.len == 0) return false;
-    for (a, b) |x, y| if (lower(x) != lower(y)) return false;
-    return true;
-}
-
-fn base(name: []const u8) []const u8 {
-    var i = name.len;
-    while (i > 0) : (i -= 1) if (name[i - 1] == '.') return name[0 .. i - 1];
-    return name;
 }

@@ -43,9 +43,6 @@ const rom = @import("rom.zig");
 const undo = @import("undo.zig");
 const tunables = @import("tunables.zig");
 const sound = @import("sound.zig");
-const probe = @import("probe.zig");
-const s1dac = @import("s1dac.zig");
-const vdp = @import("vdp.zig");
 
 /// 68000 address of the first work RAM byte reachable through the window
 /// (work RAM is mirrored across E00000-FFFFFF).
@@ -79,33 +76,16 @@ pub const Z80Bus = struct {
 
     pub inline fn write(self: *Z80Bus, addr: u16, v: u8) void {
         if (addr < 0x4000) {
-            if (!tunables.z80_enabled) {
-                // The Sonic 1 DAC fake keeps Z80 RAM in `sram` and takes
-                // the driver's commands from it (core/s1dac.zig).
-                if (comptime s1dac.enabled) s1dac.ram_write(self.md, addr, v);
-                return;
-            }
+            if (!tunables.z80_enabled) return;
             undo.touch_zr(@truncate(addr));
             self.md.z80_ram[addr & 0x1FFF] = v;
         } else if (addr >= 0x8000) {
             self.write_window(addr, v);
         } else if (addr < 0x6000) {
             const part: u1 = @truncate(addr >> 1);
-            if (addr & 1 == 0) {
-                self.md.ym.write_addr(part, v);
-            } else {
-                // `left` is 0 on the 68000's side (`bus.zig` makes a
-                // fresh `Z80Bus` per access), at least 1 inside `run`.
-                if (comptime probe.enabled) if (self.left != 0) {
-                    probe.note(.z80_ym, self.md.frame_count, self.now(), @as(u32, part) << 8 | self.md.ym.addr[part], v);
-                    probe.z80_t = self.now();
-                };
-                sound.ym_data(self.md, part, v);
-                if (comptime probe.enabled) probe.z80_t = null;
-            }
+            if (addr & 1 == 0) self.md.ym.write_addr(part, v) else sound.ym_data(self.md, part, v);
         } else if (addr < 0x6100) {
             write_bank(self.md, v);
-            if (comptime probe.enabled) if (self.left != 0) probe.note(.z80_bank, self.md.frame_count, self.now(), self.md.z80_bank, v);
         } else if (addr >= 0x7F10 and addr < 0x7F18 and addr & 1 != 0) {
             sound.psg_write(self.md, v);
         }
@@ -136,14 +116,7 @@ pub const Z80Bus = struct {
         return @intCast(@max(1, @min(255, n)));
     }
 
-    /// The Z80's time, master clocks into the frame (the trace probe's).
-    fn now(self: *const Z80Bus) u32 {
-        const pos = vdp.z80_cycles_per_line -| self.left;
-        return @as(u32, self.md.vdp.line) * 3420 + pos * 15;
-    }
-
     inline fn read_window(self: *Z80Bus, addr: u16) u8 {
-        if (comptime probe.enabled) probe.note(.z80_window, self.md.frame_count, self.now(), window_base(self.md) | (addr & 0x7FFF), 0);
         if (self.win_bank == self.md.z80_bank) {
             if (self.win) |p| return p[addr & 0x7FFF];
         } else {
@@ -209,9 +182,7 @@ pub const Cpu = if (tunables.z80_enabled) z80.Z80(Z80Bus) else Stub;
 /// engine: three slots at 1FF4/1FE8/1FDC and a busy byte at 1FC0) go on;
 /// a driver that must set a flag before the game proceeds would hang
 /// either way. The PC is kept for the overlay and the `debug_z80_pc`
-/// export. With `-Dgenesis_s1dac=true` and Sonic 1 loaded, Z80 RAM is
-/// kept in `Md.sram` and a fake of that game's driver answers
-/// (core/s1dac.zig).
+/// export.
 pub const Stub = struct {
     pc: u16 = 0,
 };
