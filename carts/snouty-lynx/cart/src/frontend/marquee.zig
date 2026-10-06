@@ -29,8 +29,9 @@ comptime {
 /// The lettering (bit y of `mask[x]` = ink at column x, row y).
 var mask: [w]u32 = @splat(0);
 var pal: art.Palette(cart.Pixel) = undefined;
-/// `pal.bg` as words: rows 2k and 2k + 1 of a column in one u32 store (the
-/// upper row in the low half, as the framebuffer lays them out).
+/// The background per glow level as words: rows 2k and 2k + 1 of a column
+/// in one u32 store (the upper row in the low half, as the framebuffer
+/// lays them out).
 var bg_words: [art.glow_levels][h / 2]u32 = undefined;
 /// Glow level per column (`art.glow_level`).
 var level: [w]u8 = undefined;
@@ -41,25 +42,21 @@ var frame: u32 = 0;
 var bmp: ?art.Bmp = null;
 /// What About says.
 var status: []const u8 = drawn_text;
-var status_buf: [24]u8 = undefined;
 const drawn_text = "Marquee: drawn";
 
 /// Pick the title, colour scheme and drive BMP for the ROM that just
 /// booted. Call after every boot (start, picker, Reset).
-pub fn load() void {
+pub noinline fn load() void {
     var tb: [art.max_title]u8 = undefined;
     const from_file = romsrc.layout.title().len == 0;
     const title = art.clean_title(romsrc.title_name(), from_file, &tb);
     const l = art.layout(title, text.glyphs());
     mask = l.mask;
     const c = art.colors(art.schemes[art.scheme_index(title)], &l);
-    for (0..art.glow_levels) |g| {
-        for (&pal.bg[g], c.bg[g]) |*p, rgb| p.* = px(rgb);
-        for (&bg_words[g], 0..) |*word, k| word.* = @as(u32, pal.bg[g][2 * k].bits) | @as(u32, pal.bg[g][2 * k + 1].bits) << 16;
-    }
-    for (&pal.shadow, c.shadow) |*p, rgb| p.* = px(rgb);
-    for (&pal.fill, c.fill) |*p, rgb| p.* = px(rgb);
-    for (&pal.shine, c.fill) |*p, rgb| p.* = px(art.shine(rgb));
+    for (&bg_words, &c.bg) |*words, *col| to_words(words, col);
+    to_pixels(&pal.shadow, &c.shadow, false);
+    to_pixels(&pal.fill, &c.fill, false);
+    to_pixels(&pal.shine, &c.fill, true);
     pal.outline = px(c.outline);
     pal.glint = px(0xFFFFFF);
     for (&level, 0..) |*v, x| v.* = @intCast(art.glow_level(@intCast(x)));
@@ -72,6 +69,18 @@ pub fn load() void {
 
 fn px(rgb: u32) cart.Pixel {
     return .from_color(.rgb(rgb));
+}
+
+/// 0xRRGGBB colours to pixels (`shine`: half way to white first). Out of
+/// line over slices so the one-off set-up stays small (marquee_art.zig
+/// `bg_column`).
+noinline fn to_pixels(dst: []cart.Pixel, src: []const u32, shine: bool) void {
+    for (dst, src) |*p, rgb| p.* = px(if (shine) art.shine(rgb) else rgb);
+}
+
+/// A background column as row-pair words (the upper row in the low half).
+noinline fn to_words(dst: []u32, src: []const u32) void {
+    for (dst, 0..) |*word, k| word.* = @as(u32, px(src[2 * k]).bits) | @as(u32, px(src[2 * k + 1]).bits) << 16;
 }
 
 /// `NAME.BMP` beside the running `NAME.LNX`, on the same drive. Only a
@@ -100,25 +109,12 @@ noinline fn find_bmp() void {
             status = art.bmp_error_text(err);
             return;
         };
-        status = name_line(e.slice());
+        status = "Marquee: from BMP";
         return;
     }
 }
 
-/// "Marquee: HD.BMP", the name cut to the About panel's 18 columns.
-fn name_line(name: []const u8) []const u8 {
-    const prefix = "Marquee: ";
-    const cols = 18;
-    @memcpy(status_buf[0..prefix.len], prefix);
-    const room = cols - prefix.len;
-    var n = @min(name.len, room);
-    @memcpy(status_buf[prefix.len..][0..n], name[0..n]);
-    if (name.len > room) status_buf[prefix.len + n - 1] = '~';
-    n += prefix.len;
-    return status_buf[0..n];
-}
-
-/// The About page's line: "Marquee: drawn", "Marquee: HD.BMP",
+/// The About page's line: "Marquee: drawn", "Marquee: from BMP",
 /// "BMP: not 160x26".
 pub fn about_line(buf: *[24]u8) []const u8 {
     @memcpy(buf[0..status.len], status);

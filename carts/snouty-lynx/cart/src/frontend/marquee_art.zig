@@ -51,7 +51,7 @@ const max_line = 20;
 /// `_` as spaces (and `-` too in a file name), runs of spaces as one,
 /// upper case, printable ASCII only. `src` is the header's cart name, or
 /// the file name (`from_file`).
-pub fn clean_title(src: []const u8, from_file: bool, buf: *[max_title]u8) []const u8 {
+pub noinline fn clean_title(src: []const u8, from_file: bool, buf: *[max_title]u8) []const u8 {
     var s = src;
     // ".lnx" / ".lyx" (any case), also "name.lnx.lyx"-style leftovers.
     while (s.len > 4 and s[s.len - 4] == '.') {
@@ -114,7 +114,7 @@ const max_src_cols = max_line * 10;
 /// glyph by a column, each column inked where it or the one to its left is
 /// (so letters thicken without closing the gaps between them). Returns the
 /// count.
-fn source_columns(text: []const u8, glyphs: *const Glyphs, bold: bool, out: *[max_src_cols]u8) usize {
+noinline fn source_columns(text: []const u8, glyphs: *const Glyphs, bold: bool, out: *[max_src_cols]u8) usize {
     var n: usize = 0;
     for (text, 0..) |ch, i| {
         if (n + 10 > out.len) break;
@@ -162,7 +162,7 @@ fn ink_rows(cols: []const u8) struct { u8, u8 } {
 /// Draw source columns `cols` (source rows `r0..r0+rows`) into `mask` as
 /// `out_rows` rows from row `y0` and `sx256 / 256` columns per source
 /// column (both nearest neighbour), centred horizontally.
-fn place(mask: *[w]u32, cols: []const u8, r0: u8, rows: u8, y0: u8, out_rows: u8, sx256: u32) void {
+noinline fn place(mask: *[w]u32, cols: []const u8, r0: u8, rows: u8, y0: u8, out_rows: u8, sx256: u32) void {
     // Output row -> source row, once for the line.
     var bit_for: [h]u8 = undefined;
     for (bit_for[0..out_rows], 0..) |*b, j| b.* = @intCast(r0 + j * rows / out_rows);
@@ -188,7 +188,7 @@ const room: u32 = max_text_w - 3;
 /// half), else the bold one, else the plain one (squeezed below 1x, losing
 /// columns, when even that is too wide). Returns the column count and
 /// scale (x256), or null for no ink.
-fn fit_line(text: []const u8, glyphs: *const Glyphs, cols: *[max_src_cols]u8) ?struct { usize, u32 } {
+noinline fn fit_line(text: []const u8, glyphs: *const Glyphs, cols: *[max_src_cols]u8) ?struct { usize, u32 } {
     const plain = source_columns(text, glyphs, false, cols);
     if (plain == 0) return null;
     if (plain * 3 / 2 <= room) return .{ plain, @min(512, room * 256 / @as(u32, @intCast(plain))) };
@@ -200,7 +200,7 @@ fn fit_line(text: []const u8, glyphs: *const Glyphs, cols: *[max_src_cols]u8) ?s
 /// Lay out `title` (from `clean_title`): one line at twice the font's
 /// height when it fits at full width or more, else two lines (split at the
 /// space nearest the middle) as tall as the band allows.
-pub fn layout(title: []const u8, glyphs: *const Glyphs) Layout {
+pub noinline fn layout(title: []const u8, glyphs: *const Glyphs) Layout {
     var l: Layout = .{};
     if (title.len == 0) return l;
     // Rows the lettering's fill may take: one above for the outline, one
@@ -312,7 +312,7 @@ pub fn scheme_index(title: []const u8) usize {
 }
 
 /// `a` to `b` by `t / n` per channel.
-pub fn mix(a: u32, b: u32, t: u32, n: u32) u32 {
+pub noinline fn mix(a: u32, b: u32, t: u32, n: u32) u32 {
     var out: u32 = 0;
     var s: u5 = 0;
     while (s <= 16) : (s += 8) {
@@ -345,33 +345,40 @@ pub const Colors = struct {
     outline: u32,
 };
 
-/// The tables for scheme `s` and the lettering `l`.
-pub fn colors(s: Scheme, l: *const Layout) Colors {
-    var c: Colors = undefined;
+/// One background column at glow colour `glow`: black trim, its highlight,
+/// brightest at mid-height, the sunset bands below. Out of line over a
+/// slice, as `darken` and the cart's conversions: one-off set-up stays a
+/// loop rather than 26 unrolled copies in a RAM cart.
+noinline fn bg_column(s: *const Scheme, glow: u32, out: []u32) void {
     const mid: u32 = (inner_y0 + inner_y1) / 2;
-    for (0..glow_levels) |g| {
-        // The glow fades towards the ends.
-        const glow = mix(s.bg_glow, s.bg_edge, @intCast(g), glow_levels + 1);
-        for (0..h) |y| {
-            const yy: u32 = @intCast(y);
-            c.bg[g][y] = if (y == 0 or y == h - 1)
-                0x000000
-            else if (y == 1 or y == h - 2)
-                mix(0xFFFFFF, glow, 3, 5)
-            else blk: {
-                // Brightest at mid-height.
-                const d = if (yy < mid) mid - yy else yy - mid;
-                var v = mix(glow, s.bg_edge, d, mid - inner_y0 + 2);
-                // Sunset bands in the lower half, thicker further down.
-                if (s.band != 0 and yy > mid + 1) {
-                    const k = yy - mid - 2;
-                    if (k == 1 or k == 4 or k == 5 or k == 8 or k == 9) v = mix(v, s.band, 2, 3);
-                }
-                break :blk v;
-            };
+    for (out, 0..) |*v, y| {
+        const yy: u32 = @intCast(y);
+        if (y == 0 or y == out.len - 1) {
+            v.* = 0x000000;
+        } else if (y == 1 or y == out.len - 2) {
+            v.* = mix(0xFFFFFF, glow, 3, 5);
+        } else {
+            const d = if (yy < mid) mid - yy else yy - mid;
+            v.* = mix(glow, s.bg_edge, d, mid - inner_y0 + 2);
+            if (s.band != 0 and yy > mid + 1) {
+                const k = yy - mid - 2;
+                if (k == 1 or k == 4 or k == 5 or k == 8 or k == 9) v.* = mix(v.*, s.band, 2, 3);
+            }
         }
     }
-    for (0..h) |y| c.shadow[y] = mix(c.bg[glow_levels - 1][y], 0x000000, 2, 3);
+}
+
+/// `dst` = `src` at a third of its brightness (the shadow).
+noinline fn darken(dst: []u32, src: []const u32) void {
+    for (dst, src) |*d, v| d.* = mix(v, 0x000000, 2, 3);
+}
+
+/// The tables for scheme `s` and the lettering `l`.
+pub noinline fn colors(s: Scheme, l: *const Layout) Colors {
+    var c: Colors = undefined;
+    // The glow fades towards the ends.
+    for (&c.bg, 0..) |*col, g| bg_column(&s, mix(s.bg_glow, s.bg_edge, @intCast(g), glow_levels + 1), col);
+    darken(&c.shadow, &c.bg[glow_levels - 1]);
     @memset(&c.fill, s.hi_top);
     for (0..l.lines) |k| {
         const y0: u32 = l.y0[k];
@@ -395,11 +402,11 @@ pub fn colors(s: Scheme, l: *const Layout) Colors {
 
 // ---- Drawing ----
 
-/// The colour tables in the display's pixel type `P` (`u32` 0xRRGGBB for
-/// the host preview, tools/marquee_preview.zig).
+/// The lettering's colour tables in the display's pixel type `P` (`u32`
+/// 0xRRGGBB for the host preview, tools/marquee_preview.zig); the
+/// background is the caller's (`Colors.bg`).
 pub fn Palette(comptime P: type) type {
     return struct {
-        bg: [glow_levels][h]P,
         shadow: [h]P,
         fill: [h]P,
         /// The fill half way to white: the glint's edges.
@@ -448,6 +455,14 @@ pub inline fn letter_column(comptime P: type, pal: *const Palette(P), mask: *con
     // `2x + y` runs along it), so `t = y - gx` places a fill pixel in it.
     const gx: i32 = glint - 2 * @as(i32, @intCast(x));
     var fill = f;
+    // Most columns, most of the time: no glint in this column.
+    if (gx >= h or gx + glint_width <= 0) {
+        while (fill != 0) : (fill &= fill - 1) {
+            const y = @ctz(fill);
+            out[y] = pal.fill[y];
+        }
+        return;
+    }
     while (fill != 0) : (fill &= fill - 1) {
         const y = @ctz(fill);
         const t: u32 = @bitCast(@as(i32, y) - gx);
@@ -467,7 +482,7 @@ pub fn shine(fill: u32) u32 {
 
 /// The whole drawn marquee as 0xRRGGBB rows (host preview and tests).
 pub fn render_rgb(l: *const Layout, c: *const Colors, frame: u32, out: *[h][w]u32) void {
-    var pal: Palette(u32) = .{ .bg = c.bg, .shadow = c.shadow, .fill = c.fill, .shine = undefined, .outline = c.outline, .glint = 0xFFFFFF };
+    var pal: Palette(u32) = .{ .shadow = c.shadow, .fill = c.fill, .shine = undefined, .outline = c.outline, .glint = 0xFFFFFF };
     for (&pal.shine, c.fill) |*v, f| v.* = shine(f);
     const glint = glint_at(frame);
     var left_d: u32 = 0;

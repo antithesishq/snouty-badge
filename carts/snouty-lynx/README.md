@@ -128,6 +128,20 @@ default build (`-Dlynx-rom-source=drive`):
    NoVolume`, or a refused file such as `drive: ROT.LNX: rotated`), and
    stays there; leave through the OS menu.
 
+### Your own marquee art
+
+The drawn marquee letters the game's title in one of six colour schemes
+the title picks. To show your own art instead, put a BMP with the ROM's
+name next to it on the same drive: `HARDDRIV.BMP` beside `HARDDRIV.LNX`
+(case does not matter). It must be 160x26 pixels, uncompressed 24- or
+32-bit colour (what MS Paint, GIMP or `convert in.png -resize 160x26!
+BMP3:out.bmp` write), and copied in one piece (a fresh copy onto the
+drive always is). About says which marquee shows: `Marquee: drawn`,
+`Marquee: from BMP`, or why the BMP was not used (`BMP: not
+160x26`, `BMP: compressed`, `BMP: fragmented`). `zig build marquee-lynx
+-- out.ppm "Some Title"` (repository root) renders the drawn marquee for
+any title.
+
 The ROM file also shows in the OS cart menu and fails to load if picked
 there; that is cosmetic. Commercial ROMs never enter the repository
 (`*.lnx`/`*.lyx` are gitignored at the root).

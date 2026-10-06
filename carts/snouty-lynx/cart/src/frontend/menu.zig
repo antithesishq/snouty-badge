@@ -77,7 +77,7 @@ const video = @import("video.zig");
 const marquee = @import("marquee.zig");
 const hint = @import("hint");
 
-pub const version = "0.7.0-m7";
+pub const version = "0.8.0-m8";
 
 /// The title the menu band and the debug overlay show.
 pub const title = "SNOUTY LYNX";

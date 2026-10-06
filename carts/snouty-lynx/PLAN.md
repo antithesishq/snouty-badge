@@ -784,7 +784,7 @@ normal play.
    either row order, contiguous on the drive (a fresh copy always is).
    Drawn from flash each frame, no RAM copy. A missing or unusable BMP
    falls back to the drawn marquee; About says which ("Marquee: drawn",
-   "Marquee: HD.BMP", "BMP: not 160x26").
+   "Marquee: from BMP", "BMP: not 160x26").
 3. Interface (frozen for Track B): `marquee.h` (26), `marquee.load()`
    (after every boot: start, picker, Reset; reads `romsrc`), `marquee.draw()`
    (paints rows 0..25 completely, marks no dirty rect: the game runs
@@ -804,6 +804,28 @@ normal play.
    (docs/m8_marquee.gif) and a still with a sidecar BMP.
 
 ## Status
+
+- 2026-10-06: M8 Marquee done on `lynx/marquee` (tag `snouty-lynx/m8`).
+  Track A (marquee.zig, marquee_art.zig, tests/marquee_unit.zig,
+  `zig build marquee-lynx`) and Track B (layout move, cb374a65: picture at
+  rows 26..127, overlays on the band, the menu's Reset now through
+  `main.boot`, About 10 lines with "Drive CRC" and the marquee line).
+  docs/m8_marquee.gif: raycast and Hard Drivin'. The drive BMP was checked
+  on badge-bench (a 24-bit bottom-up RAYCAST.BMP shows within RGB565
+  rounding). Bench (RAM ELF, calibrated busy ms, mean / worst; origin/main
+  -> M8): m3_scrub 6.18 / 10.78 -> 6.25 / 10.89; m2_play 6.76 / 10.28 ->
+  6.87 / 10.39; Hard Drivin' hd_drive 8.86 / 15.55 -> 8.98 / 15.68, 0 of
+  1800 over; raycast with a drive BMP 7.40 / 10.38 -> 7.60 / 10.60 (the
+  BMP is converted from flash every frame). The drawn marquee is ~15.8k
+  cycles a frame (strip.draw; the old text strip 2.9k): word stores of the
+  background, then only the set pixels of fill, outline and shadow.
+  Gate missed: RAM. `.text` 128,044 -> 139,276 B, `.bss` 93,596 ->
+  94,780 B, so the scrub arena shrinks by 12.7 KB (~49.0 -> ~36.3 KB, about
+  a quarter less history in the RAM cart; the XIP cart keeps its arena).
+  The one-off set-up (layout, colours, conversions) is kept out of line
+  and loops over slices so ReleaseFast does not unroll it; the BMP path
+  is ~2.7 KB of it. Open for Adrian: keep the BMP override or drop it for
+  that memory.
 
 - 2026-10-05: M7 hardware check passed: Adrian played the link cable on
   two badges, "works great" (docs/CABLE.md section 5), the DMA receive
