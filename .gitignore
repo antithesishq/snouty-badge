@@ -6,6 +6,8 @@ node_modules/
 __pycache__/
 *.pyc
 *.uf2
+# Snouty Beam's test fixture: a real cart UF2 (the fork's cross-check uses it too).
+!carts/snouty-beam/tests/fixtures/snouty-pong.uf2
 *.elf
 *.wasm
 .DS_Store
