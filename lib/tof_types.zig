@@ -19,6 +19,25 @@ pub const Target = struct {
     }
 };
 
+/// Which zones a frame's `zones` hold (docs/TOF.md M5, lib/tof_zones.zig).
+pub const Layout = enum(u2) {
+    /// A pre-defined SPAD map: the 3x3 grid, zones 1..9 as indices 0..8.
+    grid,
+    /// The 8-stripe user mask (`tof_spad.stripes()`): stripe k (left to
+    /// right in the device's view) is index k + 1; index 0 is empty.
+    stripes,
+    /// Any other user SPAD mask (snouty-sense's depth photo shots).
+    user,
+
+    pub fn label(l: Layout) []const u8 {
+        return switch (l) {
+            .grid => "GRID",
+            .stripes => "STRIPES",
+            .user => "USER",
+        };
+    }
+};
+
 /// A zone's closest object and, if the device saw one, the next.
 pub const Zone = struct {
     near: Target = .{},
@@ -35,6 +54,9 @@ pub const Frame = struct {
     /// `micros_since_boot` when the driver finished reading it.
     time_us: u64 = 0,
     zones: [zones]Zone = @splat(.{}),
+    /// The zone layout this frame was measured with (set by the driver
+    /// from the SPAD map and mask it measured with).
+    layout: Layout = .grid,
     temperature_c: i8 = 0,
     ambient: u32 = 0,
     photons: u32 = 0,

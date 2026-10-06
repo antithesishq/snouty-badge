@@ -273,6 +273,35 @@ pub fn grid_3x3() Mask {
     return m;
 }
 
+/// The STRIPES layout (docs/TOF.md M5): 8 full-height vertical stripes
+/// over the whole array, stripe k on channel k + 2 (2..9), so it reports
+/// in result triplet k + 1. Channel 1 is never used: a full-height
+/// stripe puts its channel in every row, and no row may hold channel 1
+/// with 8 or 9 (DS 7.4.1), so 9 stripes cannot be built. Every TDC pair
+/// (2|3 .. 8|9) is used. The two spare columns widen the outer stripes.
+pub const stripe_count = 8;
+/// First SPAD column and width of each stripe (columns 3 2 2 2 2 2 2 3).
+pub const stripe_first = [stripe_count + 1]u8{ 0, 3, 5, 7, 9, 11, 13, 15, 18 };
+/// The channel of stripe k.
+pub const stripe_channel0: u8 = 2;
+
+pub fn stripes() Mask {
+    var m: Mask = .{};
+    for (0..stripe_count) |k| {
+        for (stripe_first[k]..stripe_first[k + 1]) |x| {
+            for (0..rows) |r| m.ch[r][x] = stripe_channel0 + @as(u8, @intCast(k));
+        }
+    }
+    return m;
+}
+
+/// Mask column `x` (0..17) to its stripe.
+pub fn stripe_of_col(x: usize) u8 {
+    var k: u8 = 0;
+    while (k + 1 < stripe_count and x >= stripe_first[k + 1]) k += 1;
+    return k;
+}
+
 /// The depth photo's layouts (lib/tof_depth.zig): horizontal SPAD pairs,
 /// nine per shot. The coarse pass tiles every row with pairs at columns
 /// (0,1), (2,3) .. (16,17): 90 pairs, 10 shots, a 9x10 image. The fine
@@ -358,6 +387,33 @@ test "grid_3x3 and every depth layout pass the datasheet's rules" {
     }
     // Coarse: every even column once; fine: every odd column but 17.
     for (0..rows) |r| for (0..17) |x| try std.testing.expectEqual(@as(u8, 1), covered[r][x]);
+}
+
+test "the stripes mask passes the datasheet's rules and covers every SPAD once" {
+    const m = stripes();
+    try std.testing.expectEqual(@as(?Problem, null), validate(&m));
+    // Channels 2..9, never 1 (no row may hold 1 with 8 or 9).
+    try std.testing.expectEqual(@as(u16, 0b11_1111_1100), m.used());
+    for (0..rows) |r| for (0..cols) |x| {
+        try std.testing.expect(m.ch[r][x] >= 2);
+        try std.testing.expectEqual(stripe_channel0 + stripe_of_col(x), m.ch[r][x]);
+    };
+    // Outer stripes 3 columns, inner 2: 30 and 20 SPADs.
+    try std.testing.expectEqual(@as(u32, 30), m.count(2));
+    try std.testing.expectEqual(@as(u32, 20), m.count(5));
+    try std.testing.expectEqual(@as(u32, 30), m.count(9));
+    // Through the page and back unchanged (channels 8 and 9 via the select
+    // bits on every row).
+    var p: Page = undefined;
+    encode(&m, &p);
+    try std.testing.expectEqual(@as(?u16, null), diff(&m, &decode(&p).mask));
+    // Nine full-height stripes cannot be built: channel 1 shares rows with 8 and 9.
+    var nine = m;
+    for (0..rows) |r| {
+        nine.ch[r][0] = 1;
+        nine.ch[r][1] = 1;
+    }
+    try std.testing.expectEqual(Kind.row_mix, validate(&nine).?.kind);
 }
 
 test "encode and decode are inverse, channels 8 and 9 through the select bits" {

@@ -11,6 +11,7 @@ test {
     _ = @import("ext_flash.zig");
     _ = @import("i2c_rp2350.zig");
     _ = @import("tof.zig");
+    _ = @import("tof_zones.zig");
     _ = @import("tof_pose.zig");
     _ = @import("tof_synth.zig");
     _ = @import("tof_spad.zig");

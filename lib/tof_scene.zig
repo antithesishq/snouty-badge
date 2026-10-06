@@ -127,11 +127,56 @@ pub fn trace(t_us: u64, tx: i32, ty: i32) Hit {
     return best;
 }
 
+/// Which scene the SPADs see: the room (the depth photo's, the default) or
+/// the hand (docs/TOF.md M5: the carts' `-Dtof-fake=true` builds under the
+/// STRIPES mask; the same wandering hand as tof_virtual's 3x3 scene).
+pub const Kind = enum(u8) { room, hand };
+
+/// The hand scene: a flat disc `hand_r_q10` (tangent, Q10) in radius at
+/// 300..450 mm in front of a wall at `tof_virtual.wall_mm` (900), in view
+/// 6.5 s of every 8, on tof_virtual.scene's path: its 1/256-zone
+/// positions over map 6's 41 x 52 deg field, as tangents.
+pub const hand_r_q10: i64 = 190;
+pub const hand_wall_mm: i64 = 900;
+
+pub fn hand_at(t_us: u64) ?[3]i64 {
+    if (t_us % 8_000_000 >= 6_500_000) return null;
+    const hx: i64 = 51 + @as(i64, tri(t_us, 4_000_000, 666));
+    const hy: i64 = 90 + @as(i64, tri(t_us + 700_000, 2_700_000, 588));
+    const mm: i64 = 300 + @as(i64, tri(t_us, 3_100_000, 150));
+    // 768 = three zones: tan(20.5 deg) = 0.374 (383 in Q10) at the
+    // edges across, tan(26 deg) = 0.488 (499) down.
+    return .{ @divTrunc((hx - 384) * 383, 384), @divTrunc((hy - 384) * 499, 384), mm };
+}
+
+pub fn trace_hand(t_us: u64, tx: i32, ty: i32) Hit {
+    const len: i64 = @intCast(isqrt(@intCast(@as(i64, tx) * tx + @as(i64, ty) * ty + 1024 * 1024)));
+    if (hand_at(t_us)) |h| {
+        const dx = tx - h[0];
+        const dy = ty - h[1];
+        if (dx * dx + dy * dy <= hand_r_q10 * hand_r_q10) {
+            return .{ .mm = @intCast(@divTrunc(h[2] * len, 1024)), .surface = .ball };
+        }
+    }
+    return .{ .mm = @intCast(@divTrunc(hand_wall_mm * len, 1024)), .surface = .wall };
+}
+
+pub fn trace_in(kind: Kind, t_us: u64, tx: i32, ty: i32) Hit {
+    return switch (kind) {
+        .room => trace(t_us, tx, ty),
+        .hand => trace_hand(t_us, tx, ty),
+    };
+}
+
 /// The two samples of physical SPAD (x, y).
 pub fn spad_hits(t_us: u64, x: usize, y: usize) [2]Hit {
+    return spad_hits_in(.room, t_us, x, y);
+}
+
+pub fn spad_hits_in(kind: Kind, t_us: u64, x: usize, y: usize) [2]Hit {
     return .{
-        trace(t_us, tan_col[x], tan_half_row[2 * y]),
-        trace(t_us, tan_col[x], tan_half_row[2 * y + 1]),
+        trace_in(kind, t_us, tan_col[x], tan_half_row[2 * y]),
+        trace_in(kind, t_us, tan_col[x], tan_half_row[2 * y + 1]),
     };
 }
 
@@ -139,6 +184,10 @@ pub fn spad_hits(t_us: u64, x: usize, y: usize) [2]Hit {
 /// enabled, live SPADs (zones without SPADs, or with only dead ones, are
 /// empty).
 pub fn zone_results(t_us: u64, m: *const spad.Mask, zones: *[types.zones]types.Zone) void {
+    zone_results_in(.room, t_us, m, zones);
+}
+
+pub fn zone_results_in(kind: Kind, t_us: u64, m: *const spad.Mask, zones: *[types.zones]types.Zone) void {
     // Every enabled live SPAD's two samples, tagged with their zone.
     var hits: [2 * spad.rows * spad.cols]Hit = undefined;
     var zone_of: [2 * spad.rows * spad.cols]u8 = undefined;
@@ -151,7 +200,7 @@ pub fn zone_results(t_us: u64, m: *const spad.Mask, zones: *[types.zones]types.Z
         const py = m.phys_row(r);
         if (px < 0 or px >= phys_cols or py < 0 or py >= phys_rows) continue;
         if (is_dead(px, py)) continue;
-        for (spad_hits(t_us, @intCast(px), @intCast(py))) |h| {
+        for (spad_hits_in(kind, t_us, @intCast(px), @intCast(py))) |h| {
             hits[n] = h;
             zone_of[n] = c - 1;
             n += 1;
@@ -248,6 +297,32 @@ test "the scene: wall, floor, box and ball where they should be" {
     const dist: i64 = @intCast(isqrt(@intCast(c[0] * c[0] + c[1] * c[1] + c[2] * c[2])));
     const expect: i64 = @divTrunc((dist - ball_r) * c[2], dist);
     try std.testing.expect(@abs(@as(i64, hb.mm) - expect) < 20);
+}
+
+test "the hand scene under the stripes mask: the hand's stripes near, the rest the wall" {
+    const m = spad.stripes();
+    var zones: [9]types.Zone = undefined;
+    // 1 s in: the hand is in view.
+    const t: u64 = 1_000_000;
+    const h = hand_at(t).?;
+    zone_results_in(.hand, t, &m, &zones);
+    try std.testing.expect(!zones[0].near.valid()); // channel 1 unused
+    var hand_stripes: u32 = 0;
+    for (zones[1..], 0..) |z, k| {
+        try std.testing.expect(z.near.valid());
+        // Stripe k's columns' tangents span the hand's centre +- radius?
+        const lo = tan_col[spad.stripe_first[k]];
+        const hi = tan_col[spad.stripe_first[k + 1] - 1];
+        const over = hi >= h[0] - hand_r_q10 + 40 and lo <= h[0] + hand_r_q10 - 40;
+        if (z.near.mm < 600) {
+            hand_stripes += 1;
+            try std.testing.expect(@abs(@as(i64, z.near.mm) - h[2]) < 40);
+        } else try std.testing.expect(!over);
+    }
+    try std.testing.expect(hand_stripes >= 3 and hand_stripes <= 6);
+    // Out of view (7 s into the 8 s cycle): the wall everywhere.
+    zone_results_in(.hand, 7_000_000, &m, &zones);
+    for (zones[1..]) |z| try std.testing.expect(z.near.mm >= 900);
 }
 
 test "a zone over an edge reports two objects; a dead pair reports none" {

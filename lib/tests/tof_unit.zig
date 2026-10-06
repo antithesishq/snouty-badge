@@ -829,3 +829,103 @@ test "a depth photo: 9x10 in 10 shots, then 17x10 with the fine pass, matching t
         try std.testing.expect(floor >= 4);
     }
 }
+
+fn run_until_layout(rig: *Rig, l: types.Layout, limit_us: u64) !u64 {
+    const t0 = rig.now;
+    while (rig.now - t0 < limit_us) {
+        try rig.tick();
+        if (rig.drv.stats.frames > 0 and rig.drv.frame.layout == l) return rig.now - t0;
+    }
+    std.debug.print("state {s} step {s} err {s} raw {x}\n", .{
+        @tagName(rig.drv.state), rig.drv.step.name(), rig.drv.err.code.name(), rig.drv.err.raw,
+    });
+    return error.LayoutNeverActive;
+}
+
+test "M5 layouts: GRID and STRIPES switch back and forth on the model, frames tagged, no restarts" {
+    const pose = tof.pose;
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    rig.model.user_scene = .hand;
+    const grid: tof.Config = .{ .spad_map = 6 };
+    rig.drv.configure(grid);
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    try rig.run_until_frames(3, 1_000_000);
+    try std.testing.expectEqual(types.Layout.grid, rig.drv.frame.layout);
+    try std.testing.expectEqual(types.Layout.grid, rig.drv.zone_layout());
+    const boots = rig.drv.stats.boots;
+    const downloads = rig.drv.stats.downloads;
+    var est: pose.Estimator = .{ .config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650 } };
+    var worst_switch: u64 = 0;
+    for (0..3) |_| {
+        // To STRIPES: the 8-stripe mask on map 14, the hand scene seen stripe by stripe.
+        rig.drv.set_layout(.stripes, grid);
+        try std.testing.expectEqual(types.Layout.stripes, rig.drv.zone_layout());
+        // Asking again changes nothing (no second page write).
+        const writes = rig.drv.stats.mask_writes;
+        rig.drv.set_layout(.stripes, grid);
+        worst_switch = @max(worst_switch, try run_until_layout(&rig, .stripes, 1_000_000));
+        try std.testing.expectEqual(writes + 1, rig.drv.stats.mask_writes);
+        try std.testing.expectEqual(spad.map_id, rig.model.spad_map);
+        try std.testing.expectEqual(@as(?u16, null), spad.diff(&spad.stripes(), &rig.model.user_mask));
+        est.set_layout(.stripes);
+        var seen = false;
+        var last_seq: u32 = 0;
+        const t0 = rig.now;
+        while (rig.now - t0 < 1_500_000) {
+            try rig.tick();
+            const f = rig.drv.latest().?;
+            if (f.seq == last_seq) continue;
+            last_seq = f.seq;
+            try std.testing.expectEqual(types.Layout.stripes, f.layout);
+            // Channel 1 is unused: zone 0 never reports.
+            try std.testing.expect(!f.zones[0].near.valid());
+            for (f.zones[1..]) |z| try std.testing.expect(z.near.valid());
+            const p = est.update(f, null, .{});
+            seen = seen or (p.present and p.cols == 8);
+        }
+        try std.testing.expect(seen);
+        // Back to GRID: map 6 again, frames tagged grid, the 3x3 scene.
+        rig.drv.set_layout(.grid, grid);
+        worst_switch = @max(worst_switch, try run_until_layout(&rig, .grid, 1_000_000));
+        try std.testing.expectEqual(@as(u8, 6), rig.model.spad_map);
+        try rig.run_until_frames(rig.drv.stats.frames + 3, 1_000_000);
+        const snap = &rig.model.history[rig.drv.last_num.? % 8];
+        for (rig.drv.frame.zones, snap.frame.zones) |got, want| try std.testing.expectEqual(want, got);
+    }
+    // Rapid toggling coalesces into the last request and settles.
+    for (0..5) |i| {
+        rig.drv.set_layout(if (i % 2 == 0) .stripes else .grid, grid);
+        try rig.tick();
+    }
+    _ = try run_until_layout(&rig, .stripes, 1_000_000);
+    try rig.run_until_frames(rig.drv.stats.frames + 5, 1_000_000);
+    try std.testing.expectEqual(types.Layout.stripes, rig.drv.frame.layout);
+    // No reboot, no download, no error on the way, the mask read back clean.
+    try std.testing.expectEqual(boots, rig.drv.stats.boots);
+    try std.testing.expectEqual(downloads, rig.drv.stats.downloads);
+    try std.testing.expectEqual(@as(u32, 0), rig.drv.stats.spad_mismatch);
+    try std.testing.expectEqual(@as(u32, 0), rig.drv.stats.i2c_errors);
+    try std.testing.expectEqual(tof.State.measuring, rig.drv.state);
+    // A switch takes a few frames (model: ~100-150 ms).
+    try std.testing.expect(worst_switch < 300_000);
+}
+
+test "M5 layouts: STRIPES survives a reload and an unplug (the mask is rewritten)" {
+    var rig: Rig = undefined;
+    rig.init(400_000);
+    rig.model.user_scene = .hand;
+    const grid: tof.Config = .{ .spad_map = 6 };
+    rig.drv.configure(grid);
+    rig.drv.set_layout(.stripes, grid);
+    _ = try run_until_layout(&rig, .stripes, 3_000_000);
+    rig.drv.reload();
+    _ = try rig.run_until_state(.measuring, 2_000_000);
+    _ = try run_until_layout(&rig, .stripes, 1_000_000);
+    rig.model.unplug();
+    try rig.run(200_000);
+    rig.model.plug();
+    _ = try rig.run_until_state(.measuring, 3_000_000);
+    _ = try run_until_layout(&rig, .stripes, 1_000_000);
+    try std.testing.expectEqual(@as(?u16, null), spad.diff(&spad.stripes(), &rig.model.user_mask));
+}

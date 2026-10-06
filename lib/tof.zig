@@ -62,6 +62,8 @@ pub const virtual = @import("tof_virtual.zig");
 /// here so a cart that uses the driver and the pose gets one `types`.
 pub const pose = @import("tof_pose.zig");
 pub const synth = @import("tof_synth.zig");
+/// Zone layouts (GRID, STRIPES) and their geometry (docs/TOF.md M5).
+pub const zones = @import("tof_zones.zig");
 /// User SPAD masks (M2), the model's SPAD-level scene and the depth photo.
 pub const spad = @import("tof_spad.zig");
 pub const scene = @import("tof_scene.zig");
@@ -466,6 +468,10 @@ pub fn Tof(comptime Bus: type) type {
         frame_mask_gen: u32 = 0,
         /// The last mask the validator refused.
         mask_problem: ?spad.Problem = null,
+        /// The layout of the mask last written, and of what is measuring
+        /// now (frames carry it in `Frame.layout`).
+        written_layout: types.Layout = .user,
+        active_layout: types.Layout = .grid,
         switch_t0: ?u64 = null,
 
         pub fn init(bus: Bus) Self {
@@ -534,6 +540,41 @@ pub fn Tof(comptime Bus: type) type {
                 self.configure(c);
             }
             return null;
+        }
+
+        /// Zone layout (docs/TOF.md M5): `.stripes` measures with the
+        /// 8-stripe user mask (`set_user_mask(spad.stripes())`), `.grid`
+        /// with the pre-defined map in `grid` (the cart's usual
+        /// configuration). Stop, reconfigure and start happen on the next
+        /// polls, as for `configure`; asking for the layout already
+        /// measuring (or pending) does nothing. Frames carry the layout
+        /// they were measured with (`Frame.layout`).
+        pub fn set_layout(self: *Self, layout: types.Layout, grid: Config) void {
+            const cur = self.pending orelse self.config;
+            switch (layout) {
+                .stripes => {
+                    if (cur.spad_map == spad.map_id and self.mask_is_stripes()) return;
+                    const m = spad.stripes();
+                    _ = self.set_user_mask(&m);
+                },
+                else => {
+                    var c = grid;
+                    if (c.spad_map == spad.map_id) c.spad_map = 1;
+                    self.configure(c);
+                },
+            }
+        }
+
+        /// The layout asked for (pending or measuring).
+        pub fn zone_layout(self: *const Self) types.Layout {
+            const cur = self.pending orelse self.config;
+            if (cur.spad_map != spad.map_id) return .grid;
+            return if (self.mask_is_stripes()) .stripes else .user;
+        }
+
+        fn mask_is_stripes(self: *const Self) bool {
+            const m = spad.stripes();
+            return spad.diff(&self.mask, &m) == null;
         }
 
         /// The mask generation measuring now (0: a pre-defined map).
@@ -1123,6 +1164,7 @@ pub fn Tof(comptime Bus: type) type {
                     spad.encode(&self.mask, w[1..]);
                     try self.write(&w);
                     self.written_gen = self.mask_gen;
+                    self.written_layout = if (self.mask_is_stripes()) .stripes else .user;
                     self.mask_dirty = false;
                     self.stats.mask_writes += 1;
                     self.note(.spad_write, @truncate(self.written_gen));
@@ -1157,6 +1199,7 @@ pub fn Tof(comptime Bus: type) type {
                 },
                 .running_enter => {
                     self.active_gen = if (self.config.spad_map == spad.map_id) self.written_gen else 0;
+                    self.active_layout = if (self.config.spad_map == spad.map_id) self.written_layout else .grid;
                     self.state = .measuring;
                     self.attempt = 0;
                     self.fail_streak = 0;
@@ -1416,6 +1459,7 @@ pub fn Tof(comptime Bus: type) type {
             for (9..18) |i| mid = mid or triplet(b, i).confidence != 0;
             if (mid) self.stats.mid_triplets += 1;
             self.frame_mask_gen = self.active_gen;
+            f.layout = self.active_layout;
             if (self.switch_t0) |t| if (self.active_gen == self.mask_gen) {
                 const us: u32 = @intCast(@min(self.now() -| t, std.math.maxInt(u32)));
                 self.stats.mask_switch_us = us;

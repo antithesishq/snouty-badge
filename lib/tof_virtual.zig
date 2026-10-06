@@ -33,7 +33,9 @@
 //!   already has spad_map_id 14); it reads back as written. MEASURE with
 //!   spad_map_id 14 and no valid page fails with 0x02 (the device's
 //!   behaviour there is unknown). Results under a user mask come from the
-//!   SPAD-level scene (lib/tof_scene.zig): channel c in zone c - 1.
+//!   SPAD-level scene (lib/tof_scene.zig): channel c in zone c - 1; the
+//!   room by default, or (`user_scene = .hand`, M5) the 3x3 scene's
+//!   wandering hand traced SPAD by SPAD, so the STRIPES layout is fed.
 //! - A synthetic scene, deterministic in time: a wall at about 900 mm and
 //!   a hand blob at 300..450 mm wandering over the zones (two objects
 //!   where it partly covers a zone), with histograms to match: reference
@@ -163,6 +165,11 @@ pub const Model = struct {
     active_range: u8 = 0x6F,
     /// The configuration page in 0x20.. (0 none, 0x16 common, 0x17 SPAD).
     loaded_cid: u8 = 0,
+    /// What the SPADs see under a user mask: the room (the depth photo's)
+    /// or the hand (carts' `-Dtof-fake=true` builds, docs/TOF.md M5).
+    /// Pre-defined maps always use `scene` below. Kept across power
+    /// cycles (a setting of the model, not of the chip).
+    user_scene: spad_scene.Kind = .room,
     /// The user SPAD page as last accepted, and its mask.
     spad_page: spad.Page = @splat(0),
     user_mask: spad.Mask = .{},
@@ -192,7 +199,9 @@ pub const Model = struct {
         const keep_fault = m.fault;
         const keep_stats = m.stats;
         const keep_others = m.others;
+        const keep_scene = m.user_scene;
         m.* = .{};
+        m.user_scene = keep_scene;
         m.t_us = keep_t;
         m.fault = keep_fault;
         m.stats = keep_stats;
@@ -308,8 +317,8 @@ pub const Model = struct {
         m.result_num +%= 1;
         m.pending = .{ .t_us = t };
         if (m.spad_map == spad.map_id) {
-            spad_scene.zone_results(t, &m.user_mask, &m.pending.frame.zones);
-            m.pending.hand_on = true;
+            spad_scene.zone_results_in(m.user_scene, t, &m.user_mask, &m.pending.frame.zones);
+            m.pending.hand_on = m.user_scene == .room or spad_scene.hand_at(t) != null;
         } else m.pending.hand_on = scene(t, &m.pending.frame.zones);
         const f = &m.pending.frame;
         f.seq = m.result_num;
