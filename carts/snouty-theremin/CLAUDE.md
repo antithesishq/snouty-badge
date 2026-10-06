@@ -10,10 +10,11 @@ this file adds the cart's specifics.
 ## Layout
 
 - `cart/src/` (SPEC.md section 7): `main.zig` (`start`/`update`, buttons,
-  the simulator tone shim, debug exports, the `snouty_theremin_fake`
-  badge-bench poke, simulator shims); `input.zig` (**the sensor
-  integration point `sensor_frame`**, source selection, the demo hand);
-  `hands.zig` (layouts from a frame); `pitch.zig` (distance map, scale
+  the simulator tone shim, debug exports, the `snouty_theremin_fake` and
+  `snouty_theremin_zones` badge-bench pokes, simulator shims);
+  `input.zig` (**the sensor integration point `sensor_frame`**, source
+  selection, the demo hand); `sensor.zig` (lib/tof.zig, ZONES applied
+  to the driver); `hands.zig` (layouts from a frame, GRID or STRIPES); `pitch.zig` (distance map, scale
   snap, note names, cents to phase increment); `play.zig` (settings, the
   per-update player); `voice.zig` (the oscillator); `audio.zig` (the
   streaming-ring feeder); `screen.zig`, `gfx.zig` (drawing);
@@ -36,3 +37,7 @@ this file adds the cart's specifics.
   tests. `zig build check-float -Dcart=snouty-theremin` checks the ELF.
 - Start and Select act on release; nothing reacts while both are held.
 - The sensor's frames come only through `input.sensor_frame`.
+- ZONES (docs/TOF.md M5): read every frame by its own `frame.layout`
+  (frames in flight around a switch carry the old layout), never by the
+  setting; screen order from lib/tof_zones.zig. STRIPES fills screen
+  cells 0..7 of `Hands.grid`; zone 0 of a stripes frame is unused.

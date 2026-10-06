@@ -1,9 +1,10 @@
 # Snouty Theremin: spec
 
 A theremin for the SYCL badge, played by hand distance over the SparkFun
-Qwiic Mini dToF Imager (ams OSRAM TMF8820, 3x3 zones) on the badge's Qwiic
-port, or with the stick when no sensor is plugged in. Milestone M1 of
-docs/TOF.md. PLAN.md has the status, the bench numbers and the open
+Qwiic Mini dToF Imager (ams OSRAM TMF8820: 3x3 zones, or 8 narrow
+stripes through a user SPAD mask) on the badge's Qwiic port, or with the
+stick when no sensor is plugged in. Milestone M1 of docs/TOF.md (the
+ZONES setting is M5). PLAN.md has the status, the bench numbers and the open
 questions.
 
 ## 1. What the attendee sees and hears
@@ -17,8 +18,8 @@ sensor the stick plays it: Up and Down step and glide, Left and Right hold
 the note.
 
 The screen shows the note name and how far off it is in cents, a live
-scope of the samples being played, the hand heights, the 3x3 zone grid
-(which zones play pitch, which volume), the layout, scale and waveform,
+scope of the samples being played, the hand heights, the zones (8
+stripes, or the 3x3 grid; which play pitch, which volume), the layout, scale and waveform,
 whether sound is on, and Snouty the anteater sniffing at the sensor:
 snout up for high notes, ear up when loud, notes floating from the snout,
 eye shut when muted.
@@ -43,8 +44,11 @@ The bottom line rotates hints for the current source every 2.5 s.
 Settings menu rows: LAYOUT (1 HAND, 2 HAND), WAVE (SINE, TRI, SAW, SQR),
 SCALE (FREE, CHROM, MAJOR, PENTA), SNAP (SOFT, HARD), KEY (C..B), OCTAVE
 (the range's bottom note: the key in octave 2..5), PITCH HAND (RIGHT,
-LEFT), MIRROR (OFF, ON: the grid left/right, for a breakout held the
-other way round on its cable). Defaults: 1 HAND, SINE, PENTA (friendly for passers-by at the show; FREE is the true theremin), SOFT, C, octave 3 (C3..C6), RIGHT.
+LEFT), MIRROR (OFF, ON: the zones left/right, for a breakout held the
+other way round on its cable), ZONES (STRIPES, GRID: section 3.3).
+Defaults: 1 HAND, SINE, PENTA (friendly for passers-by at the show; FREE
+is the true theremin), SOFT, C, octave 3 (C3..C6), RIGHT, MIRROR OFF,
+ZONES STRIPES.
 
 Sound boots ON: the cart is an instrument (docs/TOF.md deferred
 question 1; one line in main.zig flips it). Select mutes; the status bar
@@ -69,26 +73,57 @@ always shows SOUND or a red MUTED. `-Dsound` does not apply to this cart.
 
 ### 3.2 Hands from a frame (`hands.zig`)
 
-- A zone counts when its nearest target has confidence >= 8, and 15 mm <=
-  distance <= 650 mm (closer is the cover glass, further is the room).
-  Only the nearest target of a zone is used (the far one is the ceiling).
-- Screen cells: `tof_types.Orientation.index(col, row)` maps the device's
-  zones to the screen as the player sees it (flip_x, flip_y, transpose:
-  the breakout's mounting, docs/TOF.md deferred question 2; MIRROR in
-  the menu sets flip_x).
-- 1 HAND: the closest valid zone of all nine plays pitch; volume is fixed
-  (full). The grid's highlight is where the hand is, not that zone
-  (M1.2): lib/tof_pose.zig's coverage-weighted centroid (wide map
-  geometry, 41x52 deg), drawn as a dot, and the cell under it with 0.15
-  cells of hysteresis (`hands.track`). Over a hand most zones read about
-  the same distance, so the closest one jumps between fingertips,
-  knuckles and forearm and did not follow the hand sideways on the badge.
-- 2 HAND: the screen's right column plays pitch, the left column volume (a
+- A zone counts when its nearest target has confidence >= 8, and 15 mm
+  (STRIPES: 40 mm) <= distance <= 650 mm (closer is the cover glass, or
+  under the stripes mask, which has no crosstalk calibration, the
+  package's own light; further is the room). Only the nearest target of
+  a zone is used (the far one is the ceiling).
+- Each frame is read in the layout it was measured with (`frame.layout`;
+  the frames in flight around a ZONES switch keep the old one).
+- Screen cells: lib/tof_zones.zig's geometry maps the device's zones to
+  the screen as the player sees it (flip_x, flip_y, transpose: the
+  breakout's mounting, docs/TOF.md deferred question 2; MIRROR in the
+  menu sets flip_x). GRID: 3x3. STRIPES: 8 stripes left to right (1x8
+  top to bottom if an orientation transposes).
+- 1 HAND: the closest valid zone of all plays pitch; volume is fixed
+  (full). Pitch stays the nearest zone in both layouts, not the pose's
+  near-cluster `height_mm`: a theremin plays the nearest part of the hand,
+  a finger pointed down is its tip, and the arm is always further away so
+  it never wins; the cluster mean would pull a pointing fingertip's note
+  toward the arm above it (lib/tof_pose.zig's pointing-finger test reads
+  ~20 mm high). The median of three and the glide in play.zig take out
+  the zone-to-zone jitter. The highlight is where the hand is, not that
+  zone (M1.2): lib/tof_pose.zig's coverage-weighted centroid of the near
+  cluster (M5 arm rejection: a forearm sloping in no longer drags it),
+  drawn as a dot, and the cell under it with 0.15 cells of hysteresis
+  (`hands.track`; GRID: 41x52 deg wide-map cells; STRIPES: the stripes'
+  own centres). Over a hand most zones read about the same distance, so
+  the closest one jumps between fingertips, knuckles and forearm and did
+  not follow the hand sideways on the badge.
+- 2 HAND: the screen's right side plays pitch, the left side volume (a
   classic theremin's pitch antenna is on the right); PITCH HAND LEFT
-  swaps them. The middle column is ignored (it sees both hands' edges).
-  Each column's reading is its closest valid zone. A mirrored mounting is
-  `orientation.flip_x`, which also swaps the columns; PITCH HAND then
-  restores the player's preference.
+  swaps them. GRID: the outer columns, the middle column ignored (it sees
+  both hands' edges). STRIPES: the outer three stripes of each side, the
+  middle two a dead band (the same job). Each side's reading is its
+  closest valid zone. A mirrored mounting is `orientation.flip_x`, which
+  also swaps the sides; PITCH HAND then restores the player's preference.
+  Transposed STRIPES (one column of eight) uses the top and bottom three
+  instead.
+
+### 3.3 ZONES (docs/TOF.md M5)
+
+- STRIPES (default): the driver measures through `tof_spad.stripes()`, 8
+  full-height stripes 4.8 deg wide (7.2 at the edges) across the 43 deg
+  field: side to side about 3x finer than map 6's 13.7 deg columns, which
+  the dot shows. GRID: the wide pre-defined map 6 (41x52 deg, 3x3).
+- Changing ZONES calls `Tof.set_layout` (stop, pages, MEASURE; ~100 ms on
+  the model, no reset), the pose estimator's `set_layout` (its
+  background starts afresh: the zones look elsewhere) and resets the
+  highlight; the demo hand switches with it. The setting is applied
+  before the driver first starts, so a STRIPES boot goes straight to the
+  mask.
+- If STRIPES looks scrambled or mirrored against GRID on a badge, use
+  GRID (docs/TOF.md section 5, M5).
 
 ## 4. Mapping (`pitch.zig`, `play.zig`)
 
@@ -175,7 +210,7 @@ always shows SOUND or a red MUTED. `-Dsound` does not apply to this cart.
 | y 0..9 | status: SENSOR + layout, or STICK + NO SENSOR; SOUND with a speaker (waves while sounding) or a red MUTED |
 | x 2..60, y 12..49 | the note name (OS 8x8 font at 2x), a +-50 cent meter (needle green within 8, amber within 25, red beyond), cents and Hz; dim when silent |
 | x 62..112, y 12..52 | Snouty, side view, facing the grid |
-| x 116..157, y 12..53 | the 3x3 zones in screen order, coloured by hand distance (blue far, amber near, dark nothing); outlines: cyan pitch (the zone in 1 HAND, the column in 2 HAND), magenta volume; "NO TOF" without a sensor |
+| x 116..157, y 12..53 | the zones in screen order (3x3 cells, or 8 full-height stripes), coloured by hand distance (blue far, amber near, dark nothing); outlines: cyan pitch (the highlight's cell or stripe in 1 HAND, the side in 2 HAND), magenta volume; "NO TOF" without a sensor |
 | x 2..112, y 56..100 | scope: two cycles of the rendered samples, triggered on a rising centre crossing so the trace stands still |
 | x 117..156, y 58..99 | P: pitch-hand height (cm); V: volume-hand height in 2 HAND, else the voice's level |
 | y 104 | WAVE, SCALE (~ soft, # hard), range (e.g. C3-C6) |
@@ -190,7 +225,10 @@ drawn (repository rule: placeholder art is final).
   the wasm debug exports and the badge-bench poke, the simulator shims.
 - `cart/src/input.zig`: the sensor integration point, source selection,
   the demo hand.
-- `cart/src/hands.zig`: layouts from a frame.
+- `cart/src/hands.zig`: layouts from a frame (GRID or STRIPES), the
+  ZONES enum, the highlight track.
+- `cart/src/sensor.zig`: lib/tof.zig on the badge (map 6 for GRID, the
+  stripes mask for STRIPES), the model with `-Dtof-fake=true`.
 - `cart/src/pitch.zig`: distance map, scale snap, note names, cents to
   phase increment, the median.
 - `cart/src/play.zig`: settings, the per-update player (glide, fade,
@@ -209,7 +247,11 @@ Everything but drawing and the button glue is pure and host-tested
 increment against equal temperament (1 ppm), note names, hard snap per
 scale and key, hard-snap hysteresis, soft snap continuity and
 monotonicity, the median, layouts from frames with every orientation
-flag and handedness, onset/jump/glide/fade of the player, jitter removed
+flag and handedness in GRID and STRIPES (the 40 mm stripes near limit,
+the two-hand sides and dead band, a frame read by its own layout tag),
+the highlight track over the grid and the stripes (a synthetic hand
+sweeping across the stripes walks all eight in order), the demo hand in
+both zone layouts, onset/jump/glide/fade of the player, jitter removed
 but vibrato kept, two-hand volume, the stick's steps/glide/sustain/
 release, the voice's attack and release ramps (bounded sample steps),
 phase continuity through a pitch change, band-limited saw, the waveform

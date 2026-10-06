@@ -208,43 +208,66 @@ fn closeness_color(mm: u16) gfx.Color {
     return gfx.mix(0x1C2A5A, 0xFFB040, t);
 }
 
+/// The zones as the screen sees them: the 3x3 grid, or the 8 stripes
+/// (GRID / STRIPES, docs/TOF.md M5), in a 41 px square; each in the
+/// layout of the frame it came from.
 fn zone_grid(w: View) void {
     const x0: i32 = 116;
     const y0: i32 = 12;
-    const cell: i32 = 13;
-    for (0..3) |r| for (0..3) |c| {
-        const x = x0 + @as(i32, @intCast(c)) * (cell + 1);
-        const y = y0 + @as(i32, @intCast(r)) * (cell + 1);
-        const i = r * 3 + c;
-        if (w.source == .sensor) {
-            if (w.hands.grid[i]) |mm| gfx.fill(x, y, cell, cell, closeness_color(mm)) else gfx.fill(x, y, cell, cell, gfx.rgb(0x141820));
-        } else {
-            gfx.fill(x, y, cell, cell, gfx.rgb(0x10131C));
+    const size: i32 = 42; // pitch x cells, gaps included
+    const sensed = w.source == .sensor;
+    const cols: i32 = if (sensed) w.hands.cols else 3;
+    const rows: i32 = if (sensed) w.hands.rows else 3;
+    const pw = @divTrunc(size, cols);
+    const ph = @divTrunc(size, rows);
+    var r: i32 = 0;
+    while (r < rows) : (r += 1) {
+        var c: i32 = 0;
+        while (c < cols) : (c += 1) {
+            const x = x0 + c * pw;
+            const y = y0 + r * ph;
+            const i: usize = @intCast(r * cols + c);
+            if (sensed) {
+                if (w.hands.grid[i]) |mm| gfx.fill(x, y, pw - 1, ph - 1, closeness_color(mm)) else gfx.fill(x, y, pw - 1, ph - 1, gfx.rgb(0x141820));
+            } else {
+                gfx.fill(x, y, pw - 1, ph - 1, gfx.rgb(0x10131C));
+            }
         }
-    };
-    if (w.source == .stick) {
+    }
+    if (!sensed) {
         _ = gfx.text("NO", x0 + 14, y0 + 12, gfx.rgb(dim));
         _ = gfx.text("TOF", x0 + 11, y0 + 21, gfx.rgb(dim));
         return;
     }
     switch (w.settings.layout) {
         .one_hand => if (w.track.cell) |tc| {
-            const x = x0 + @as(i32, tc % 3) * (cell + 1);
-            const y = y0 + @as(i32, tc / 3) * (cell + 1);
-            gfx.frame(x - 1, y - 1, cell + 2, cell + 2, gfx.rgb(cyan));
-            // The centroid itself, between cell centres as the hand moves.
-            const cell_px: f32 = cell + 1;
-            const dx = std.math.clamp(w.track.x, -1.4, 1.4) + 1.5;
-            const dy = 1.5 - std.math.clamp(w.track.y, -1.4, 1.4);
-            const px = x0 + @as(i32, @intFromFloat(dx * cell_px + 0.5)) - 2;
-            const py = y0 + @as(i32, @intFromFloat(dy * cell_px + 0.5)) - 2;
+            // The track is from the pose, in the pose's layout: draw it only
+            // over a picture of the same layout (not for the frame or two
+            // in flight around a ZONES switch).
+            if (w.track.layout != w.hands.layout) return;
+            const tcol: i32 = @intCast(tc % @as(u4, @intCast(cols)));
+            const trow: i32 = @intCast(tc / @as(u4, @intCast(cols)));
+            gfx.frame(x0 + tcol * pw - 1, y0 + trow * ph - 1, pw + 1, ph + 1, gfx.rgb(cyan));
+            // The centroid itself, between zone centres as the hand moves
+            // (GRID: up to 0.4 cell past the outer centres).
+            const lo: f32 = if (cols == 3) -0.4 else 0;
+            const lo_r: f32 = if (rows == 3) -0.4 else 0;
+            const fc = std.math.clamp(w.track.fc, lo, @as(f32, @floatFromInt(cols - 1)) - lo);
+            const fr = std.math.clamp(w.track.fr, lo_r, @as(f32, @floatFromInt(rows - 1)) - lo_r);
+            const px = x0 + @as(i32, @intFromFloat((fc + 0.5) * @as(f32, @floatFromInt(pw)) + 0.5)) - 2;
+            const py = y0 + @as(i32, @intFromFloat((fr + 0.5) * @as(f32, @floatFromInt(ph)) + 0.5)) - 2;
             gfx.fill(px, py, 3, 3, gfx.rgb(ink));
         },
         .two_hand => {
-            const px = x0 + @as(i32, w.hands.pitch_col) * (cell + 1);
-            const vx = x0 + @as(i32, w.hands.volume_col) * (cell + 1);
-            gfx.frame(px - 1, y0 - 1, cell + 2, 3 * cell + 4, gfx.rgb(cyan));
-            gfx.frame(vx - 1, y0 - 1, cell + 2, 3 * cell + 4, gfx.rgb(magenta));
+            // The pitch and volume sides: columns (or, transposed, rows).
+            const g: i32 = w.hands.group;
+            if (cols > 1) {
+                gfx.frame(x0 + @as(i32, w.hands.pitch_col) * pw - 1, y0 - 1, g * pw + 1, rows * ph + 1, gfx.rgb(cyan));
+                gfx.frame(x0 + @as(i32, w.hands.volume_col) * pw - 1, y0 - 1, g * pw + 1, rows * ph + 1, gfx.rgb(magenta));
+            } else {
+                gfx.frame(x0 - 1, y0 + @as(i32, w.hands.pitch_col) * ph - 1, cols * pw + 1, g * ph + 1, gfx.rgb(cyan));
+                gfx.frame(x0 - 1, y0 + @as(i32, w.hands.volume_col) * ph - 1, cols * pw + 1, g * ph + 1, gfx.rgb(magenta));
+            }
         },
     }
 }
@@ -360,7 +383,7 @@ fn hint_line(w: View) void {
     _ = gfx.text(s, @divTrunc(gfx.W - gfx.text_width(s), 2), 118, gfx.rgb(dim));
 }
 
-pub const menu_rows = [_][]const u8{ "LAYOUT", "WAVE", "SCALE", "SNAP", "KEY", "OCTAVE", "PITCH HAND", "MIRROR" };
+pub const menu_rows = [_][]const u8{ "LAYOUT", "WAVE", "SCALE", "SNAP", "KEY", "OCTAVE", "PITCH HAND", "MIRROR", "ZONES" };
 
 fn menu(w: View) void {
     const x0: i32 = 10;
@@ -372,9 +395,9 @@ fn menu(w: View) void {
     _ = gfx.text("SETTINGS", x0 + 46, y0 + 4, gfx.rgb(cyan));
     const s = w.settings;
     for (menu_rows, 0..) |label, i| {
-        const y = y0 + 16 + @as(i32, @intCast(i)) * 11;
+        const y = y0 + 15 + @as(i32, @intCast(i)) * 10;
         const sel = i == w.menu_row;
-        if (sel) gfx.fill(x0 + 3, y - 2, mw - 6, 11, gfx.rgb(0x22304E));
+        if (sel) gfx.fill(x0 + 3, y - 1, mw - 6, 10, gfx.rgb(0x22304E));
         _ = gfx.text(label, x0 + 8, y, gfx.rgb(if (sel) ink else dim));
         var b: [4]u8 = undefined;
         const val: []const u8 = switch (i) {
@@ -385,7 +408,8 @@ fn menu(w: View) void {
             4 => pitch.pitch_class_name(s.root),
             5 => pitch.note_name(@divTrunc(s.low(), 100), &b),
             6 => if (s.pitch_left) "LEFT" else "RIGHT",
-            else => if (s.mirror) "ON" else "OFF",
+            7 => if (s.mirror) "ON" else "OFF",
+            else => s.zones.label(),
         };
         const vx = x0 + mw - 12 - gfx.text_width(val);
         _ = gfx.text(val, vx, y, gfx.rgb(if (sel) amber else ink));

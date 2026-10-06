@@ -34,12 +34,16 @@ Outputs: `zig-out/firmware/snouty-theremin.uf2` (the badge, a RAM cart,
   hold a hand 5 to 50 cm over the sensor; closer is higher. Left/Right
   pick 1 HAND or 2 HAND (2 HAND: right side pitch, left side volume;
   PITCH HAND in the menu swaps them). Up/Down move the octave. In 1 HAND
-  the dot and the cyan square on the grid follow the hand across the
+  the dot and the cyan outline on the zones follow the hand across the
   sensor; if they move the opposite way to your hand, set MIRROR ON.
+  ZONES in the menu picks STRIPES (the default: 8 narrow stripes, finer
+  side to side; 2 HAND uses the outer three of each side) or GRID (the
+  3x3 wide map). If STRIPES looks scrambled, set ZONES GRID.
 - **Without the breakout** (and in the simulator): Up/Down tap through the
   scale and glide when held; Left/Right hold the note.
 - A waveform, B scale, Start the settings menu (layout, wave, scale,
-  snap, key, octave, pitch hand, mirror), Select mute. Sound is ON at boot.
+  snap, key, octave, pitch hand, mirror, zones), Select mute. Sound is ON
+  at boot.
 
 ## 4. Simulator
 
@@ -75,7 +79,8 @@ off, one hand, two hands in 2 HAND), `debug_note` (cents above MIDI 0,
 A4 = 6900), `debug_level` (voice level, 65536 full), `debug_source` (0
 stick, 1 sensor), `debug_muted`, `debug_menu`, `debug_wave`,
 `debug_scale`, `debug_set_scale(0..3)`, `debug_set_snap(0|1)`,
-`debug_set_wave(0..3)`.
+`debug_set_wave(0..3)`, `debug_zones` and `debug_set_zones(0|1)` (ZONES:
+0 GRID, 1 STRIPES; the demo hand follows it).
 
 ## 6. badge-bench (repository root)
 
@@ -89,6 +94,17 @@ The first run uses `badge-bench/carts/snouty-theremin.toml` (the melody
 script, 900 frames); the second runs the demo hand through the sensor
 path. Both must show `underruns 0 samples` in the audio report. PLAN.md
 has the numbers.
+
+ZONES: `--poke snouty_theremin_zones=1` (GRID) or `=2` (STRIPES, the
+default) picks the layout before the sensor starts. With a
+`-Dtof-fake=true` build (`zig build -Dcart=snouty-theremin
+-Dtof-fake=true`, the same ELF path) the driver runs against the model in
+either layout:
+
+```sh
+badge-bench/bench.sh zig-out/firmware/snouty-theremin.elf --poke snouty_theremin_zones=1
+badge-bench/bench.sh zig-out/firmware/snouty-theremin.elf --poke snouty_theremin_zones=2
+```
 
 ## 7. Regenerating tables
 

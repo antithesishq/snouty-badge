@@ -16,6 +16,56 @@ zig build check-float -Dcart=snouty-theremin
 badge-bench/bench.sh zig-out/firmware/snouty-theremin.elf
 ```
 
+## M5: ZONES, stripes and arm rejection (2026-10-06, branch `tof/stripes`)
+
+Adrian: on every sensor cart height tracks far more consistently than
+side to side (docs/TOF.md M5 has the diagnosis and the shared decisions).
+
+- New menu row ZONES (STRIPES, GRID), default STRIPES: the 8-stripe user
+  SPAD mask (4.8 deg inner stripes against map 6's 13.7 deg columns) or
+  the wide map 6. Changing it reconfigures the driver (`Tof.set_layout`:
+  stop, pages, MEASURE; no reset), restarts the pose's background and
+  the highlight; it is applied before the driver first starts.
+  Displaced: nothing (a new last row; the menu's rows are 10 px apart
+  now to fit nine).
+- Every frame is read through its own `frame.layout` (`hands.read`
+  takes the geometry from lib/tof_zones.zig); the pose ignores frames of
+  the other layout. 1 HAND: pitch is still the nearest zone (a theremin
+  plays the nearest part of the hand; a pointing fingertip; the arm is
+  always further), with a 40 mm near limit in STRIPES (no crosstalk
+  calibration under a user mask). The highlight is the pose's near
+  cluster centroid (arm rejection) with hysteresis per stripe.
+  2 HAND: the outer three stripes of each side, the middle two a dead
+  band. The zone drawing shows 8 stripes (or 3x3), the highlight frames a
+  stripe, the dot slides along them.
+- Demo hand (`snouty_theremin_fake`, `debug_set_fake_sensor`) renders the
+  active layout; `-Dtof-fake=true` builds set the model's user-mask
+  scene to its wandering hand (`tof.virtual.shared.user_scene = .hand`).
+- badge-bench poke `snouty_theremin_zones` (1 GRID, 2 STRIPES; 0 keeps
+  the default); wasm `debug_zones`, `debug_set_zones(0|1)`.
+- Host tests: 10 in hands (5 new: stripes one hand with the 40 mm limit,
+  two-hand sides and dead band with MIRROR and transpose, a frame read by
+  its own tag, the track over the stripes, a synthetic hand sweeping the
+  stripes walking all eight in order), 4 in input (1 new: the demo hand
+  through the pose in STRIPES, a GRID frame in flight ignored; the demo
+  test covers both zone layouts). Existing tests kept; `hands.track` takes
+  the geometry, `pitch_col` is a u4 (STRIPES columns go to 7).
+- badge-bench, calibrated, busy ms worst / mean (900 frames unless noted):
+
+  | Build, run | GRID | STRIPES | M1.2 |
+  |---|---|---|---|
+  | normal, toml (stick melody; no sensor, so the layout is unused) | 0.98 / 0.58 | (same run) | 0.93 worst |
+  | normal, `--poke snouty_theremin_fake=2` (two-hand demo) | 1.09 / 0.60 | 1.11 / 0.59 | 0.90 / 0.55 |
+  | normal, `--poke snouty_theremin_fake=1` | 1.08 / 0.59 | 1.09 / 0.58 | |
+  | `-Dtof-fake=true`, toml | 3.66 / 2.07 | 5.95 / 3.06 | 3.65 worst |
+  | `-Dtof-fake=true`, 1800 frames, no script | 3.66 / 2.04 | 5.74 / 3.08 | |
+
+  0 audio underruns in every run. The STRIPES fake build's extra ~2 ms is
+  the model, not the cart: `tof_scene.trace_in` (360 SPAD rays per
+  measurement) and 64-bit divisions in the scene (`__udivmoddi4`, ~650
+  calls a frame) under the bus transfer; the cart's own update is
+  unchanged. Worst frame 36 % of the budget.
+
 ## M1.2: the highlight follows the hand (2026-10-05)
 
 Adrian on the badge: distance (pitch) is clearly audible, but moving the

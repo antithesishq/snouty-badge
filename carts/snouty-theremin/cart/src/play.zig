@@ -36,6 +36,9 @@ pub const Settings = struct {
     /// Mirror the grid left/right (`Orientation.flip_x`): for a breakout
     /// held the other way round on its cable.
     mirror: bool = false,
+    /// The sensor's zones (docs/TOF.md M5): STRIPES (8 narrow full-height
+    /// stripes, finer side to side) by default, GRID the 3x3 wide map.
+    zones: hands.Zones = .stripes,
 
     pub const min_octave = 2;
     pub const max_octave = 5;

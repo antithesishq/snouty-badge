@@ -13,6 +13,7 @@
 const tof_types = @import("tof").types;
 const sensor = @import("sensor.zig");
 const pitch = @import("pitch.zig");
+const hands = @import("hands.zig");
 pub const Frame = tof_types.Frame;
 
 /// The sensor's latest frame, or null (none yet, no sensor, or the driver
@@ -37,6 +38,8 @@ pub const Input = struct {
     fake: u8 = 0,
     /// The update the demo hand started at (its melody starts there).
     fake_from: u32 = 0,
+    /// The demo hand's zones: the ZONES setting (docs/TOF.md M5).
+    zones: hands.Zones = .stripes,
 
     pub fn set_fake(in: *Input, mode: u8, tick: u32) void {
         if (in.fake == 0 and mode != 0) in.fake_from = tick & ~@as(u32, 1);
@@ -45,7 +48,7 @@ pub const Input = struct {
 
     /// The new frame this update, if any; updates `source`.
     pub fn poll(in: *Input, now_us: u64, tick: u32) ?Frame {
-        const got = sensor_frame(now_us) orelse if (in.fake != 0) fake_frame(in.fake, tick -% in.fake_from) else null;
+        const got = sensor_frame(now_us) orelse if (in.fake != 0) fake_frame(in.fake, in.zones, tick -% in.fake_from) else null;
         if (got) |f| {
             if (in.last_seq == null or in.last_seq.? != f.seq) {
                 in.last_seq = f.seq;
@@ -69,19 +72,25 @@ const demo_notes = [_]u8{ 64, 64, 65, 67, 67, 65, 64, 62, 60, 60, 62, 64, 64, 0,
 const beat = 12;
 const demo_low: pitch.Cents = 4800;
 
-/// One choreographed frame every other update (30 Hz). The pitch hand
-/// sits over the screen's right column, glides between notes over a few
-/// frames and wobbles at ~5.5 Hz (+-3 mm) like a real hand; mode 2 adds a
-/// volume hand over the left column that dips at the end of each phrase.
-pub fn fake_frame(mode: u8, tick: u32) ?Frame {
+/// One choreographed frame every other update (30 Hz), in `zones`' layout
+/// (device order, unmirrored). The pitch hand sits over the screen's
+/// right side (GRID: the right column; STRIPES: the right three stripes),
+/// glides between notes over a few frames and wobbles at ~5.5 Hz (+-3 mm)
+/// like a real hand; mode 1 lets the hand's edge reach in toward the
+/// middle, weaker and further; mode 2 adds a volume hand over the left
+/// side that dips at the end of each phrase.
+pub fn fake_frame(mode: u8, zones: hands.Zones, tick: u32) ?Frame {
     if (tick % 2 != 0) return null;
     const n = tick / 2; // frame number
     const map: pitch.Map = .{};
     const step = (n / beat) % demo_notes.len;
     const within = n % beat;
-    var f: Frame = .{ .seq = n, .time_us = @as(u64, tick) * 16_667 };
-    // Background: the ceiling, too far to be a hand.
+    var f: Frame = .{ .seq = n, .time_us = @as(u64, tick) * 16_667, .layout = zones.layout() };
+    // Background: the ceiling, too far to be a hand. STRIPES leaves zone 0
+    // (channel 1) empty, as the mask does.
     for (&f.zones) |*z| z.near = .{ .mm = 1350, .confidence = 40 };
+    if (zones == .stripes) f.zones[0] = .{};
+    var pitch_mm: ?u16 = null;
     const note = demo_notes[step];
     if (note != 0) {
         var mm: i32 = map.distance(demo_low, @as(pitch.Cents, note) * 100);
@@ -92,20 +101,35 @@ pub fn fake_frame(mode: u8, tick: u32) ?Frame {
             mm = pm + @divTrunc((mm - pm) * @as(i32, @intCast(within + 1)), 4);
         }
         mm += wobble(n);
-        const hand_mm: u16 = @intCast(mm);
-        for (0..3) |r| {
-            const off = [3]u16{ 6, 0, 9 };
-            f.zones[r * 3 + 2].near = .{ .mm = hand_mm + off[r], .confidence = 210 };
-            // The middle column catches the hand's edge, weaker and further.
-            if (mode == 1) f.zones[r * 3 + 1].near = .{ .mm = hand_mm + 35 + off[r], .confidence = 70 };
-        }
+        pitch_mm = @intCast(mm);
     }
-    if (mode == 2) {
-        // Volume hand: high (loud) most of the phrase, sinking on the last
-        // beats of each 6-note group.
-        const group = step % 6;
-        const vol_mm: u16 = if (group >= 4) @intCast(110 + (beat - within) * 10) else 300;
-        for (0..3) |r| f.zones[r * 3].near = .{ .mm = vol_mm + @as(u16, @intCast(r)) * 4, .confidence = 190 };
+    // Volume hand: high (loud) most of the phrase, sinking on the last
+    // beats of each 6-note group.
+    const group = step % 6;
+    const vol_mm: u16 = if (group >= 4) @intCast(110 + (beat - within) * 10) else 300;
+    switch (zones) {
+        .grid => {
+            if (pitch_mm) |hand_mm| for (0..3) |r| {
+                const off = [3]u16{ 6, 0, 9 };
+                f.zones[r * 3 + 2].near = .{ .mm = hand_mm + off[r], .confidence = 210 };
+                // The middle column catches the hand's edge, weaker and further.
+                if (mode == 1) f.zones[r * 3 + 1].near = .{ .mm = hand_mm + 35 + off[r], .confidence = 70 };
+            };
+            if (mode == 2) for (0..3) |r| {
+                f.zones[r * 3].near = .{ .mm = vol_mm + @as(u16, @intCast(r)) * 4, .confidence = 190 };
+            };
+        },
+        .stripes => {
+            // Stripe k is zone k + 1.
+            if (pitch_mm) |hand_mm| {
+                const off = [3]u16{ 7, 0, 4 };
+                for (0..3) |i| f.zones[6 + i].near = .{ .mm = hand_mm + off[i], .confidence = 210 };
+                if (mode == 1) f.zones[5].near = .{ .mm = hand_mm + 30, .confidence = 70 };
+            }
+            if (mode == 2) for (0..3) |i| {
+                f.zones[1 + i].near = .{ .mm = vol_mm + @as(u16, @intCast(i)) * 3, .confidence = 190 };
+            };
+        },
     }
     return f;
 }
@@ -120,7 +144,6 @@ fn wobble(n: u32) i32 {
 
 const std = @import("std");
 const testing = std.testing;
-const hands = @import("hands.zig");
 
 test "input: no sensor and no demo is the stick" {
     var in: Input = .{};
@@ -149,19 +172,35 @@ test "input: frames switch to the sensor, a long silence back to the stick" {
     try testing.expectEqual(Source.sensor, in.source);
 }
 
-test "input: the demo hand reads as the right hands in both layouts" {
-    // Frame 0: the first note (E4) on the right column.
-    const f = fake_frame(2, 0).?;
-    const one = hands.read(&f, .{});
-    const map: pitch.Map = .{};
-    try testing.expect(one.pitch_mm != null);
-    try testing.expect(@abs(@as(i32, one.pitch_mm.?) - map.distance(demo_low, 6400)) <= 4);
-    const two = hands.read(&f, .{ .layout = .two_hand });
-    try testing.expect(@abs(@as(i32, two.pitch_mm.?) - map.distance(demo_low, 6400)) <= 4);
-    try testing.expectEqual(@as(?u16, 300), two.volume_mm);
-    // A rest: no pitch hand.
-    const rest = fake_frame(1, 2 * 13 * beat).?;
-    try testing.expectEqual(@as(?u16, null), hands.read(&rest, .{}).pitch_mm);
-    // Odd updates have no frame.
-    try testing.expectEqual(@as(?Frame, null), fake_frame(1, 1));
+test "input: the demo hand reads as the right hands in both layouts and both zone layouts" {
+    for ([_]hands.Zones{ .grid, .stripes }) |zones| {
+        // Frame 0: the first note (E4) on the right side.
+        const f = fake_frame(2, zones, 0).?;
+        try testing.expectEqual(zones.layout(), f.layout);
+        const one = hands.read(&f, .{});
+        const map: pitch.Map = .{};
+        try testing.expect(one.pitch_mm != null);
+        try testing.expect(@abs(@as(i32, one.pitch_mm.?) - map.distance(demo_low, 6400)) <= 4);
+        const two = hands.read(&f, .{ .layout = .two_hand });
+        try testing.expect(@abs(@as(i32, two.pitch_mm.?) - map.distance(demo_low, 6400)) <= 4);
+        try testing.expectEqual(@as(?u16, 300), two.volume_mm);
+        // A rest: no pitch hand.
+        const rest = fake_frame(1, zones, 2 * 13 * beat).?;
+        try testing.expectEqual(@as(?u16, null), hands.read(&rest, .{}).pitch_mm);
+        // Odd updates have no frame.
+        try testing.expectEqual(@as(?Frame, null), fake_frame(1, zones, 1));
+    }
+}
+
+test "input: the demo hand drives the pose in STRIPES, ignored by a GRID estimator" {
+    const tof = @import("tof");
+    var est: tof.pose.Estimator = .{ .config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650, .min_confidence = 8 } };
+    est.set_layout(.stripes);
+    var p: tof.pose.Pose = .{};
+    var t: u32 = 0;
+    while (t < 20) : (t += 2) p = est.update(&fake_frame(1, .stripes, t).?, null, .{});
+    try testing.expect(p.present and p.layout == .stripes and p.x > 0.3);
+    // A GRID frame in flight after the switch changes nothing.
+    const q = est.update(&fake_frame(1, .grid, t).?, null, .{});
+    try testing.expectEqual(p.seq, q.seq);
 }

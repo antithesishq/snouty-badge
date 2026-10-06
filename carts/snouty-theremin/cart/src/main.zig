@@ -15,8 +15,9 @@
 //! simulator, which has no streaming audio, the simulator's `tone` import
 //! is re-struck every update at the voice's pitch (docs/RUNNING.md).
 const cart = @import("cart-api");
-const tof_types = @import("tof").types;
-const tof_pose = @import("tof").pose;
+const tof = @import("tof");
+const tof_types = tof.types;
+const tof_pose = tof.pose;
 const pitch = @import("pitch.zig");
 const hands = @import("hands.zig");
 const play = @import("play.zig");
@@ -24,6 +25,7 @@ const voice = @import("voice.zig");
 const audio = @import("audio.zig");
 const input = @import("input.zig");
 const screen = @import("screen.zig");
+const sensor = @import("sensor.zig");
 
 comptime {
     cart.export_start_code();
@@ -46,6 +48,10 @@ fn orientation() tof_types.Orientation {
 const pose_config: tof_pose.Config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650, .min_confidence = 8 };
 var pose_est: tof_pose.Estimator = .{ .config = pose_config };
 var track: hands.Track = .{};
+/// The geometries frames are read through, per layout (rebuilt when MIRROR
+/// changes the orientation).
+var geom_grid: tof.zones.Geometry = .{};
+var geom_stripes: tof.zones.Geometry = .{};
 
 var muted = false;
 var menu_open = false;
@@ -58,24 +64,39 @@ var chord = false;
 /// badge-bench pokes: `snouty_theremin_fake=N` runs the demo hand (1 one
 /// hand, 2 two hands in the two-hand layout) instead of the empty sensor.
 var bench_fake: u32 = 0;
+/// badge-bench poke `snouty_theremin_zones=N`: 1 GRID, 2 STRIPES (0 keeps
+/// the default, STRIPES), applied before the sensor starts.
+var bench_zones: u32 = 0;
 comptime {
-    if (!cart.is_wasm) @export(&bench_fake, .{ .name = "snouty_theremin_fake" });
+    if (!cart.is_wasm) {
+        @export(&bench_fake, .{ .name = "snouty_theremin_fake" });
+        @export(&bench_zones, .{ .name = "snouty_theremin_zones" });
+    }
 }
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    set_geometry();
+    set_zones(settings.zones);
 }
 
 pub fn update() void {
+    if (bench_zones != 0) {
+        set_zones(if (bench_zones == 1) .grid else .stripes);
+        bench_zones = 0;
+    }
     if (bench_fake != 0 and in.fake == 0) set_fake(bench_fake);
     const c = read_controls();
     buttons(c);
 
     if (in.poll(cart.micros_since_boot(), tick)) |f| {
-        last_hands = hands.read(&f, .{ .layout = settings.layout, .orientation = orientation(), .pitch_left = settings.pitch_left });
+        // Each frame through its own layout (frames in flight around a
+        // ZONES switch carry the old one; the pose ignores those).
+        const g = if (f.layout == .stripes) &geom_stripes else &geom_grid;
+        last_hands = hands.read_with(&f, .{ .layout = settings.layout, .orientation = orientation(), .pitch_left = settings.pitch_left }, g);
         const p = pose_est.update(&f, null, orientation());
-        track = hands.track(track, p.present, p.x, p.y);
+        if (f.layout == pose_est.layout) track = hands.track(track, p.present, p.x, p.y, pose_est.geometry(orientation()));
         player.sensor(last_hands, settings);
     }
     if (in.source == .stick) {
@@ -110,6 +131,21 @@ pub fn update() void {
     });
     tick +%= 1;
     if (cart.is_wasm) present_wasm();
+}
+
+/// ZONES: the sensor's layout, the pose's (which starts afresh: its
+/// zones look elsewhere now) and the demo hand's.
+fn set_zones(z: hands.Zones) void {
+    settings.zones = z;
+    sensor.set_layout(z.layout());
+    pose_est.set_layout(z.layout());
+    in.zones = z;
+    track = .{};
+}
+
+fn set_geometry() void {
+    geom_grid = hands.geometry(.grid, orientation());
+    geom_stripes = hands.geometry(.stripes, orientation());
 }
 
 fn set_fake(mode: u32) void {
@@ -181,12 +217,14 @@ fn change(row: u8, d: i2) void {
             settings.octave = @intCast(@min(@max(o, play.Settings.min_octave), play.Settings.max_octave));
         },
         6 => settings.pitch_left = !settings.pitch_left,
-        else => {
+        7 => {
             settings.mirror = !settings.mirror;
-            // The background it learned is per screen cell: start over.
-            pose_est = .{ .config = pose_config };
+            // The pose's background is per device zone and survives; the
+            // highlight's cell is a screen cell: start it over.
+            set_geometry();
             track = .{};
         },
+        else => set_zones(if (settings.zones == .grid) .stripes else .grid),
     }
 }
 
@@ -240,7 +278,15 @@ fn debug_wave() callconv(.c) u32 {
 fn debug_scale() callconv(.c) u32 {
     return @backingInt(settings.scale);
 }
+fn debug_zones() callconv(.c) u32 {
+    return @backingInt(settings.zones);
+}
 // The setters return the new value (preview.mjs --call-at wants a result).
+/// 0 GRID, 1 STRIPES.
+fn debug_set_zones(z: u32) callconv(.c) u32 {
+    set_zones(if (z & 1 == 0) .grid else .stripes);
+    return @backingInt(settings.zones);
+}
 fn debug_set_scale(s: u32) callconv(.c) u32 {
     settings.scale = @fromBackingInt(@intCast(@as(u2, @intCast(s & 3))));
     return @backingInt(settings.scale);
@@ -266,6 +312,8 @@ comptime {
         @export(&debug_set_scale, .{ .name = "debug_set_scale" });
         @export(&debug_set_snap, .{ .name = "debug_set_snap" });
         @export(&debug_set_wave, .{ .name = "debug_set_wave" });
+        @export(&debug_zones, .{ .name = "debug_zones" });
+        @export(&debug_set_zones, .{ .name = "debug_set_zones" });
     }
 }
 
