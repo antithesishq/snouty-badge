@@ -205,6 +205,25 @@ commands 40 us).
   carts/snouty-theremin/PLAN.md has the bench numbers and the cart's own
   questions.
 
+### M1.5: trombone (`snouty-trombone`)
+
+- The theremin's sibling: hand height over the sensor is the slide (1st
+  position at 10 cm .. 7th at 45 cm, continuous), hand side to side
+  (lib/tof_pose.zig's coverage centroid, never the closest zone) the
+  embouchure: which partial of the harmonic series sounds, with
+  hysteresis, lip bends and cracks. A brass voice (band-limited pulse,
+  state-variable filter, attack blat, plunger wah on B) streamed into
+  lib/stream_audio's ring; a pixel-art trombone whose slide follows the
+  hand. Stick fallback; a demo hand (lib/tof_synth.zig) for the
+  simulator and badge-bench.
+- Status 2026-10-06: M1 on branch `trombone/m1` (tag
+  `snouty-trombone/m1`), not merged; nothing run on hardware.
+  carts/snouty-trombone/PLAN.md has the bench numbers and the cart's own
+  questions. On synthetic frames the pose's x moves in steps over the
+  3x3 zones, so the middle partials have narrow hand ranges at some
+  heights (about 10 mm at 4th position): the badge check below decides
+  whether 7 partials across the hand's sweep is too many.
+
 ### M2: Sensor Eyes and the depth photo (`snouty-sense` pages)
 
 - EYES: all nine histograms as a scrolling waterfall; sound mode that
@@ -335,7 +354,13 @@ straight to DIAG).
    `snouty-morph.uf2`: the label turns HAND and the mesh follows your
    hand; push toward it to bulge, jab for the shockwave. Say whether left
    and right come out mirrored in either cart (their orientation
-   constants follow the LIVE photo).
+   constants follow the LIVE photo). Then `snouty-trombone.uf2`, sensor
+   facing up: a hand 10-45 cm over it blows; raising and lowering it
+   moves the drawn slide (the ruler under it shows positions 1-7), moving
+   it left and right moves the cyan lip marker along the partial ladder
+   (left low, right high; MIRROR in the menu if reversed). Say whether
+   every partial (the seven ladder cells) can be held with a still hand
+   at a low, middle and high height, and whether the slide jitters.
 
 8. **Shader.** `snouty-shader.uf2`: hold B and the inputs panel's
    source label (top right) turns HAND with a hand over the sensor; its

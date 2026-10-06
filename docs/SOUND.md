@@ -49,6 +49,7 @@ should start loud; nothing else in a cart decides it.
 | snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 8) | `frontend/audio.zig` `enabled` | `-Dsound` (off) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
 | snouty-zero | yes, 6 tones + the engine drone via `lib/tone_stream.zig` | `cart/src/sound.zig` `enabled` | `-Dsound` (off) | menu item "SOUND: ON/OFF" |
 | snouty-theremin | yes, its own continuous voice streamed (section 7; `cart/src/voice.zig`, `audio.zig`) | `main.zig` `muted` | **on** (an instrument, docs/TOF.md deferred question 1; `-Dsound` does not apply) | Select, any time (SOUND / MUTED in the status bar) |
+| snouty-trombone | yes, its own brass voice streamed (section 7; `cart/src/voice.zig`, `audio.zig`) | `main.zig` `muted` | **on** (an instrument, like the theremin; `-Dsound` does not apply) | Select, any time (SOUND / MUTED in the status bar) |
 | snouty-run | no | | | |
 | snouty-maze | no, by decision (2026-09-27, "it'll be annoying") | | | |
 
