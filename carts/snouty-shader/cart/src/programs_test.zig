@@ -42,7 +42,7 @@ fn distinct_colours() usize {
     return n;
 }
 
-/// Run `ticks` ticks of the ghost through program `p`.
+/// Run `ticks` ticks with no hand through program `p`.
 fn run(p: usize, ticks: u32) void {
     const pr = &programs.list[p];
     for (0..ticks) |i| {

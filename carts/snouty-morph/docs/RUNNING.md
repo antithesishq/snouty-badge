@@ -36,12 +36,11 @@ render time (us) and faces drawn bottom-right.
 | Start | next mesh: KNOT, BOING, SNOUTY, IRIS |
 | Select | sound on / off (boots off) |
 
-Top-left shows the source: GHOST (attract: a scripted hand through
-synthetic sensor frames and the real estimator), STICK (6 s after the last
-input it hands back to the ghost) or HAND (the sensor). Top-right is the
-3x3 zone map (hand coverage per zone) for GHOST and HAND. Without the
-breakout (and always in the simulator) the cart runs GHOST and STICK only;
-`cart/src/sensor.zig` runs lib/tof.zig on the badge.
+Top-left shows the source: SENSOR (the breakout; with no hand in view the
+mesh rests), STICK (lets go 6 s after the last input) or NO SENSOR.
+Top-right is the 3x3 zone map (hand coverage per zone) for SENSOR.
+Without the breakout (and always in the simulator) only the stick moves
+the mesh; `cart/src/sensor.zig` runs lib/tof.zig on the badge.
 
 ## 3. Simulator
 
@@ -53,20 +52,16 @@ cd sycl-badge/simulator && npm run dev                       # in another shell
 ## 4. Headless preview and GIFs
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-morph.wasm --frames 960 --every 4 --out /tmp/ghost
-python3 tools/make_gif.py /tmp/ghost carts/snouty-morph/docs/preview_ghost.gif --scale 2 --ms 66
 node tools/preview.mjs zig-out/bin/snouty-morph.wasm --frames 1380 --every 4 --out /tmp/deform \
     --script carts/snouty-morph/tools/scripts/gif_deform.json
 python3 tools/make_gif.py /tmp/deform carts/snouty-morph/docs/preview_deform.gif --scale 2 --ms 66
 ```
 
-`docs/preview_ghost.gif`: the 16 s ghost routine on KNOT (drift, approach
-with REACH, circle with TWIST, punch with SHOCKWAVE, close rocking tilt).
 `docs/preview_deform.gif`: the stick through all four meshes (JELLY
 jerks, REACH, TWIST, punches, SNOUTY's tongue when very close).
 
 Debug exports (wasm): `debug_frame`, `debug_mesh`, `debug_set_mesh(n)`,
-`debug_source` (0 ghost, 1 stick, 2 sensor), `debug_present`,
+`debug_source` (0 none, 1 stick, 2 sensor), `debug_present`,
 `debug_hand_z` (0..1000), `debug_ripples`, `debug_faces`,
 `debug_render_us`, `debug_pixel_checksum`, `debug_sound`.
 
@@ -77,6 +72,7 @@ badge-bench/bench.sh zig-out/firmware/snouty-morph.elf --symbols
 ```
 
 Uses `badge-bench/carts/snouty-morph.toml` (3840 frames: each mesh for
-one ghost routine, stick moves and punches; ~12 minutes). The badge
+16 s, stick moves and punches; a `-Dtof-fake=true` ELF adds the sensor
+model's wandering hand). The badge
 build exports `start_mesh` for `--poke start_mesh=N`. Numbers are in
 `PLAN.md`.

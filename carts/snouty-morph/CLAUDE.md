@@ -12,8 +12,9 @@ notes.
 - `cart/src/main.zig`: `start()`, `update()`, debug exports, wasm shims.
 - `cart/src/config.zig`: every knob (perf, camera, hand mapping,
   deformation strengths, sources). Tune here.
-- `cart/src/hand.zig`: the virtual hand from the sensor, the stick or the
-  ghost; `sensor.zig` is the single integration point with the driver
+- `cart/src/hand.zig`: the virtual hand from the sensor or the stick
+  (no attract hand: Adrian removed it so the sensor demos honestly);
+  `sensor.zig` is the single integration point with the driver
   (`sensor_frame()`: lib/tof.zig on the badge, null in the simulator).
 - `cart/src/body.zig`: the 6DoF follow and the deformation springs
   (REACH, JELLY, TWIST, SHOCKWAVE) -> `Params`.

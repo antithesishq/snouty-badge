@@ -14,10 +14,8 @@ pub const punch_cooldown = 30;
 /// Stick hand: speed (units/s), the distance it holds while steered.
 pub const stick_speed: f32 = 1.3;
 pub const stick_z: f32 = 0.75;
-/// Ticks without stick input before the ghost takes over again.
+/// Ticks without stick input before the stick hand lets go.
 pub const stick_timeout = 240;
-/// Ticks without a sensed hand before the ghost takes over.
-pub const hand_timeout = 120;
 
 // ---------------------------------------------------------------------------
 // Uniforms (uniforms.zig).

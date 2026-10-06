@@ -1,8 +1,7 @@
 //! The TMF8820 (docs/TOF.md): lib/tof.zig on the badge's Qwiic port, or
 //! its register-level model in a `-Dtof-fake=true` badge build
 //! (badge-bench). The simulator and the host tests have no sensor, so
-//! `sensor_frame` returns null there and the cart runs on the ghost hand
-//! and the stick.
+//! `sensor_frame` returns null there and only the stick moves the hand.
 const tof = @import("tof");
 const build_options = @import("build_options");
 pub const types = tof.types;

@@ -13,8 +13,8 @@ const surface = @import("surface.zig");
 const text = @import("text.zig");
 const U = @import("uniforms.zig").U;
 
-const source_name = [_][]const u8{ "GHOST", "STICK", "HAND" };
-const source_rgb = [_]u32{ 0xa890ff, 0xffd850, 0x60ff90 };
+const source_name = [_][]const u8{ "NO SENSOR", "STICK", "SENSOR" };
+const source_rgb = [_]u32{ 0x9090a8, 0xffd850, 0x60ff90 };
 
 pub fn draw(u: *const U) void {
     if (app.hud) {

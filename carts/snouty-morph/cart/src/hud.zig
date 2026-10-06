@@ -1,7 +1,7 @@
 //! On-screen extras (SPEC.md section 3): the active source top-left, the
 //! 3x3 zone map top-right (coverage of the hand per zone, dim grey for
 //! zones that only see the background), the mesh name and sound toasts,
-//! and in GHOST a greetings scroller along the bottom.
+//! and, while no hand is in view, a greetings scroller along the bottom.
 const std = @import("std");
 const cart = @import("cart-api");
 const tof_pose = @import("tof").pose;
@@ -26,15 +26,15 @@ pub fn show_sound(on: bool) void {
     sound_toast = toast_frames;
 }
 
-const source_name = [_][]const u8{ "GHOST", "STICK", "HAND" };
-const source_rgb = [_]u32{ 0xa890ff, 0xffd850, 0x60ff90 };
+const source_name = [_][]const u8{ "NO SENSOR", "STICK", "SENSOR" };
+const source_rgb = [_]u32{ 0x9090a8, 0xffd850, 0x60ff90 };
 
 const greetings = "SNOUTY MORPH  *  WAVE A HAND OVER THE SENSOR  *  STICK MOVES IT, B+STICK PUSHES AND TURNS, A PUNCHES  *  START: NEXT MESH  SELECT: SOUND  *  A 3X3 TIME-OF-FLIGHT SENSOR IS NINE PIXELS: THE REST IS MATHS  *  GREETINGS TO EVERY SYCL BADGE HACKER  *  ";
 
 pub fn draw(t: u32) void {
     const src = @backingInt(hand.source);
     text.shadowed(source_name[src], 3, 3, .rgb(source_rgb[src]), 1);
-    if (hand.source != .stick) mini_map(hand.pose, &hand.frame, source_rgb[src]);
+    if (hand.source == .sensor) mini_map(hand.pose, &hand.frame, source_rgb[src]);
 
     if (mesh_toast > 0) {
         mesh_toast -= 1;
@@ -45,7 +45,7 @@ pub fn draw(t: u32) void {
         const s: []const u8 = if (sound_on) "SOUND ON" else "SOUND OFF";
         text.shadowed(s, text.centre_x(s, 1), 14, .rgb(0xffd850), 1);
     }
-    if (hand.source == .ghost) scroller(t) else scroll = 0;
+    if (hand.source != .stick and !hand.pose.present) scroller(t) else scroll = 0;
 }
 
 fn mini_map(p: tof_pose.Pose, f: *const tof_pose.types.Frame, rgb: u32) void {
@@ -59,8 +59,8 @@ fn mini_map(p: tof_pose.Pose, f: *const tof_pose.types.Frame, rgb: u32) void {
         if (p.present and c > 0) {
             colour = mix(0x302848, rgb, @intFromFloat(@min(1.0, c) * 256.0));
         } else {
-            // Background only: brighter when nearer (device order: identity
-            // orientation for the ghost; close enough for a glance).
+            // Background only: brighter when nearer (device order, not
+            // the screen orientation; close enough for a glance).
             const z = f.zones[ci];
             if (z.near.valid()) {
                 const near: u32 = @min(255, 255 * 300 / @max(@as(u32, z.near.mm), 300));

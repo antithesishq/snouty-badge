@@ -94,6 +94,14 @@ polish. First full bench: worst 12.57 ms (25 % of cycles in software
   SPAD map, no histogram dumps); the cart imports one `tof` module that
   carries the driver, `types`, `pose` and `synth`. Bench with
   `-Dtof-fake=true`: worst 54 % of the budget.
+- M1.2 (tag snouty-morph/m1.2, 2026-10-06): the GHOST attract hand is
+  gone (Adrian: with the sensor pointed at nothing, or unplugged, the
+  ghost still moved the mesh, which made the sensor hard to demo). Sources
+  are now SENSOR (the breakout; with no hand in view the mesh rests),
+  STICK, NO SENSOR; `config.hand_timeout` dropped; the scroller runs
+  while no hand is in view; `docs/preview_ghost.gif` removed. badge-bench
+  (calibrated, `bench_m0.json`, 3840 frames): worst 6.83 / mean 4.22 ms
+  (no ghost frames any more), `-Dtof-fake=true` worst 10.10 / mean 5.72.
 
 ## Deferred questions (defaults taken)
 

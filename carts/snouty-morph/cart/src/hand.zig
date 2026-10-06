@@ -4,11 +4,11 @@
 //! - STICK: the joystick moves the hand, B + stick pushes/pulls and turns
 //!   it, A punches. Takes over at once, hands back after
 //!   config.stick_timeout ticks without input.
-//! - GHOST (attract): a scripted hand rendered into synthetic sensor frames
-//!   by tof_synth and run through its own estimator, so attract mode shows
-//!   what the real estimator makes of a hand.
+//! - NONE: no sensor and no stick: the hand rests where it was.
 //!
-//! Priority: a sensed hand, then recent stick input, then the ghost.
+//! Priority: a sensed hand, then recent stick input, then the sensor (no
+//! hand in view: the hand rests), then none. Nothing fakes a hand (Adrian,
+//! 2026-10-06: a scripted attract hand made the sensor hard to demo).
 //! Everything downstream (body.zig) sees one `Hand`. No cart API here, so
 //! the host tests drive it directly.
 const std = @import("std");
@@ -17,10 +17,9 @@ const config = @import("config.zig");
 const math = @import("math.zig");
 const sensor = @import("sensor.zig");
 
-const synth = tof_pose.synth;
 const types = tof_pose.types;
 
-pub const Source = enum(u8) { ghost, stick, sensor };
+pub const Source = enum(u8) { none, stick, sensor };
 
 /// Normalised hand: x, y in -1..1 (screen right/up), z 0 far .. 1 near;
 /// angles in radians (pitch > 0: top away; roll > 0: right side away; yaw
@@ -58,9 +57,9 @@ pub const Stick = struct {
     }
 };
 
-pub var source: Source = .ghost;
+pub var source: Source = .none;
 pub var hand: Hand = .{};
-/// The pose behind the hand (sensor or ghost; zeroed for the stick), and
+/// The pose behind the hand (the sensor's; zeroed otherwise), and
 /// the frame it came from, for the HUD's mini map.
 pub var pose: tof_pose.Pose = .{};
 pub var frame: types.Frame = .{};
@@ -68,29 +67,20 @@ pub var has_sensor = false;
 
 var tick: u32 = 0;
 var sensor_est: tof_pose.Estimator = .{};
-var ghost_est: tof_pose.Estimator = .{};
-var ghost_frame: types.Frame = .{};
-var ghost_pose: tof_pose.Pose = .{};
-var ghost_seed: u32 = 0x5eed;
 var last_seq: u32 = 0xffff_ffff;
 var sensor_pose: tof_pose.Pose = .{};
 var stick_idle: u32 = config.stick_timeout;
-var hand_idle: u32 = config.hand_timeout;
 var punch_cool: u32 = 0;
 var stick_hand: Hand = .{};
 
 pub fn reset() void {
-    source = .ghost;
+    source = .none;
     hand = .{};
     pose = .{};
     tick = 0;
     sensor_est = .{};
-    ghost_est = .{};
-    ghost_frame = .{};
-    ghost_seed = 0x5eed;
     last_seq = 0xffff_ffff;
     stick_idle = config.stick_timeout;
-    hand_idle = config.hand_timeout;
     punch_cool = 0;
     stick_hand = .{};
     has_sensor = false;
@@ -109,11 +99,9 @@ pub fn update(stick: Stick, now_us: u64) void {
         if (f.seq != last_seq) {
             last_seq = f.seq;
             sensor_pose = sensor_est.update(&f, sensor.histograms(), sensor.orientation);
-            if (sensor_pose.present) hand_idle = 0;
             frame = f;
         }
     }
-    if (!sensor_pose.present) hand_idle +|= 1;
     if (stick.active()) stick_idle = 0 else stick_idle +|= 1;
 
     const previous = source;
@@ -121,10 +109,10 @@ pub fn update(stick: Stick, now_us: u64) void {
         .sensor
     else if (stick_idle < config.stick_timeout)
         .stick
-    else if (has_sensor and hand_idle < config.hand_timeout)
+    else if (has_sensor)
         .sensor
     else
-        .ghost;
+        .none;
     if (source == .stick and previous != .stick) {
         // The stick picks up where the hand was.
         stick_hand = hand;
@@ -141,11 +129,9 @@ pub fn update(stick: Stick, now_us: u64) void {
             pose = .{};
             hand = stick_hand;
         },
-        .ghost => {
-            update_ghost();
-            pose = ghost_pose;
-            frame = ghost_frame;
-            from_pose(ghost_pose);
+        .none => {
+            pose = .{};
+            from_pose(pose);
         },
     }
 }
@@ -213,122 +199,28 @@ fn update_stick(s: Stick, dt: f32) void {
     if (h.punch) punch_cool = 8;
 }
 
-/// The ghost: a synthetic frame every other tick (30 Hz, like the sensor).
-fn update_ghost() void {
-    if (tick & 1 != 0) return;
-    const t = @as(f32, @floatFromInt(tick)) / 60.0;
-    var scene: synth.Scene = .{ .hand = ghost_hand(t) };
-    scene.background_mm = @splat(750);
-    ghost_frame.seq +%= 1;
-    ghost_frame.time_us = @as(u64, tick) * 16_667;
-    synth.render(&scene, .{}, &ghost_frame, null, &ghost_seed);
-    ghost_pose = ghost_est.update(&ghost_frame, null, .{});
-}
-
-/// Length of the ghost's routine (seconds).
-pub const ghost_loop: f32 = 16.0;
-
-/// The ghost's routine, in sensor millimetres: drift (jelly), approach
-/// (reach), circle with a turning, elongated hand (twist, yaw), wind up
-/// and punch (shockwave), then a big close hand rocking (tilt).
-pub fn ghost_hand(t: f32) synth.Hand {
-    const ph = t - ghost_loop * @floor(t / ghost_loop);
-    var h: synth.Hand = .{
-        .x_mm = 55.0 * math.sin_turns(0.23 * t),
-        .y_mm = 42.0 * math.sin_turns(0.31 * t + 0.15),
-        .z_mm = 300.0 + 40.0 * math.sin_turns(0.13 * t),
-        .half_w = 40,
-        .half_h = 85,
-    };
-    // Approach, 4 to 7.5 s.
-    const a = bump(ph, 4.0, 7.5);
-    h.z_mm += (115.0 - h.z_mm) * a;
-    h.x_mm *= 1.0 - 0.6 * a;
-    h.y_mm *= 1.0 - 0.6 * a;
-    // Circle, 7.5 to 11 s.
-    const c = plateau(ph, 7.5, 11.0, 0.5);
-    const ang = (ph - 7.5) / 1.4;
-    h.x_mm += (48.0 * math.cos_turns(ang) - h.x_mm) * c;
-    h.y_mm += (44.0 * math.sin_turns(ang) - h.y_mm) * c;
-    h.half_w += (22.0 - h.half_w) * c;
-    h.half_h += (105.0 - h.half_h) * c;
-    h.yaw = c * 0.9 * math.sin_turns((ph - 7.5) / 3.5);
-    // Wind up and punch, 11 to 12.8 s.
-    const p = plateau(ph, 11.0, 12.8, 0.3);
-    h.x_mm *= 1.0 - p;
-    h.y_mm *= 1.0 - p;
-    if (ph >= 11.0 and ph < 11.8) {
-        h.z_mm += (430.0 - h.z_mm) * math.smoothstep01((ph - 11.0) / 0.8);
-    } else if (ph >= 11.8 and ph < 12.0) {
-        h.z_mm = 430.0 + (120.0 - 430.0) * ((ph - 11.8) / 0.2);
-    } else if (ph >= 12.0 and ph < 12.8) {
-        h.z_mm = 120.0 + (h.z_mm - 120.0) * math.smoothstep01((ph - 12.0) / 0.8);
-    }
-    // A big hand rocking close to the sensor, 12.8 to 16 s.
-    const r = plateau(ph, 12.8, 16.0, 0.4);
-    const rk = (ph - 12.8) / 1.6;
-    h.z_mm += (170.0 - h.z_mm) * r;
-    h.half_w += (110.0 - h.half_w) * r;
-    h.half_h += (130.0 - h.half_h) * r;
-    h.pitch = r * 0.45 * math.sin_turns(rk);
-    h.roll = r * 0.45 * math.cos_turns(rk);
-    h.x_mm *= 1.0 - r;
-    h.y_mm *= 1.0 - r;
-    return h;
-}
-
-/// 0 outside [a, b], a smooth hump inside.
-fn bump(x: f32, a: f32, b: f32) f32 {
-    if (x <= a or x >= b) return 0;
-    const s = math.sin_turns((x - a) / (b - a) * 0.5);
-    return s * s;
-}
-
-/// 0 outside [a, b], 1 inside, with smooth ramps of `ramp` seconds.
-fn plateau(x: f32, a: f32, b: f32, ramp: f32) f32 {
-    if (x <= a or x >= b) return 0;
-    return math.smoothstep01((x - a) / ramp) * math.smoothstep01((b - x) / ramp);
-}
-
 // ---------------------------------------------------------------------------
 // Host tests.
 
-test "hand: the ghost drives the estimator through all its moves" {
+test "hand: with no sensor and no stick the hand rests" {
     math.init_tables();
     reset();
-    var saw_present = false;
-    var punches: u32 = 0;
-    var min_z: f32 = 1;
-    var max_z: f32 = 0;
-    var max_yaw: f32 = 0;
-    var max_pitch: f32 = 0;
-    var max_x: f32 = 0;
-    const ticks: u32 = @intFromFloat(ghost_loop * 60.0);
-    for (0..ticks) |i| {
+    const rest = hand;
+    for (0..60 * 20) |i| {
         update(.{}, @as(u64, i) * 16_667);
-        try std.testing.expectEqual(Source.ghost, source);
-        if (!pose.present) continue;
-        saw_present = true;
-        if (hand.punch) punches += 1;
-        min_z = @min(min_z, hand.z);
-        max_z = @max(max_z, hand.z);
-        max_yaw = @max(max_yaw, @abs(hand.yaw) * hand.conf_yaw);
-        max_pitch = @max(max_pitch, @abs(hand.pitch) * hand.conf_pitch);
-        max_x = @max(max_x, @abs(hand.x));
+        try std.testing.expectEqual(Source.none, source);
+        try std.testing.expect(!pose.present and !hand.punch);
+        try std.testing.expectEqual(rest.x, hand.x);
+        try std.testing.expectEqual(rest.y, hand.y);
+        try std.testing.expectEqual(rest.z, hand.z);
     }
-    try std.testing.expect(saw_present);
-    try std.testing.expectEqual(@as(u32, 1), punches);
-    try std.testing.expect(max_z > 0.85 and min_z < 0.45);
-    try std.testing.expect(max_yaw > 0.2);
-    try std.testing.expect(max_pitch > 0.2);
-    try std.testing.expect(max_x > 0.5);
 }
 
-test "hand: the stick takes over and hands back to the ghost" {
+test "hand: the stick takes over and lets go" {
     math.init_tables();
     reset();
     for (0..10) |i| update(.{}, @as(u64, i) * 16_667);
-    try std.testing.expectEqual(Source.ghost, source);
+    try std.testing.expectEqual(Source.none, source);
     for (0..30) |_| update(.{ .right = true }, 0);
     try std.testing.expectEqual(Source.stick, source);
     try std.testing.expect(hand.x > 0.3 and hand.vx > 0);
@@ -337,5 +229,5 @@ test "hand: the stick takes over and hands back to the ghost" {
     update(.{ .a_pressed = true }, 0);
     try std.testing.expect(hand.punch);
     for (0..config.stick_timeout) |_| update(.{}, 0);
-    try std.testing.expectEqual(Source.ghost, source);
+    try std.testing.expectEqual(Source.none, source);
 }

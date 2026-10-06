@@ -3,7 +3,7 @@
 //! (docs/TOF.md). See SPEC.md for the design, PLAN.md for the status.
 //!
 //! update(): buttons (app.zig: nothing while Start and Select are both
-//! held; joystick click never bound), the hand (sensor, stick or ghost:
+//! held; joystick click never bound), the hand (sensor or stick:
 //! hand.zig), the uniforms and field (uniforms.zig), the program into the
 //! 80x64 surface, the 2x upscale, the HUD, the sound.
 const std = @import("std");
@@ -134,7 +134,7 @@ fn debug_palette() callconv(.c) u32 {
 fn debug_param() callconv(.c) u32 {
     return app.param();
 }
-/// 0 ghost, 1 stick, 2 sensor.
+/// 0 none, 1 stick, 2 sensor.
 fn debug_source() callconv(.c) u32 {
     return @backingInt(hand.source);
 }

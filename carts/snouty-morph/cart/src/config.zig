@@ -107,7 +107,5 @@ pub const punch_cooldown = 30;
 pub const stick_speed: f32 = 1.3;
 pub const stick_z_speed: f32 = 0.9;
 pub const stick_yaw_speed: f32 = 2.6;
-/// Ticks without stick input before the ghost takes over again.
+/// Ticks without stick input before the stick lets go of the hand.
 pub const stick_timeout = 360;
-/// Ticks without a sensed hand before the ghost takes over.
-pub const hand_timeout = 120;

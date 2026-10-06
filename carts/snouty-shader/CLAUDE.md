@@ -11,9 +11,9 @@ and build notes.
 - `cart/src/main.zig`: `start()`, `update()`, debug exports, wasm shims.
 - `cart/src/app.zig`: buttons to actions (the Start+Select chord ignored,
   Start toggles sound on release), attract. Pure, host-tested.
-- `cart/src/hand.zig`: the hand and its 3x3 cells from the sensor, the
-  stick (B + stick) or the ghost (snouty-morph's routine through
-  tof_synth and the estimator); `sensor.zig` is the driver integration
+- `cart/src/hand.zig`: the hand and its 3x3 cells from the sensor or the
+  stick (B + stick); nothing else (no attract hand: Adrian removed it so
+  the sensor demos honestly). `sensor.zig` is the driver integration
   point (morph's, same orientation default).
 - `cart/src/uniforms.zig` (smoothing, punch, flash, palette kick) and
   `field.zig` (3x3 to 80x64 Catmull-Rom).

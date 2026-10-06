@@ -6,8 +6,8 @@ backdrop, follows your hand in six degrees of freedom and deforms with it.
 Bring your hand close and the surface reaches for it; whip it sideways and
 the mesh wobbles like jelly; turn or circle it and the mesh twists; punch
 toward the sensor and a shockwave ripples through the vertices with a
-palette flash. With no hand (or no sensor) a ghost hand flies the same
-pipeline, so the cart is never still. Binary `snouty-morph`.
+palette flash. With no hand in view (or no sensor) nothing fakes one: the
+mesh rests, so any motion on screen is a real hand. Binary `snouty-morph`.
 
 ## 1. What a 3x3 depth sensor can and cannot tell us
 
@@ -96,8 +96,7 @@ vy, vz_mm_s, vpitch, vroll, vyaw, swirl }`.
 `lib/tof_synth.zig` is the inverse: a hand (a tilted, rotated ellipse with
 centre, semi-axes, pitch/roll/yaw) over a per-zone background, rendered
 into a `Frame` (and optional `Histograms`) by casting an 8x8 ray bundle per
-zone. It is what the host tests check the estimator against, and the
-cart's ghost hand uses it too, so attract mode runs the real estimator.
+zone. It is what the host tests check the estimator against.
 
 ## 3. The cart
 
@@ -142,20 +141,22 @@ hand's yaw (x confidence) on top of a slow autonomous spin.
 
 ### Sources and controls
 
-- **HAND** (sensor present and a hand seen): the pose drives everything;
-  a 3x3 mini map bottom-right shows the zones (coverage as brightness).
+- **SENSOR** (sensor present): a seen hand's pose drives everything; with
+  no hand in view the mesh rests. A 3x3 mini map top-right shows the zones
+  (coverage as brightness).
 - **STICK**: the joystick moves the virtual hand (x/y); B + stick: up/down
   pushes/pulls (z), left/right yaws. Tilt leans into stick motion. A
-  punches. Stick input takes over at once and hands back 6 s after the
-  last input.
-- **GHOST** (attract, the default): a scripted Lissajous hand (drift,
-  approach, circle, punch) rendered into synthetic sensor frames by
-  tof_synth and run through the real estimator; its mini map is shown too.
+  punches. Stick input takes over at once and lets go 6 s after the last
+  input.
+- **NO SENSOR**: no breakout and no stick input; the mesh rests. (M0-M1
+  had a GHOST attract hand here and whenever no hand was in view; removed
+  2026-10-06, Adrian: it made the sensor hard to demo.)
 - Start: next mesh. Select: sound on/off (boots off unless `-Dsound=true`,
   a toast says which). Nothing reacts while Start and Select are both held
   (the OS chord). Joystick click is never bound.
-- The source is shown bottom-left (HAND / STICK / GHOST), the mesh name as
-  a toast on change; a greetings scroller runs along the bottom in GHOST.
+- The source is shown top-left (SENSOR / STICK / NO SENSOR), the mesh name
+  as a toast on change; a greetings scroller runs along the bottom while
+  no hand is in view.
 
 ### Sound (optional, off at boot)
 
