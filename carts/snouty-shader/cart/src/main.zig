@@ -30,6 +30,9 @@ comptime {
 /// badge-bench can `--poke start_program=N` before start(); the wasm build
 /// has debug_set_program for the same.
 var start_program: u8 = 0;
+/// ZONES at start for badge-bench (`--poke start_zones=N`): 0 the default
+/// (GRID), 1 GRID, 2 STRIPES. The wasm build has debug_set_zones.
+var start_zones: u8 = 0;
 
 var surf: surface.Surface = undefined;
 var frame: u32 = 0;
@@ -46,7 +49,13 @@ pub fn start() void {
     hand.reset();
     uniforms.reset();
     app.reset(start_program, sound.enabled);
+    if (start_zones == 2) set_zones(.stripes);
     programs.list[app.program].enter();
+}
+
+fn set_zones(l: @import("tof").types.Layout) void {
+    app.zones = l;
+    hand.set_layout(l);
 }
 
 pub fn update() void {
@@ -63,6 +72,7 @@ pub fn update() void {
     }, hand.sensed());
     if (out.sound_changed) sound.set(app.sound);
     if (out.mirror_changed) hand.set_mirror(app.mirror);
+    if (out.zones_changed) hand.set_layout(app.zones);
     if (out.program_changed) {
         programs.list[app.program].enter();
         sound.blip(app.program);
@@ -112,8 +122,11 @@ comptime {
         @export(&debug_pixel_checksum, .{ .name = "debug_pixel_checksum" });
         @export(&debug_sound, .{ .name = "debug_sound" });
         @export(&debug_hud, .{ .name = "debug_hud" });
+        @export(&debug_zones, .{ .name = "debug_zones" });
+        @export(&debug_set_zones, .{ .name = "debug_set_zones" });
     } else {
         @export(&start_program, .{ .name = "start_program" });
+        @export(&start_zones, .{ .name = "start_zones" });
     }
 }
 
@@ -159,6 +172,14 @@ fn debug_sound() callconv(.c) u32 {
 }
 fn debug_hud() callconv(.c) u32 {
     return @intFromBool(app.hud);
+}
+/// ZONES: 1 GRID, 2 STRIPES.
+fn debug_zones() callconv(.c) u32 {
+    return if (app.zones == .stripes) 2 else 1;
+}
+fn debug_set_zones(n: u32) callconv(.c) u32 {
+    set_zones(if (n == 2) .stripes else .grid);
+    return debug_zones();
 }
 /// Sum of all framebuffer words of the last frame, for regression checks.
 fn debug_pixel_checksum() callconv(.c) u32 {

@@ -1,8 +1,9 @@
 //! What sits on top of the shader (SPEC.md section 3): toasts (program
 //! name, palette, parameter, sound) and, while B is held, the inputs panel
 //! in the manner of Shadertoy's: program and palette, the source, the 3x3
-//! field as a grid (presence as brightness, nearness as warmth) and the
-//! pose numbers, over a darkened strip of the image.
+//! field as a grid (STRIPES: eight bars; presence as brightness, nearness
+//! as warmth), the pose numbers and the ZONES layout, over a darkened
+//! strip of the image.
 const std = @import("std");
 const cart = @import("cart-api");
 const app = @import("app.zig");
@@ -12,6 +13,7 @@ const programs = @import("programs.zig");
 const surface = @import("surface.zig");
 const text = @import("text.zig");
 const U = @import("uniforms.zig").U;
+const zones = @import("tof").zones;
 
 const source_name = [_][]const u8{ "NO SENSOR", "STICK", "SENSOR" };
 const source_rgb = [_]u32{ 0x9090a8, 0xffd850, 0x60ff90 };
@@ -42,6 +44,10 @@ pub fn draw(u: *const U) void {
         .mirror => {
             const s: []const u8 = if (app.mirror) "MIRROR ON" else "MIRROR OFF";
             text.shadowed(s, text.centre_x(s, 1), 116, .rgb(0x60ff90), 1);
+        },
+        .zones => {
+            const s: []const u8 = if (app.zones == .stripes) "ZONES STRIPES" else "ZONES GRID";
+            text.shadowed(s, text.centre_x(s, 1), 116, .rgb(0x80d0ff), 1);
         },
         .sound => {
             const s: []const u8 = if (app.sound) "SOUND ON" else "SOUND OFF";
@@ -80,11 +86,15 @@ fn panel(u: *const U) void {
     const sname = source_name[src];
     text.condensed(sname, 160 - 2 - @as(i32, @intCast(sname.len)) * 7, 2, .rgb(source_rgb[src]));
 
-    // The field grid, bottom-left: 3x3 cells of 11 px.
+    // The field grid, bottom-left: 3x3 cells of 11 px, or (STRIPES) eight
+    // full-height bars of 3 px every 4 px over the same 35 px square.
     const cell = 11;
     const gx: i32 = 3;
     const gy: i32 = 88;
-    for (0..9) |ci| {
+    const span = 3 * (cell + 1) - 1;
+    const stripes = u.layout == .stripes;
+    const n: usize = if (stripes) 8 else 9;
+    for (0..n) |ci| {
         const pres = u.presence[ci];
         const near = u.near[ci];
         const cold: palette.Rgb = .{ 0.2, 0.4, 1.0 };
@@ -92,19 +102,31 @@ fn panel(u: *const U) void {
         var c: palette.Rgb = undefined;
         for (0..3) |k| c[k] = (cold[k] + (hot[k] - cold[k]) * near) * (0.12 + 0.88 * pres);
         const bits = surface.unspread(palette.pack(c, 1, 0));
-        cart.rect(.{
-            .x = gx + @as(i32, @intCast(ci % 3)) * (cell + 1),
-            .y = gy + @as(i32, @intCast(ci / 3)) * (cell + 1),
-            .width = cell,
-            .height = cell,
-            .fill_color = @bitCast(bits),
-        });
+        if (stripes) {
+            cart.rect(.{ .x = gx + 1 + @as(i32, @intCast(ci)) * 4, .y = gy, .width = 3, .height = span, .fill_color = @bitCast(bits) });
+        } else {
+            cart.rect(.{
+                .x = gx + @as(i32, @intCast(ci % 3)) * (cell + 1),
+                .y = gy + @as(i32, @intCast(ci / 3)) * (cell + 1),
+                .width = cell,
+                .height = cell,
+                .fill_color = @bitCast(bits),
+            });
+        }
     }
-    // The hand's spot on the grid.
+    // The hand's spot on the grid (STRIPES: across the bars, mid-height).
     const hd = u.hand;
     if (hd.present) {
-        const px = gx + @as(i32, @intFromFloat(std.math.clamp((hd.x + 1.5) / 3.0, 0, 1) * (3 * (cell + 1) - 1)));
-        const py = gy + @as(i32, @intFromFloat(std.math.clamp((1.5 - hd.y) / 3.0, 0, 1) * (3 * (cell + 1) - 1)));
+        var px: i32 = undefined;
+        var py: i32 = undefined;
+        if (stripes) {
+            const col = stripe_geom.col_at(hd.x);
+            px = gx + 2 + @as(i32, @intFromFloat(col * 4.0));
+            py = gy + span / 2;
+        } else {
+            px = gx + @as(i32, @intFromFloat(std.math.clamp((hd.x + 1.5) / 3.0, 0, 1) * span));
+            py = gy + @as(i32, @intFromFloat(std.math.clamp((1.5 - hd.y) / 3.0, 0, 1) * span));
+        }
         cart.rect(.{ .x = px - 1, .y = py - 1, .width = 3, .height = 3, .fill_color = .rgb(0xffffff) });
     }
 
@@ -115,13 +137,26 @@ fn panel(u: *const U) void {
     text.condensed(&line, tx, 87, .rgb(0xe0e0f0));
     fill(&line, "Z", hd.z, 2, "E", u.energy, 1);
     text.condensed(&line, tx, 97, .rgb(0xe0e0f0));
-    angles(&line, hd.pitch, hd.roll, hd.yaw);
+    if (stripes) {
+        // STRIPES measures roll only: the layout's name where pitch and yaw were.
+        stripes_line(&line, hd.roll);
+    } else angles(&line, hd.pitch, hd.roll, hd.yaw);
     text.condensed(&line, tx, 107, .rgb(0xb0d0ff));
     var buf: [24]u8 = undefined;
     const pl = param_line(&buf, pr.param_name, app.param());
     text.condensed(pl, tx, 117, .rgb(0xffd850));
     if (u.punch_age < 40) text.condensed("PUNCH", 160 - 2 - 5 * 7, 117, .rgb(0xff6060)) else if (app.mirror) text.condensed("MIRR", 160 - 2 - 4 * 7, 117, .rgb(0x60ff90));
 }
+
+/// STRIPES geometry for the panel's hand spot (MIRROR does not move the
+/// stripes' centres: they are symmetric). Built once.
+var stripe_geom_v: ?zones.Geometry = null;
+const stripe_geom = struct {
+    fn col_at(x: f32) f32 {
+        if (stripe_geom_v == null) stripe_geom_v = zones.Geometry.init(.stripes, .{}, 33, 32);
+        return stripe_geom_v.?.col_at(x);
+    }
+};
 
 /// "Xs0.00 Ys0.00" style: two labelled signed values, space-padded.
 fn fill(out: *[16]u8, la: []const u8, a: f32, da: u32, lb: []const u8, b: f32, db: u32) void {
@@ -150,6 +185,15 @@ fn angles(out: *[16]u8, pitch: f32, roll: f32, yaw: f32) void {
         out[i + 2] = '0' + @as(u8, @intCast(m % 10));
         i += 4;
     }
+}
+
+/// "R+12 STRIPES": roll in degrees and the layout.
+fn stripes_line(out: *[16]u8, roll: f32) void {
+    angles(out, 0, roll, 0);
+    // angles() wrote "P+00 R+.. W+00": keep "R+.." first, then the name.
+    @memcpy(out[0..4], out[5..9]);
+    @memset(out[4..], ' ');
+    @memcpy(out[5..12], "STRIPES");
 }
 
 fn put_label(out: []u8, i: usize, l: []const u8) usize {

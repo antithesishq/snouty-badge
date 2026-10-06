@@ -20,6 +20,21 @@ runs on its own clock, so any reaction on screen is a real hand.
   upsample turns the 3x3 values into a smooth 80x64 field `F` (0..255).
 - **The pose.** lib/tof_pose: x, y (-1..1, +-1 at the outer cell
   centres), z (0 far .. 1 near), pitch, roll, yaw, velocities, swirl.
+- **ZONES (docs/TOF.md M5).** GRID (default) is the 3x3 normal map
+  above. STRIPES asks the sensor for its 8 full-height stripes (the
+  user SPAD mask): finer side to side, no vertical axis. The field then
+  holds eight stripe values (presence, and nearness from the pose's
+  perpendicular `depth_mm`), placed at the stripes' true angles (the
+  outer stripe centres where the pose's x = +-1 maps, 33.3 px from the
+  centre instead of GRID's 26.7, since the stripes span 43 deg), a
+  Catmull-Rom spline across them and each column's value down the whole
+  height. The pose's y is 0 and its pitch and yaw confidence 0, so y
+  effects sit mid-height and only roll turns anything; RIPPLE's zone
+  emitters become eight across the middle row. The pose itself rejects
+  the arm (lib/tof_pose: the near cluster gives x, the hand body z and
+  tilt) in both layouts. Every frame is read by the layout it was
+  measured with; switching resets the estimator and fades the field from
+  dark.
 - **Events.** A punch (fast z velocity toward the sensor) sets the punch
   point and age, a white flash (decays over ~0.4 s) and a palette kick
   (+1/3 turn of the cosine palette, eased in).
@@ -77,16 +92,19 @@ free per pixel.
 | B (hold) | inputs panel: program, palette, parameter, source, the 3x3 field as a grid, pose numbers |
 | B + stick | steer the virtual hand (STICK source) |
 | B + A | punch with the virtual hand |
-| Select (on release) | MIRROR: flip the sensor's left-right (the breakout dangles on its cable) |
+| Select (tap, on release) | MIRROR: flip the sensor's left-right (the breakout dangles on its cable) |
+| Select (hold 1 s) | ZONES: GRID / STRIPES (toast; the panel's grid becomes eight bars and its angle line reads `R.. STRIPES`); the release then does nothing |
 | Start (on release) | sound on / off (boots off) |
 | Start + Select | the OS's; the cart ignores every button while both are held |
 
 Never the joystick click. Start and Select act on release, and only if
 the other was not pressed during the hold, so the exit chord never
-toggles anything. Lateral effects come from the pose's coverage-weighted
+toggles anything. A Select hold had no meaning (Select acts on
+release), so ZONES displaces nothing; holding Select also never toggles
+ZONES while Start is held. Lateral effects come from the pose's coverage-weighted
 centroid and the smooth field, never from the nearest zone (which jumps
 between fingertips, knuckles and forearm over a flat hand), and they are
-broad: the 8820 has three zones across.
+broad in GRID: the 8820 has three zones across (eight in STRIPES).
 
 Attract: no sensed hand and no button for 30 s advances to the next
 program (and again every 30 s); any button or a sensed hand resets it.

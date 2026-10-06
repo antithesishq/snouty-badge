@@ -42,3 +42,6 @@ pub const param_max = 8;
 pub const param_default = 4;
 /// Toast lifetime (ticks).
 pub const toast_ticks = 100;
+/// Select held this long toggles ZONES (GRID / STRIPES); a shorter press
+/// is MIRROR on release.
+pub const zones_hold_ticks = 60;

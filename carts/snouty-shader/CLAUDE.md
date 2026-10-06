@@ -10,13 +10,16 @@ and build notes.
 
 - `cart/src/main.zig`: `start()`, `update()`, debug exports, wasm shims.
 - `cart/src/app.zig`: buttons to actions (the Start+Select chord ignored,
-  Start toggles sound on release), attract. Pure, host-tested.
-- `cart/src/hand.zig`: the hand and its 3x3 cells from the sensor or the
+  Start toggles sound on release, Select MIRROR on release, Select held
+  1 s ZONES), attract. Pure, host-tested.
+- `cart/src/hand.zig`: the hand and its cells (3x3 GRID, or 8 STRIPES:
+  docs/TOF.md M5, `hand.layout`, `Cells.layout`) from the sensor or the
   stick (B + stick); nothing else (no attract hand: Adrian removed it so
   the sensor demos honestly). `sensor.zig` is the driver integration
   point (morph's, same orientation default).
 - `cart/src/uniforms.zig` (smoothing, punch, flash, palette kick) and
-  `field.zig` (3x3 to 80x64 Catmull-Rom).
+  `field.zig` (3x3 to 80x64 Catmull-Rom; STRIPES: 8 stripes across, each
+  column constant down the height).
 - `cart/src/programs.zig` + `programs/*.zig`: INK, RIPPLE, LAVA, ECHO,
   CELLS, KALEIDO; each has `init` (tables at start), `enter`, `render`
   into the 80x64 `surface.zig` (spread RGB565, bilinear 2x upscale).
@@ -36,6 +39,8 @@ and build notes.
 - Sound boots off (`-Dsound=true` flips it); badge builds never call
   `cart.tone2` (lib/tone_stream.zig). Never write `cart.neopixels`.
 - Never bind the stick click; nothing reacts while Start+Select are held.
+- Read the sensor's cells by their layout (`frame.layout`, `Pose.layout`,
+  `Cells.layout`): STRIPES fills entries 0..7 of the nine left to right.
 
 ## Commands (repository root)
 

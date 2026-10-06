@@ -6,6 +6,10 @@
 //! - Start toggles sound on release, and only if Select never joined the
 //!   hold (so the exit chord never flips the sound); Select toggles MIRROR
 //!   (the sensor's left-right) the same way.
+//! - Select held for `config.zones_hold_ticks` (1 s) toggles ZONES (GRID /
+//!   STRIPES, docs/TOF.md M5) the moment the hold reaches it, and its
+//!   release then toggles nothing: a tap is still MIRROR. Every button was
+//!   taken, and Select acts on release, so a long hold had no meaning.
 //! - B held: the inputs panel, and the stick steers the virtual hand (B + A
 //!   punches). Otherwise Left/Right pick the program, Up/Down its
 //!   parameter, A its palette.
@@ -16,6 +20,7 @@ const config = @import("config.zig");
 const hand = @import("hand.zig");
 const palette = @import("palette.zig");
 const programs = @import("programs.zig");
+const Layout = @import("tof").types.Layout;
 
 pub const Buttons = struct {
     start: bool = false,
@@ -32,7 +37,7 @@ pub const Buttons = struct {
     }
 };
 
-pub const Toast = enum { none, program, palette, param, sound, mirror };
+pub const Toast = enum { none, program, palette, param, sound, mirror, zones };
 
 pub const Out = struct {
     stick: hand.Stick = .{},
@@ -40,6 +45,7 @@ pub const Out = struct {
     program_changed: bool = false,
     sound_changed: bool = false,
     mirror_changed: bool = false,
+    zones_changed: bool = false,
     attract_advanced: bool = false,
 };
 
@@ -50,6 +56,9 @@ pub var sound: bool = false;
 /// The sensor image is mirrored left-right from the default orientation
 /// (the breakout dangles on its cable and can face either way).
 pub var mirror: bool = false;
+/// ZONES: the sensor's zone layout (GRID default: the shader uses the
+/// vertical axis; STRIPES is finer side to side, with no vertical axis).
+pub var zones: Layout = .grid;
 pub var hud: bool = false;
 pub var idle: u32 = 0;
 pub var toast: Toast = .none;
@@ -60,6 +69,7 @@ var start_held = false;
 var start_spoiled = false;
 var select_held = false;
 var select_spoiled = false;
+var select_ticks: u32 = 0;
 
 pub fn reset(first: u8, sound_on: bool) void {
     program = @intCast(first % programs.count);
@@ -74,8 +84,10 @@ pub fn reset(first: u8, sound_on: bool) void {
     start_held = false;
     start_spoiled = false;
     mirror = false;
+    zones = .grid;
     select_held = false;
     select_spoiled = false;
+    select_ticks = 0;
 }
 
 pub fn param() u8 {
@@ -128,6 +140,17 @@ pub fn step(btn: Buttons, sensed: bool) Out {
     if (btn.select and !prev.select) {
         select_held = true;
         select_spoiled = btn.start;
+        select_ticks = 0;
+    }
+    // A long hold: ZONES, and the release is spent.
+    if (btn.select and select_held and !select_spoiled) {
+        select_ticks += 1;
+        if (select_ticks >= config.zones_hold_ticks) {
+            select_spoiled = true;
+            zones = if (zones == .grid) .stripes else .grid;
+            out.zones_changed = true;
+            show(.zones);
+        }
     }
     if (!btn.select and prev.select and select_held) {
         select_held = false;
@@ -261,6 +284,51 @@ test "app: Select toggles mirror on release, never through the chord" {
     try testing.expect(!sound);
     _ = tap(.{ .select = true });
     try testing.expect(!mirror);
+}
+
+test "app: holding Select 1 s toggles ZONES, not MIRROR; a tap is still MIRROR" {
+    reset(0, false);
+    try testing.expectEqual(Layout.grid, zones);
+    var changed: u32 = 0;
+    for (0..config.zones_hold_ticks - 1) |_| {
+        if (step(.{ .select = true }, false).zones_changed) changed += 1;
+    }
+    try testing.expectEqual(@as(u32, 0), changed);
+    try testing.expect(step(.{ .select = true }, false).zones_changed);
+    try testing.expectEqual(Layout.stripes, zones);
+    try testing.expectEqual(Toast.zones, toast);
+    // Holding on does not toggle again; the release toggles nothing.
+    for (0..200) |_| try testing.expect(!step(.{ .select = true }, false).zones_changed);
+    const o = step(.{}, false);
+    try testing.expect(!o.mirror_changed and !o.zones_changed);
+    try testing.expect(!mirror);
+    try testing.expectEqual(Layout.stripes, zones);
+    // A tap (well under the hold) is MIRROR and leaves ZONES.
+    for (0..20) |_| _ = step(.{ .select = true }, false);
+    try testing.expect(step(.{}, false).mirror_changed);
+    try testing.expect(mirror);
+    try testing.expectEqual(Layout.stripes, zones);
+    // A second hold goes back to GRID.
+    for (0..config.zones_hold_ticks) |_| _ = step(.{ .select = true }, false);
+    _ = step(.{}, false);
+    try testing.expectEqual(Layout.grid, zones);
+    try testing.expect(mirror);
+}
+
+test "app: the Start+Select chord never toggles ZONES, however long" {
+    reset(0, false);
+    _ = step(.{ .select = true }, false);
+    for (0..config.zones_hold_ticks * 3) |_| try testing.expect(!step(.{ .start = true, .select = true }, false).zones_changed);
+    // Start released first, Select still held: spoiled, still nothing.
+    for (0..config.zones_hold_ticks * 2) |_| try testing.expect(!step(.{ .select = true }, false).zones_changed);
+    _ = step(.{}, false);
+    try testing.expectEqual(Layout.grid, zones);
+    try testing.expect(!mirror and !sound);
+    // Start held first, then Select joins and stays: nothing either.
+    _ = step(.{ .start = true }, false);
+    for (0..config.zones_hold_ticks * 2) |_| try testing.expect(!step(.{ .start = true, .select = true }, false).zones_changed);
+    _ = step(.{}, false);
+    try testing.expectEqual(Layout.grid, zones);
 }
 
 test "app: Start toggles sound on release" {

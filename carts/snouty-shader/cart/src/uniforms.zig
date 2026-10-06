@@ -7,13 +7,17 @@ const config = @import("config.zig");
 const field = @import("field.zig");
 const hand_mod = @import("hand.zig");
 const math = @import("math.zig");
+const Layout = @import("tof").types.Layout;
 
 pub const U = struct {
     /// Ticks since start (1/60 s) and the same in seconds (wraps hourly).
     tick: u32 = 0,
     t: f32 = 0,
     hand: hand_mod.Hand = .{},
-    /// The hand in surface pixels (80x64; the outer cell centres at +-1).
+    /// The layout of `cells` (GRID: 3x3 row-major; STRIPES: entries 0..7
+    /// left to right, each the full height, the ninth unused).
+    layout: Layout = .grid,
+    /// The hand in surface pixels (80x64; the outer zone centres at +-1).
     hx: f32 = 40,
     hy: f32 = 32,
     /// Smoothed cell values (row-major, row 0 top), their sum / 9, and
@@ -44,9 +48,11 @@ pub fn reset() void {
     field.f = @splat(@splat(0));
 }
 
-/// Surface x, y of a hand position.
-pub fn to_surface(x: f32, y: f32) [2]f32 {
-    return .{ 40.0 + x * 26.67, 32.0 - y * 21.33 };
+/// Surface x, y of a hand position: x = +-1 at the outer zones' centres,
+/// where the field puts them (GRID's cells, or STRIPES' wider span).
+pub fn to_surface(x: f32, y: f32, layout: Layout) [2]f32 {
+    const sx: f32 = if (layout == .stripes) field.stripe_scale else 26.67;
+    return .{ 40.0 + x * sx, 32.0 - y * 21.33 };
 }
 
 /// One tick, after hand.update.
@@ -56,11 +62,18 @@ pub fn update(param: u8) void {
     u.t = @as(f32, @floatFromInt(u.tick % (60 * 3600))) / 60.0;
     u.hand = hd;
     u.param = param;
-    const s = to_surface(hd.x, hd.y);
+    const c = &hand_mod.cells;
+    if (c.layout != u.layout) {
+        // ZONES switched: the old cells mean other places; start from dark.
+        u.layout = c.layout;
+        u.cells = @splat(0);
+        u.presence = @splat(0);
+        u.near = @splat(0);
+    }
+    const s = to_surface(hd.x, hd.y, u.layout);
     u.hx = s[0];
     u.hy = s[1];
 
-    const c = &hand_mod.cells;
     var total: f32 = 0;
     for (0..9) |i| {
         u.presence[i] += (c.presence[i] - u.presence[i]) * config.field_glide;
@@ -69,8 +82,8 @@ pub fn update(param: u8) void {
         u.cells[i] += (target - u.cells[i]) * config.field_glide;
         total += u.cells[i];
     }
-    u.total = total / 9.0;
-    field.build(&u.cells);
+    u.total = total / if (u.layout == .stripes) @as(f32, 8.0) else 9.0;
+    field.build(&u.cells, u.layout);
 
     const speed = @abs(hd.vx) + @abs(hd.vy) + @abs(hd.vz);
     u.energy += (math.clampf(speed, 0, 8) - u.energy) * 0.1;
@@ -113,4 +126,30 @@ test "uniforms: punch fires the flash and kicks the palette; cells glide" {
     try t.expectEqual(@as(f32, 0), u.flash);
     try t.expectApproxEqAbs(config.kick_turns, u.kick, 0.01);
     try t.expectEqual(@as(u32, 60), u.punch_age);
+}
+
+test "uniforms: a STRIPES hand on the right lights the right of the field top to bottom" {
+    const t = std.testing;
+    math.init_tables();
+    field.init();
+    hand_mod.reset();
+    reset();
+    hand_mod.cells = .{ .layout = .stripes };
+    hand_mod.cells.presence[6] = 1;
+    hand_mod.cells.near[6] = 1;
+    hand_mod.hand = .{ .present = true, .x = 0.6 };
+    for (0..30) |_| update(4);
+    try t.expectEqual(Layout.stripes, u.layout);
+    const sx: usize = @intFromFloat(@round(field.stripe_x[6]));
+    try t.expect(field.f[sx][0] > 240 and field.f[sx][63] > 240);
+    try t.expectEqual(@as(u8, 0), field.f[10][32]);
+    // The hand spot sits on the lit stripes, mid-height.
+    try t.expect(@abs(u.hx - field.stripe_x[6]) < 6);
+    try t.expectEqual(@as(f32, 32), u.hy);
+    // Back to GRID: the stripe values are dropped, not reread as cells.
+    hand_mod.cells = .{};
+    update(4);
+    try t.expectEqual(Layout.grid, u.layout);
+    try t.expectEqual(@as(f32, 0), u.cells[6]);
+    hand_mod.reset();
 }

@@ -11,6 +11,12 @@
 //! 2026-10-06: a scripted attract hand made the sensor hard to demo).
 //! Besides the pose, each source gives the per-cell presence and nearness
 //! (`cells`) that become the field. No cart API here (host-tested).
+//!
+//! ZONES (docs/TOF.md M5): GRID (the 3x3 normal map) or STRIPES (8
+//! full-height stripes, finer side to side, no vertical axis). `layout` is
+//! what the sensor is asked for; every frame is read by the pose with its
+//! own `frame.layout` (frames in flight around a switch are ignored), and
+//! `Cells.layout` tells the field which kind of cells it holds.
 const std = @import("std");
 const tof_pose = @import("tof").pose;
 const config = @import("config.zig");
@@ -41,8 +47,10 @@ pub const Hand = struct {
     punch: bool = false,
 };
 
-/// Per screen cell (row-major, row 0 top): presence 0..1 and nearness 0..1.
+/// Per screen cell (row-major, row 0 top; STRIPES: entries 0..7 left to
+/// right): presence 0..1 and nearness 0..1.
 pub const Cells = struct {
+    layout: types.Layout = .grid,
     presence: [types.zones]f32 = @splat(0),
     near: [types.zones]f32 = @splat(0),
 };
@@ -68,6 +76,8 @@ pub var cells: Cells = .{};
 /// The pose behind the hand (the sensor's; zeroed otherwise).
 pub var pose: tof_pose.Pose = .{};
 pub var has_sensor = false;
+/// ZONES: the layout asked of the sensor (and the stick hand's field).
+pub var layout: types.Layout = .grid;
 
 var tick: u32 = 0;
 var sensor_est: tof_pose.Estimator = .{};
@@ -94,15 +104,30 @@ pub fn reset() void {
     stick_hand = .{};
     stick_cells = .{};
     has_sensor = false;
+    layout = .grid;
 }
 
-/// MIRROR: flip the sensor's left-right. The estimator's background is
-/// per screen cell, so it starts afresh (it relearns within a few frames).
+/// MIRROR: flip the sensor's left-right. The estimator starts afresh (its
+/// filters would otherwise glide across the screen); it keeps its layout.
 pub fn set_mirror(on: bool) void {
     sensor.set_mirror(on);
+    fresh_estimator();
+}
+
+/// ZONES: ask the sensor for `l` (stop, SPAD page, start: a few frames)
+/// and read that layout from now on; everything learned starts afresh.
+pub fn set_layout(l: types.Layout) void {
+    layout = l;
+    sensor.set_layout(l);
+    fresh_estimator();
+    stick_cells = .{ .layout = l };
+}
+
+fn fresh_estimator() void {
     sensor_est = .{};
+    sensor_est.set_layout(layout);
     sensor_pose = .{};
-    sensor_cells = .{};
+    sensor_cells = .{ .layout = layout };
     last_seq = 0xffff_ffff;
 }
 
@@ -122,7 +147,7 @@ pub fn update(stick: Stick, now_us: u64) void {
         if (f.seq != last_seq) {
             last_seq = f.seq;
             sensor_pose = sensor_est.update(&f, sensor.histograms(), sensor.orientation);
-            sensor_cells = cells_from(&sensor_pose, &f, sensor.orientation);
+            sensor_cells = cells_from(&sensor_pose);
         }
     }
     if (stick.active()) stick_idle = 0 else if (!stick.steer or stick_idle >= config.stick_timeout) {
@@ -166,16 +191,17 @@ pub fn update(stick: Stick, now_us: u64) void {
 }
 
 /// Presence (the estimator's background-subtracted coverage) and nearness
-/// (the zone's distance) per screen cell; empty unless the estimator
-/// reports a hand (a one-frame stray reading it rejects lights nothing).
-pub fn cells_from(p: *const tof_pose.Pose, f: *const types.Frame, orient: types.Orientation) Cells {
-    var out: Cells = .{};
+/// (the zone's perpendicular height) per screen cell, in the pose's layout;
+/// empty unless the estimator reports a hand (a one-frame stray reading it
+/// rejects lights nothing).
+pub fn cells_from(p: *const tof_pose.Pose) Cells {
+    var out: Cells = .{ .layout = p.layout };
     if (!p.present) return out;
-    for (0..types.zones) |ci| {
+    const n = @as(usize, p.cols) * p.rows;
+    for (0..n) |ci| {
         const cov = p.coverage[ci];
-        if (cov <= 0) continue;
-        const zi = orient.index(@intCast(ci % 3), @intCast(ci / 3));
-        const mm: f32 = @floatFromInt(f.zones[zi].near.mm);
+        const mm = p.depth_mm[ci];
+        if (cov <= 0 or mm <= 0) continue;
         out.presence[ci] = math.clamp01(cov);
         out.near[ci] = nearness(mm);
     }
@@ -247,23 +273,27 @@ fn update_stick(s: Stick) void {
 }
 
 /// Per-cell coverage and nearness of a 90 x 150 mm hand at the stick hand's
-/// position (x, y = +-1 at the outer cell centres).
+/// position (x, y = +-1 at the outer zone centres) in the current layout.
 pub fn stick_field(hh: Hand) Cells {
     const z_mm = config.far_mm - hh.z * (config.far_mm - config.near_mm);
-    // The outer cell centres are 11 degrees off axis (33 / 3).
-    const lateral = z_mm * 0.194;
-    const scene: synth.Scene = .{ .hand = .{
-        .x_mm = hh.x * lateral,
-        .y_mm = hh.y * lateral,
+    var scene: synth.Scene = .{ .layout = layout, .hand = .{
+        .x_mm = 0,
+        .y_mm = 0,
         .z_mm = z_mm,
         .half_w = 45,
         .half_h = 75,
         .roll = hh.roll,
         .pitch = hh.pitch,
     } };
-    var out: Cells = .{};
-    for (0..types.zones) |ci| {
-        const hit = synth.cell_hit(&scene, @intCast(ci % 3), @intCast(ci / 3));
+    const g = synth.geometry(&scene, .{});
+    // The outer zone centres: 11 deg off axis for GRID (33 / 3), 18 deg
+    // for STRIPES. STRIPES has no y: the hand stays mid-height.
+    scene.hand.?.x_mm = hh.x * z_mm * g.half_x;
+    // (GRID's y keeps M3's x scale: its rows are 10.7 deg, close enough.)
+    if (g.has_y) scene.hand.?.y_mm = hh.y * z_mm * g.half_x;
+    var out: Cells = .{ .layout = layout };
+    for (0..g.n) |ci| {
+        const hit = synth.zone_hit(&scene, &g.zones[ci], 0);
         if (hit.fraction < synth.min_fraction) continue;
         out.presence[ci] = hit.fraction;
         out.near[ci] = nearness(hit.mm);
@@ -290,11 +320,67 @@ test "hand: a frame the estimator does not call a hand lights no cell" {
     var p: tof_pose.Pose = .{};
     p.coverage = @splat(0);
     p.coverage[4] = 1;
-    var f: types.Frame = .{};
-    f.zones[4].near = .{ .mm = 200, .confidence = 200 };
-    try std.testing.expectEqual(@as(f32, 0), cells_from(&p, &f, .{}).presence[4]);
+    p.depth_mm[4] = 200;
+    try std.testing.expectEqual(@as(f32, 0), cells_from(&p).presence[4]);
     p.present = true;
-    try std.testing.expectEqual(@as(f32, 1), cells_from(&p, &f, .{}).presence[4]);
+    const c = cells_from(&p);
+    try std.testing.expectEqual(@as(f32, 1), c.presence[4]);
+    try std.testing.expectApproxEqAbs(nearness(200), c.near[4], 1e-6);
+    // Coverage without a height (a frame too weak to measure) lights nothing.
+    p.depth_mm[4] = 0;
+    try std.testing.expectEqual(@as(f32, 0), cells_from(&p).presence[4]);
+}
+
+/// Runs `n` synthetic frames of `scene` through a fresh estimator in
+/// `l` and returns the cells.
+fn synth_cells(l: types.Layout, scene: *const synth.Scene, n: u32) Cells {
+    var est: tof_pose.Estimator = .{};
+    est.set_layout(l);
+    var seed: u32 = 7;
+    var p: tof_pose.Pose = .{};
+    for (0..n) |i| {
+        var f: types.Frame = .{ .seq = @intCast(i), .time_us = 1_000_000 + @as(u64, i) * 33_333 };
+        synth.render(scene, sensor.default_orientation, &f, null, &seed);
+        p = est.update(&f, null, sensor.default_orientation);
+    }
+    return cells_from(&p);
+}
+
+test "hand: STRIPES cells follow a hand on one side, GRID frames are ignored" {
+    var scene: synth.Scene = .{ .layout = .stripes, .hand = .{ .x_mm = 60, .y_mm = 40, .z_mm = 220, .half_w = 30, .half_h = 60 } };
+    scene.background_mm = @splat(1200);
+    const c = synth_cells(.stripes, &scene, 10);
+    try std.testing.expectEqual(types.Layout.stripes, c.layout);
+    // Right half lit, left half dark, nothing past the eighth entry.
+    var right: f32 = 0;
+    for (4..8) |k| right += c.presence[k];
+    for (0..3) |k| try std.testing.expectEqual(@as(f32, 0), c.presence[k]);
+    try std.testing.expect(right > 0.5);
+    try std.testing.expectEqual(@as(f32, 0), c.presence[8]);
+    // A GRID estimator reading STRIPES frames: no hand, empty cells.
+    const g = synth_cells(.grid, &scene, 10);
+    for (g.presence) |v| try std.testing.expectEqual(@as(f32, 0), v);
+}
+
+test "hand: switching ZONES restarts the estimator in the new layout; MIRROR keeps it" {
+    math.init_tables();
+    reset();
+    set_layout(.stripes);
+    try std.testing.expectEqual(types.Layout.stripes, sensor_est.layout);
+    try std.testing.expectEqual(types.Layout.stripes, sensor_cells.layout);
+    set_mirror(true);
+    try std.testing.expectEqual(types.Layout.stripes, sensor_est.layout);
+    set_mirror(false);
+    // The stick hand's field follows the layout: a hand on the right
+    // lights the right stripes, the same at any height.
+    for (0..60) |_| update(.{ .steer = true, .right = true, .up = true }, 0);
+    try std.testing.expectEqual(Source.stick, source);
+    try std.testing.expectEqual(types.Layout.stripes, cells.layout);
+    try std.testing.expect(cells.presence[6] > 0.2);
+    try std.testing.expectEqual(@as(f32, 0), cells.presence[0]);
+    set_layout(.grid);
+    try std.testing.expectEqual(types.Layout.grid, sensor_est.layout);
+    reset();
 }
 
 test "hand: B + stick steers a hand whose field follows it, then hands back" {

@@ -8,9 +8,13 @@ pub const types = tof.types;
 
 const fake = build_options.tof_fake;
 const enabled = fake or tof.i2c.is_badge;
-/// Normal SPAD map (33x32 deg): lib/tof_pose.zig's zone geometry. No
+/// Normal SPAD map (33x32 deg): lib/tof_pose.zig's zone geometry, and
+/// GRID's configuration when ZONES switches back from STRIPES. No
 /// histogram dumps: they cut the frame rate to a few per second at 400 kHz.
 const config: tof.Config = .{};
+/// ZONES (docs/TOF.md M5): the layout asked for, applied when the driver
+/// starts and on every change.
+var layout: types.Layout = .grid;
 const bus_hz = 400_000;
 const frame_us: u64 = 16_667;
 
@@ -31,12 +35,24 @@ pub fn set_mirror(on: bool) void {
     if (on) orientation.flip_x = !orientation.flip_x;
 }
 
+/// ZONES: GRID (the normal map) or STRIPES (the 8-stripe user mask). The
+/// driver stops, reconfigures and restarts over the next polls (no reset);
+/// frames carry the layout they were measured with.
+pub fn set_layout(l: types.Layout) void {
+    layout = l;
+    if (enabled and started) sensor.set_layout(l, config);
+}
+
 /// Once per update, before `sensor_frame`: a bounded slice of bus work.
 pub fn poll(now_us: u64) void {
     if (!enabled) return;
     if (!started) {
+        // The model's SPADs see its wandering hand under the stripes mask
+        // (its default user-mask scene is the depth photo's room).
+        if (fake) tof.virtual.shared.user_scene = .hand;
         sensor = tof.open(fake, bus_hz);
         sensor.configure(config);
+        if (layout != .grid) sensor.set_layout(layout, config);
         started = true;
     }
     ticks += 1;

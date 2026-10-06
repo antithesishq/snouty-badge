@@ -4,7 +4,8 @@
 //! tighter rings) and how fast the rings run; the sum, wrapped through the
 //! palette, is a moiré you play with your fingers. Without a hand the nine
 //! hum quietly with slowly drifting phases. Punch: every phase jumps and the
-//! hand emitter rings loud. Param: wavelength.
+//! hand emitter rings loud. Param: wavelength. STRIPES (ZONES): eight
+//! emitters on the stripes' centres across the middle row, and the hand's.
 //!
 //! Per pixel: one distance-table load (`dist[|dx|][|dy|]`, Q4 pixels, built
 //! at init) per emitter, a multiply, an integer sine, a multiply-add.
@@ -14,6 +15,7 @@ const palette = @import("../palette.zig");
 const surface = @import("../surface.zig");
 const U = @import("../uniforms.zig").U;
 const arena = @import("arena.zig");
+const field = @import("../field.zig");
 
 pub const name = "RIPPLE";
 pub const param_name = "WAVE";
@@ -56,7 +58,6 @@ pub fn enter() void {
     };
 }
 
-
 const Emitter = struct { x: i32, y: i32, k: i32, ph: u32, a: i32 };
 
 pub fn render(u: *const U, pal: *const palette.Cosine, out: *surface.Surface) void {
@@ -75,12 +76,23 @@ pub fn render(u: *const U, pal: *const palette.Cosine, out: *surface.Surface) vo
         var near: f32 = undefined;
         var ex: i32 = undefined;
         var ey: i32 = undefined;
-        if (i < 9) {
+        if (u.layout == .stripes and i == 8) {
+            // Eight stripes: no ninth zone emitter.
+            near = 0;
+            a = 0;
+            ex = 0;
+            ey = 0;
+        } else if (i < 9) {
             const pres = u.presence[i];
             near = u.near[i] * pres;
             a = amp_idle + (amp_hand - amp_idle) * pres;
-            ex = cx[i % 3];
-            ey = cy[i / 3];
+            if (u.layout == .stripes) {
+                ex = math.iround(field.stripe_x[i]);
+                ey = cy[1];
+            } else {
+                ex = cx[i % 3];
+                ey = cy[i / 3];
+            }
         } else {
             const on: f32 = if (u.hand.present) 1 else 0;
             near = u.hand.z;

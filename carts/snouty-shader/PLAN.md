@@ -90,6 +90,57 @@ builds; the GIF shows several programs driven by the ghost.
   `docs/preview_tour.gif` regenerated (programs idle on their own clock,
   INK with B + stick).
 
+### M5: ZONES (stripes and arm rejection), 2026-10-06, branch `tof/stripes`
+
+docs/TOF.md M5: side to side tracked far worse than height on every
+sensor cart. The shared pose (lib/tof_pose.zig) now rejects the arm (the
+near cluster gives x / y, the hand body z and tilt) in both layouts; the
+cart adds a ZONES setting.
+
+- ZONES: GRID (default: the 3x3 normal map; this cart uses the vertical
+  axis) or STRIPES (8 full-height stripes from the user SPAD mask: finer
+  side to side, no vertical axis). Hold Select 1 s to toggle (a toast,
+  `R.. STRIPES` on the panel's angle line, the grid drawn as eight
+  bars); a Select tap is still MIRROR on release, and the Start+Select
+  chord toggles neither. Select acted on release only, so the hold was
+  free: nothing displaced.
+- Switching: `sensor.set_layout` (the driver's stop / SPAD page / start,
+  no reset), the estimator restarted in the new layout (MIRROR keeps the
+  layout now), the field fades in from dark. Every frame is read by its
+  own `frame.layout`. `-Dtof-fake=true` builds set the model's user-mask
+  scene to its wandering hand.
+- STRIPES in the uniforms: the field is eight stripe values at their
+  true angles (outer centres at the pose's x = +-1, 33.3 px from the
+  middle), Catmull-Rom across, constant down each column (cheaper than
+  the 3x3 build); nearness from the pose's perpendicular `depth_mm` (both
+  layouts now); y = 0, pitch and yaw confidence 0 (only roll turns
+  anything); RIPPLE's emitters sit on the stripes across the middle row;
+  the stick hand's field is rendered in the current layout.
+- Pokes / exports: `--poke start_zones=2` (badge-bench), wasm
+  `debug_zones`, `debug_set_zones(n)`.
+- Host tests: Select hold (ZONES at 1 s, release spent, tap still MIRROR,
+  a second hold back), the chord never toggles ZONES; stripes field
+  (weights sum to one, one side lit top to bottom, uniform stays
+  uniform); a synthetic STRIPES hand lights the right stripes and a GRID
+  estimator ignores STRIPES frames; ZONES restarts the estimator, MIRROR
+  keeps the layout, the stick field follows the layout; uniforms in
+  STRIPES (field, hand spot mid-height, back to GRID drops the cells).
+- badge-bench (calibrated, the tour, 3600 frames), busy ms worst / mean:
+
+  | Build | GRID | STRIPES |
+  |---|---|---|
+  | normal (no sensor, stick) | 8.95 / 5.08 | 8.44 / 4.83 |
+  | `-Dtof-fake=true` | 11.39 / 6.13 | 12.05 / 6.86 |
+
+  M1 for comparison: 8.76 / 5.03 and 11.20 / 6.12. The fake STRIPES
+  extra is the model, not the cart: lib/tof_scene.zig traces the hand
+  scene SPAD by SPAD with 64-bit divisions and square roots (about 130 k
+  cycles a frame on average, `tof_scene.trace_in` + `__udivmoddi4`); a
+  real sensor reads the same result record in both layouts. Its worst
+  frame (INK with B + stick and a measurement) is 0.05 ms over this
+  cart's 12 ms per-program goal, 72 % of the 16.7 ms budget.
+- Not run on hardware.
+
 ## Deferred decisions (defaults taken; Adrian may flip any)
 
 1. The programs: INK, RIPPLE, LAVA, ECHO, CELLS, KALEIDO (all six

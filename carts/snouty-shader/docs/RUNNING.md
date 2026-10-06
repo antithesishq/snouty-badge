@@ -29,7 +29,9 @@ Copy `snouty-shader.uf2` to the badge drive the usual way
 breakout into the Qwiic port (before or after starting; replugging is
 fine) and start the cart. Hold a hand 10-40 cm in front of the sensor:
 hold B to see the inputs panel, whose top-right label reads SENSOR and whose
-3x3 grid lights under your hand. With nothing in view the field stays
+3x3 grid lights under your hand. Hold Select for a second to switch ZONES
+to STRIPES (the grid becomes eight bars, lit under your hand from top to
+bottom) and again to go back to GRID. With nothing in view the field stays
 empty (no attract hand fakes input). Without the breakout the label reads
 NO SENSOR; B + stick steers a virtual hand (STICK).
 
@@ -41,10 +43,11 @@ NO SENSOR; B + stick steers a virtual hand (STICK).
 | Left / Right | previous / next program: INK, RIPPLE, LAVA, ECHO, CELLS, KALEIDO |
 | Up / Down | the program's parameter 0..8 (WARP, WAVE, SPEED, TRAIL, SPEED, MIRRORS) |
 | A | next palette (eight cosine palettes, kept per program) |
-| B (hold) | inputs panel: program, palette, source, the 3x3 field, x/y/z, energy, pitch/roll/yaw (degrees), parameter, PUNCH |
+| B (hold) | inputs panel: program, palette, source, the 3x3 field (eight bars in STRIPES), x/y/z, energy, pitch/roll/yaw (degrees; `R.. STRIPES` in STRIPES), parameter, PUNCH |
 | B + stick | steer the virtual hand (STICK; lets go 4 s after the last move) |
 | B + A | punch with the virtual hand |
-| Select | MIRROR: flip the sensor's left-right (the breakout dangles on its cable and can face either way; acts on release; MIRR in the panel) |
+| Select (tap) | MIRROR: flip the sensor's left-right (the breakout dangles on its cable and can face either way; acts on release; MIRR in the panel) |
+| Select (hold 1 s) | ZONES: GRID (default, the 3x3 map) / STRIPES (8 full-height stripes: finer side to side, no up/down); a toast says which; the release then toggles nothing |
 | Start | sound on / off (acts on release; boots off) |
 | Start + Select | the OS's settings / exit; the cart ignores every button while both are held |
 
@@ -76,7 +79,8 @@ Debug exports (wasm): `debug_frame`, `debug_program`,
 `debug_set_program(n)`, `debug_palette`, `debug_param`, `debug_source` (0
 none, 1 stick, 2 sensor), `debug_present`, `debug_hand_z` (0..1000),
 `debug_field_peak`, `debug_punch_age`, `debug_render_us`,
-`debug_pixel_checksum`, `debug_sound`, `debug_hud`.
+`debug_pixel_checksum`, `debug_sound`, `debug_hud`, `debug_zones` (1
+GRID, 2 STRIPES), `debug_set_zones(n)`.
 
 ## 6. badge-bench
 
@@ -90,5 +94,7 @@ zig build -Dcart=snouty-shader -Dtof-fake=true                               # t
 `badge-bench/carts/snouty-shader.toml` is the default run (each program
 for 600 ticks, B + stick and a punch in each; a `-Dtof-fake=true` ELF adds
 the sensor model's wandering hand). The badge
-build exports `start_program` for `--poke start_program=N`. Numbers are in
-`PLAN.md`.
+build exports `start_program` for `--poke start_program=N` and
+`start_zones` for `--poke start_zones=2` (STRIPES from the start; 0 or 1
+GRID). A `-Dtof-fake=true` build in STRIPES runs the model's SPAD-level
+hand scene under the stripes mask. Numbers are in `PLAN.md`.
