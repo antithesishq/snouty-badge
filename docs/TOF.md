@@ -270,6 +270,130 @@ commands 40 us).
   modes for existing carts (Flyover altitude, Reflections ripple,
   Demosnout speed), wake-on-approach attract.
 
+### M5: stripes and arm rejection (branch `tof/stripes`)
+
+Adrian (2026-10-06): on every sensor cart height tracks much more
+consistently than side to side; pointing an arm and finger straight
+down over the sensor helped. Why: height is a time-of-flight measurement
+(2 mm precision, fine with a partly covered zone), while side to side
+comes from three columns of ~14 deg (map 6), the sub-zone interpolation
+in lib/tof_pose.zig leans on `confidence` (probably saturated for any
+zone the hand touches, so x steps column centre to column centre), and
+the background model counts the wrist and forearm as hand, so the arm
+drags the centroid.
+
+Plan and decisions (defaulted, not asked):
+
+1. **STRIPES zone layout**: a user SPAD mask (spad_map_id 14, the DEPTH
+   page's path) of 8 full-height vertical stripes across the 18x10
+   array, on channels 2..9 (`tof_spad.stripes()`).
+   - 9 full-height stripes are impossible: every row would hold channel
+     1 and channels 8 and 9 (DS 7.4.1). 8 stripes on 2..9 never use
+     channel 1, use every TDC pair, and each stripe is a 2- or 3-wide by
+     10-tall block of edge-adjacent SPADs.
+   - The two spare columns widen the outer stripes (column widths
+     3 2 2 2 2 2 2 3): the whole 43 deg field stays live (the same span
+     as map 6, which the instruments are tuned to), the edges keep
+     seeing a hand leaving the field, and the coarser outer stripes sit
+     where lateral precision matters least. Disabling the two edge
+     columns instead (8 x 2) would narrow the field to 38 deg for no
+     gain in the middle. Each stripe has 20 or 30 SPADs (a map-6 zone
+     has ~18-24), so the signal per zone is about the same.
+   - Inner stripes are 4.8 deg wide (17 mm at 20 cm) against 13.7 deg
+     for a map-6 column: about 3x finer before interpolation, and the
+     hand's edges entering and leaving stripes give half-stripe steps
+     with no help from confidence at all.
+   - Channel c reports in result triplet c - 1 (the M2 inference), so
+     stripe k is `frame.zones[k + 1]`; `zones[0]` stays empty. SPAD
+     column 0 is taken as the left of the device's view, the same side
+     as zone 1 of the pre-defined maps (M2 inference, not yet seen on a
+     badge): if STRIPES comes out mirrored against GRID, flip
+     `tof_zones.stripes_reversed`.
+   - Stripes run along the device's 18-column axis. Under an orientation
+     with `transpose` they measure the screen's vertical axis: the pose
+     then has y resolution and no x (`Pose.has_x` false, x = 0). No cart
+     transposes; a badge that needs it should stay on GRID.
+2. **Zone geometry, not a fork**: `lib/tof_zones.zig` gives every layout
+   (3x3 grid, 1x8 stripes) as per-zone screen angles and tangents after
+   the orientation (flip_x / flip_y / transpose / MIRROR), the device
+   zone each screen cell reads, and which screen axes have resolution.
+   lib/tof_pose.zig, lib/tof_synth.zig and the carts take the layout
+   from there. GRID numbers are unchanged.
+3. **Arm rejection in the shared pose**, both layouts: each hand zone's
+   ray distance becomes a perpendicular height with its zone's centre
+   tangents; the **near cluster** is every hand zone within
+   `cluster_mm` (50) of the nearest. Per estimate:
+   - x / y centroid and its sub-zone shift: the near cluster only (a
+     finger pointing down tracks the fingertip, a forearm sloping in
+     from one side no longer pulls x).
+   - `Pose.height_mm` (new, raw per frame): the near cluster's mean
+     height, what the instruments play (the trombone's M1 rule, now
+     shared). `Pose.near_mm`: the nearest hand point.
+   - z, the tilt plane fit and yaw: the **hand body**, zones within
+     `body_mm` (150) of the nearest, then the old 120 mm outlier cut. A
+     palm tilted 45 deg spans ~100 mm of depth, so a 50 mm cluster would
+     flatten morph's tilt and bias z toward the near edge; 150 mm keeps
+     the palm and drops the far forearm. Yaw keeps the wrist (it is the
+     hand's long axis).
+   - Presence and the coverage map: every hand zone, as before.
+   Host tests: an arm sloping in from one side and a pointing finger,
+   in both layouts, with arm rejection on and off.
+4. **Sub-stripe interpolation**: the existing coverage centroid with the
+   sub-zone shift generalises exactly to 1-D stripes (a partly covered
+   edge stripe's centre moves toward the blob by (1 - coverage) / 2 of
+   its own width, which is the covered part's centre). Coverage comes
+   from the near/far signal ratio when the stripe also sees the
+   background (this survives a saturated near confidence) and from
+   confidence otherwise. When neither carries information the result is
+   still half-stripe steps from stripe membership. Measured on synthetic
+   sweeps with confidence that does and does not track coverage
+   (`tof_synth.Scene.saturate`).
+5. **Switching**: `Tof.set_layout(layout, grid_config)` uses the paths
+   the DEPTH page and LIVE's map toggle already exercise: STRIPES is
+   `set_user_mask(stripes)` (stop, common page with map 14, SPAD page,
+   read-back, MEASURE), GRID is `configure` with the cart's pre-defined
+   map (stop, common page, MEASURE). No CPU reset, no powerup_select,
+   no histogram dumps, so none of the recovery history above is
+   touched; repeated switches coalesce into one pending configuration.
+   The driver tags every frame with the layout it was measured with
+   (`Frame.layout`: grid, stripes, or user for any other mask) and the
+   pose ignores frames of the other layout, so the frames in flight
+   around a switch never reach the estimator; switching resets the
+   background model (zone i means another place).
+6. **Crosstalk**: a user mask has no crosstalk calibration. The driver
+   never loads one for any map, but the pre-defined maps may carry
+   factory defaults a user mask does not, so very near targets can merge
+   with the package crosstalk. STRIPES therefore ignores hand targets
+   nearer than `min_mm_stripes` (40 mm, GRID keeps 15). If STRIPES lights
+   every stripe with no hand there, raise it (hardware check M5).
+7. **Carts**: a ZONES setting (GRID / STRIPES) in each sensor cart.
+   Defaults: STRIPES for snouty-theremin and snouty-trombone (1-D
+   lateral instruments), GRID for snouty-morph and snouty-shader (they
+   use the vertical axis and tilt). Theremin and trombone get a menu
+   row. Morph and shader have every button taken: hold Select for 1 s
+   (a gesture neither uses; a tap keeps its meaning, and morph's press
+   toggle of the sound is restored when the hold turns out to be ZONES).
+   In STRIPES: the theremin's 2 HAND layout splits the stripes into a
+   pitch half and a volume half and its grid drawing becomes stripes;
+   the shader's depth field is stretched over the full height (no
+   vertical structure); morph's pitch confidence is 0 (roll still
+   measured), so the mesh only rolls.
+8. **Fakes**: lib/tof_synth.zig renders any layout (and an optional
+   forearm); lib/tof_virtual.zig gets a SPAD-level hand scene for user
+   masks that the carts' `-Dtof-fake=true` builds select (the DEPTH
+   page keeps its room scene); each cart's demo hand renders the active
+   layout.
+9. snouty-sense: no new page; it must build, test and behave unchanged.
+
+Open questions (for the badge check, section 5 M5):
+
+1. Whether the real confidence tracks coverage (it decides how much
+   sub-stripe interpolation there is beyond half-stripe steps).
+2. SPAD column order and the channel-to-triplet mapping for a mask
+   that never uses channel 1 (both inferred in M2).
+3. Whether 40 mm is the right near limit without crosstalk calibration.
+4. Mask-switch time on the real chip (model: ~100 ms).
+
 ## 5. Hardware checks (Adrian)
 
 You need: an r2 (production) SYCL badge, the SparkFun Qwiic Mini dToF
