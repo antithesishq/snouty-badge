@@ -99,6 +99,14 @@ shared library, the plan, and the hardware checks Adrian runs.
   Nth transaction, stuck busy, bootloader rejecting chunks, a RAM image
   that does not start, no active-range commands).
 - `lib/tof_firmware.bin` (+ `.NOTICE.md`): the 2476-byte RAM application.
+- M5: `lib/tof_zones.zig` (the GRID and STRIPES layouts as screen
+  geometry after the orientation: per screen cell the device zone,
+  centre angles and tangents, widths; which axes resolve), `Layout` and
+  `Frame.layout` in tof_types, `tof_spad.stripes()`, `Tof.set_layout`
+  / `zone_layout`, `Estimator.set_layout` and the arm-rejected pose
+  (`Pose.height_mm`, `near_mm`, `cluster`, `depth_mm`, `cols`, `rows`,
+  `has_x`, `has_y`), `tof_synth` layouts / forearm / saturation, and
+  the model's SPAD-level hand scene (`Model.user_scene = .hand`).
 - M2: `lib/tof_spad.zig` (the user SPAD mask, the datasheet's rules as
   a validator, the SPAD page encoder / decoder, the depth-photo layouts),
   `Tof.set_user_mask` (validate, then write and verify the page; frames
@@ -147,6 +155,12 @@ The hardware check (section 5) confirms the C-only items.
 | "Adjacent" means sharing an edge | Inferred (DS: "can be in any direction"); diagonal pairs are refused |
 | The first frame after MEASURE is already measured with the new mask | Inferred (`Scan.settle` = 0 frames dropped; raise it if the photo shows the previous layout's values) |
 | A user mask has no crosstalk calibration (the driver loads none for any map) | DS 7.3 / 7.4.1: changing the mask invalidates it. Expect short-range crosstalk in the photo's near pixels |
+| **M5, STRIPES** (`tof_spad.stripes()`, `Tof.set_layout`) | |
+| 8 full-height stripes, channels 2..9, SPAD columns 3 2 2 2 2 2 2 3 wide; channel 1 unused (a full-height channel shares every row, and no row may hold 1 with 8 or 9) | DS 7.4.1 rules, checked by the validator and a host test |
+| Stripe k (channel k + 2) reports in result triplet k + 1, `Frame.zones[k + 1]`; zone 0 empty | Inferred (the M2 rule "channel c in triplet c - 1"); a STRIPES frame with zone 0 lit, or one stripe always empty, would say otherwise |
+| SPAD column 0 is the device view's left, the same side as zone 1 of maps 1 / 6 | Inferred (M2); `tof_zones.stripes_reversed` flips it if STRIPES comes out mirrored against GRID |
+| One SPAD = 2.4 deg across the columns; the stripes span the array's 43 deg | DS 7.4.1 (map 6 is 41 x 52 deg) |
+| Each frame carries its layout (`Frame.layout`: grid for maps 1..12, stripes when the active mask is `stripes()`, user for other masks) | Driver: set when the mask is written and when measuring starts |
 
 ### Timings (from the model, which runs the real driver; 60 Hz polls)
 
@@ -322,7 +336,8 @@ Plan and decisions (defaulted, not asked):
 3. **Arm rejection in the shared pose**, both layouts: each hand zone's
    ray distance becomes a perpendicular height with its zone's centre
    tangents; the **near cluster** is every hand zone within
-   `cluster_mm` (50) of the nearest. Per estimate:
+   `cluster_mm` (40, the trombone's M1 value) of the nearest. Per
+   estimate:
    - x / y centroid and its sub-zone shift: the near cluster only (a
      finger pointing down tracks the fingertip, a forearm sloping in
      from one side no longer pulls x).
@@ -330,11 +345,16 @@ Plan and decisions (defaulted, not asked):
      height, what the instruments play (the trombone's M1 rule, now
      shared). `Pose.near_mm`: the nearest hand point.
    - z, the tilt plane fit and yaw: the **hand body**, zones within
-     `body_mm` (150) of the nearest, then the old 120 mm outlier cut. A
-     palm tilted 45 deg spans ~100 mm of depth, so a 50 mm cluster would
-     flatten morph's tilt and bias z toward the near edge; 150 mm keeps
-     the palm and drops the far forearm. Yaw keeps the wrist (it is the
-     hand's long axis).
+     `body_mm` (100) of the nearest, then the old 120 mm outlier cut.
+     Measured on synthetic hands: a palm pitched 45 deg reads 39.8 deg
+     (confidence 1.0) with the body window and 0 deg (confidence 0)
+     with the near cluster alone, which drops its far half; 100 mm
+     tracks as well as 150 or no window up to 45 deg and drops more of
+     a far forearm. Yaw keeps the wrist (it is the hand's long axis).
+   - Cost: a strongly rolled wide hand loses its far edge from the
+     lateral cluster, so x leans toward the near edge (a 20 cm wide
+     surface rolled 30 deg: -27 mm). A real palm (~9 cm) rolled 30 deg
+     spans ~45 mm and stays almost whole. Carts can widen `cluster_mm`.
    - Presence and the coverage map: every hand zone, as before.
    Host tests: an arm sloping in from one side and a pointing finger,
    in both layouts, with arm rejection on and off.
@@ -347,7 +367,24 @@ Plan and decisions (defaulted, not asked):
    confidence otherwise. When neither carries information the result is
    still half-stripe steps from stripe membership. Measured on synthetic
    sweeps with confidence that does and does not track coverage
-   (`tof_synth.Scene.saturate`).
+   (`tof_synth.Scene.saturate`), map-6 field, 2 mm steps, settled pose
+   per position (lib/tof_pose.zig test "stripes follow a sideways
+   sweep"):
+
+   | Hand, confidence | GRID: distinct readings, max step, worst error | STRIPES |
+   |---|---|---|
+   | fingertip at 15 cm (+-36 mm), either | 4, 18.2 mm, 12.0 mm | 10, 6.4 mm, 4.0 mm |
+   | palm at 25 cm (+-60 mm), tracks coverage | 30, 11.3 mm, 6.3 mm | 48, 6.3 mm, 6.1 mm |
+   | palm at 25 cm, saturated (255 always) | 10, 17.1 mm, 19.2 mm | 10, 12.0 mm, 11.4 mm |
+
+   A fingertip (what Adrian found works) gains most: 3x finer steps and
+   errors. A palm gains less while confidence tracks coverage (the
+   synthetic 3x3 already interpolates then); with saturated confidence
+   STRIPES halves the worst error (half-stripe steps, ~10 mm at 25 cm).
+   Arms (test "a forearm sloping in from the left"): a forearm rising
+   from the hand at 0.6 mm/mm pulls x 26 mm without rejection; with it,
+   STRIPES moves 1 mm and GRID 12 mm (a grid zone holding the hand and
+   the start of the arm cannot be split).
 5. **Switching**: `Tof.set_layout(layout, grid_config)` uses the paths
    the DEPTH page and LIVE's map toggle already exercise: STRIPES is
    `set_user_mask(stripes)` (stop, common page with map 14, SPAD page,
