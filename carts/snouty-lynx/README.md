@@ -37,7 +37,7 @@ the boot path that decrypts a cart's loader without the Lynx boot ROM is
 | Start + Select           | Back to the badge OS (the OS's chord)                  |
 
 Menu: Up/Down move, A chooses, B or a Select tap resumes; Left/Right or A
-flip a setting. On every other row Left/Right scrub time: back or forward
+change a setting. On every other row Left/Right scrub time: back or forward
 half a second, 4 steps a second while held. The panel's bottom line reads
 "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s" (position / history held).
 After a step the panel gives way to that line in a bar over the restored
@@ -66,16 +66,17 @@ menu does.
 | Resume                   | Back to the game                                       |
 | Buttons: A=A B=B         | Swap badge A and B                                     |
 | Sound: Off               | Sound on or off (off at boot, `-Dsound=true` starts it on; not in the simulator) |
+| Marquee: Auto            | The marquee's colours: Auto (picked from the title) or Sunset, Neon, Fire, Jungle, Atari, Candy for every game; Right/A next, Left back; the menu's title band shows the marquee while you choose. Back to Auto when the cart restarts |
 | Press Option 2           | Resume with Option 2 held for 4 frames                 |
 | Restart Pause+Opt1       | Resume with Pause + Option 1 held for 4 frames (the Lynx restart chord) |
 | Debug overlay: Off       | Three lines over the marquee: title and ROM name, fps and step times, instructions and Suzy pixels; with sound on the audio queue and underruns ("q1470/0") in place of the ROM name |
 | Reset                    | Power on again (the boot reruns)                       |
 | Pick ROM                 | The drive's ROM list (only with two or more playable files) |
 | Link cable               | The LINK screen: two badges on the link cable play a ComLynx game (docs/CABLE.md); "Leave link" while linked; not in the simulator |
-| About                    | Version, file, header title and maker, size, source and CRC, boot error, `fragmented`, `EEPROM: not saved`, the marquee's source |
+| About                    | Version, file, header title and maker, size, source and CRC, boot error, `fragmented`, `EEPROM: not saved` |
 
-With Sound, Pick ROM and Link cable all showing, the Debug overlay row
-gives way (nine rows fit). `-Dlynx-link=false` builds the cart without
+The panel shows nine rows; with more the list scrolls (a bar on the
+right shows where you are). `-Dlynx-link=false` builds the cart without
 the link cable: no Link cable row, ~17 KB more scrub history
 (docs/CABLE.md section 4).
 
@@ -131,7 +132,7 @@ default build (`-Dlynx-rom-source=drive`):
 ### The marquee
 
 The marquee letters the game's title in one of six colour schemes the
-title picks. `zig build marquee-lynx -- out.ppm "Some Title"` (repository
+title picks; the menu's Marquee row picks one yourself. `zig build marquee-lynx -- out.ppm "Some Title"` (repository
 root) renders it for any title.
 
 The ROM file also shows in the OS cart menu and fails to load if picked

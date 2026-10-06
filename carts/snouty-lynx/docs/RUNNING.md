@@ -22,11 +22,12 @@ line). The origin, CRC and flags (`fragmented`, `No header (raw)`,
 Controls: d-pad, A, B as on the Lynx; Start = Pause; Select tap = Option
 1 (200 ms after the release, the fast-forward window below); Select tap,
 then press and hold = fast forward; Select held 500 ms = the emulator menu over the frozen frame (Up/Down,
-A chooses, B or a Select tap resumes): Resume, Buttons (A/B swap), Press
-Option 2, Restart Pause+Opt1 (both hold those Lynx buttons for 4 frames
+A chooses, B or a Select tap resumes): Resume, Buttons (A/B swap),
+Marquee (M8.1: Auto or one of six colour schemes; the list scrolls past
+nine rows), Press Option 2, Restart Pause+Opt1 (both hold those Lynx buttons for 4 frames
 after resuming), Debug overlay, Reset (the boot again), Pick ROM (only
 with more than one playable drive file), About. M3 (time scrubber,
-`lynx/m3`): in the menu Left/Right on any row but the two settings step
+`lynx/m3`): in the menu Left/Right on any row but the settings step
 time back/forward one undo record (30 frames, 0.5 s), 4 steps a second
 while held; the panel's bottom line reads "Scrub: live / 3.5s" or "Scrub:
 -1.5 / 3.5s" (dim with no history, "Scrub: no memory" when the arena has

@@ -54,9 +54,9 @@ CLAUDE.md and docs have the longer explanations.
   ROM in wasm/embed builds only, or none with the reason), `splash` (Iris mark, `lib/iris_mark.zig`),
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
   `menu` (the
-  frozen-frame menu: Resume, Buttons swap, Sound, Press Option 2, Restart
-  Pause+Opt1, Debug overlay, Reset, Pick ROM, Link cable, About; PLAN.md
-  M2, M7), `picker`
+  frozen-frame menu: Resume, Buttons swap, Sound, Marquee (scheme, M8.1),
+  Press Option 2, Restart Pause+Opt1, Debug overlay, Reset, Pick ROM, Link
+  cable, About, scrolling past nine rows; PLAN.md M2, M7, M8.1), `picker`
   (the drive file list, restarts into the chosen file), `cable` (ComLynx
   on the link cable: `link.Badge` with app id 'X' and the DMA ring, the
   linked mode, the port lent from the scrub arena, the pump), `cablenet`

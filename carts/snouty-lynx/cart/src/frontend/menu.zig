@@ -1,12 +1,15 @@
 //! Emulator menu (SPEC.md sections 5 and 12, PLAN.md "M2 Frontend"),
 //! copied from Snouty Genesis's frontend/menu.zig (itself Snouty Gear's)
 //! with the Lynx rows: Resume, Buttons (A/B swap), Sound (M5; not in the
-//! wasm build), Press Option 2, Restart (Pause + Option 1), Debug overlay,
+//! wasm build), Marquee (M8.1: Auto or one of the marquee's colour
+//! schemes; the title band shows the live marquee while the cursor is on
+//! it), Press Option 2, Restart (Pause + Option 1), Debug overlay,
 //! Reset, Pick ROM (a drive with several playable files), Link cable (the
 //! LINK screen, frontend/cable_screen.zig; "Leave link" while linked; not
 //! in the wasm build) and About; 8 px rows as Genesis M4 (nine rows, the
-//! bottom line and the footer: when Sound, Pick ROM and Link cable all
-//! show, the Debug overlay row gives way). Gear's
+//! bottom line and the footer). With more than nine rows the list
+//! scrolls to keep the cursor in view, with a scroll bar at the panel's
+//! right edge (M8.1). Gear's
 //! M5 shared frontend has not landed: this is a copy, to be extracted with
 //! the others. Opened by holding Select for 500 ms (frontend/input.zig),
 //! drawn over the frozen game frame; the core is not stepped while it is
@@ -25,7 +28,7 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Sound, Debug overlay). Sound (frontend/audio.zig; off at
+//! (Buttons, Sound, Marquee, Debug overlay; Left steps Marquee back). Sound (frontend/audio.zig; off at
 //! boot, `-Dsound=true` starts it on) Off stops the stream (a ramp to
 //! silence) and clears `l.audio_render` so the core skips filling
 //! `audio_out`.
@@ -77,7 +80,7 @@ const video = @import("video.zig");
 const marquee = @import("marquee.zig");
 const hint = @import("hint");
 
-pub const version = "0.8.0-m8";
+pub const version = "0.8.1-m8.1";
 
 /// The title the menu band and the debug overlay show.
 pub const title = "SNOUTY LYNX";
@@ -117,10 +120,9 @@ const footer_turn = 120;
 /// Menu updates since `open`, for the footer's turns.
 var updates_open: u32 = 0;
 
-const Item = enum { resume_game, buttons, sound, opt2, restart, debug, reset, pick_rom, link_cable, about };
+const Item = enum { resume_game, buttons, sound, marquee, opt2, restart, debug, reset, pick_rom, link_cable, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
-/// Rows the panel holds: at most this many items are visible at once
-/// (the Debug overlay row gives way in the one case all ten would show).
+/// Rows the panel holds: more visible items scroll (`top`).
 const panel_rows = 9;
 
 /// The Pick ROM row exists only when the drive has more than one playable
@@ -136,13 +138,13 @@ fn visible(item: Item) bool {
         .sound => !cart.is_wasm,
         // The simulator has no link port.
         .link_cable => cable.available(),
-        // Ten rows (Sound and Pick ROM and Link cable): the developer's row goes.
-        .debug => cart.is_wasm or !pick_available() or !cable.available(),
         else => true,
     };
 }
 
 var cursor: Item = .resume_game;
+/// The visible row at the top of the panel (scrolled so the cursor shows).
+var top: usize = 0;
 var showing_about: bool = false;
 /// A Select press began inside the menu; its release resumes. The release
 /// of the hold that opened the menu does not count.
@@ -164,6 +166,7 @@ pub fn open() void {
     select_armed = false;
     repeat.stop();
     cursor = .resume_game;
+    top = 0;
     updates_open = 0;
     freeze_frame();
 }
@@ -231,7 +234,7 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
                     return .link_cable;
                 },
                 .about => showing_about = true,
-                .buttons, .sound, .debug => adjust(l),
+                .buttons, .sound, .marquee, .debug => adjust(l, 1),
             }
         }
     }
@@ -257,7 +260,7 @@ fn move(d: i2) void {
 }
 
 fn is_setting(item: Item) bool {
-    return item == .buttons or item == .sound or item == .debug;
+    return item == .buttons or item == .sound or item == .marquee or item == .debug;
 }
 
 /// Time scrubber step (SPEC.md section 10): Left = back 0.5 s, Right =
@@ -272,21 +275,24 @@ fn on_scrub(l: *core.Lynx, dir: i2) void {
 noinline fn left_right(l: *core.Lynx, e: input.Edge) void {
     if (is_setting(cursor)) {
         repeat.stop();
-        if (e.pressed(.left) or e.pressed(.right)) adjust(l);
+        if (e.pressed(.left)) adjust(l, -1);
+        if (e.pressed(.right)) adjust(l, 1);
         return;
     }
     const d = repeat.step(e);
     if (d != 0) on_scrub(l, d);
 }
 
-/// Every setting has two values, so Left, Right and A all flip them.
-fn adjust(l: *core.Lynx) void {
+/// Next (`dir` 1: Right, A) or previous (-1: Left) value of a setting;
+/// the two-value ones just flip.
+fn adjust(l: *core.Lynx, dir: i2) void {
     switch (cursor) {
         .buttons => input.swap_ab = !input.swap_ab,
         .sound => {
             audio.enabled = !audio.enabled;
             l.audio_render = audio.enabled;
         },
+        .marquee => marquee.cycle_theme(dir),
         .debug => debug.enabled = !debug.enabled,
         else => {},
     }
@@ -340,6 +346,7 @@ const row_color: cart.DisplayColor = .rgb(0xFFFFFF);
 const cursor_color: cart.DisplayColor = .rgb(0xFFD040);
 const cursor_text_color: cart.DisplayColor = .rgb(0x000000);
 const dim_color: cart.DisplayColor = .rgb(0x8898C0);
+const track_color: cart.DisplayColor = .rgb(0x283C78);
 
 // Fixed strings, width-checked below.
 const tagline_1 = "verified by";
@@ -351,6 +358,7 @@ fn label(item: Item) []const u8 {
         .resume_game => "Resume",
         .buttons => if (input.swap_ab) "Buttons: A=B B=A" else "Buttons: A=A B=B",
         .sound => if (audio.enabled) "Sound: On" else "Sound: Off",
+        .marquee => marquee.theme_label(),
         .opt2 => "Press Option 2",
         // "Restart: Pause+Opt1" is 19 columns, one more than the panel.
         .restart => "Restart Pause+Opt1",
@@ -380,12 +388,21 @@ fn draw(l: *const core.Lynx) void {
         return;
     }
 
-    // Title band: SPEC.md 12.
-    cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = band_color });
-    centered(title, 1, title_color);
-    centered(fit(&buf, romsrc.title_name(), screen_cols), 10, name_color);
-    centered(tagline_1, 19, tagline_color);
-    centered(tagline_2, 27, tagline_color);
+    if (cursor == .marquee and !showing_about) {
+        // The live marquee as a preview of the chosen scheme, the menu's
+        // title under it. `marquee.draw` marks nothing.
+        marquee.draw();
+        cart.mark_dirty_rect(0, 0, cart.screen_width, marquee.h);
+        cart.rect(.{ .x = 0, .y = marquee.h, .width = cart.screen_width, .height = band_h - marquee.h, .fill_color = band_color });
+        centered(title, marquee.h + 1, title_color);
+    } else {
+        // Title band: SPEC.md 12.
+        cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = band_color });
+        centered(title, 1, title_color);
+        centered(fit(&buf, romsrc.title_name(), screen_cols), 10, name_color);
+        centered(tagline_1, 19, tagline_color);
+        centered(tagline_2, 27, tagline_color);
+    }
 
     cart.rect(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h, .fill_color = panel_color, .stroke_color = frame_color });
 
@@ -394,12 +411,26 @@ fn draw(l: *const core.Lynx) void {
         return;
     }
 
-    var y: i32 = first_row_y;
+    var rows: [item_count]Item = undefined;
+    var n: usize = 0;
+    var at: usize = 0;
     for (0..item_count) |i| {
         const item: Item = @fromBackingInt(@intCast(i));
         if (!visible(item)) continue;
+        if (item == cursor) at = n;
+        rows[n] = item;
+        n += 1;
+    }
+    if (at < top) top = at;
+    if (at >= top + panel_rows) top = at + 1 - panel_rows;
+    top = @min(top, n -| panel_rows);
+    if (n > panel_rows) draw_scroll_bar(n);
+
+    var y: i32 = first_row_y;
+    for (rows[top..@min(n, top + panel_rows)]) |item| {
         if (item == cursor) {
-            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = bar_rows, .fill_color = cursor_color });
+            // Two pixels short of the frame on the right: the scroll bar's.
+            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 6, .height = bar_rows, .fill_color = cursor_color });
             text.draw(label(item), text_x, y, cursor_text_color, cursor_color);
         } else {
             text.draw(label(item), text_x, y, row_color, panel_color);
@@ -414,6 +445,17 @@ fn draw(l: *const core.Lynx) void {
     // Linked, fast forward and the chorded rewind are off: no hints for them.
     const footer = if (cable.linked) hint.back else footers[(updates_open -% 1) / footer_turn % footers.len];
     text.draw(footer, text_x, footer_y, dim_color, panel_color);
+}
+
+/// The list's position at the panel's right edge, right of the rows'
+/// 18 columns and the cursor bar: a thumb `panel_rows / n` of the rows'
+/// height.
+fn draw_scroll_bar(n: usize) void {
+    const track = panel_rows * row_h;
+    const h: i32 = @intCast(track * panel_rows / n);
+    const y: i32 = @intCast(first_row_y + track * top / n);
+    cart.rect(.{ .x = panel_x + panel_w - 3, .y = first_row_y - 1, .width = 2, .height = track, .fill_color = track_color });
+    cart.rect(.{ .x = panel_x + panel_w - 3, .y = y - 1, .width = 2, .height = @intCast(h), .fill_color = cursor_color });
 }
 
 /// The scrub bar (rows 8..17, in the marquee band above the picture): the
@@ -624,6 +666,7 @@ comptime {
     check_width(no_memory, panel_cols);
     check_width(linked_line, panel_cols);
     check_width("Link cable", panel_cols);
+    check_width("Marquee: Sunset", panel_cols);
     check_width("Leave link", panel_cols);
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
