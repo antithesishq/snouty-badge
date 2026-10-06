@@ -36,15 +36,20 @@ var level: [w]u8 = undefined;
 /// Frames drawn since `load`, for the glint.
 var frame: u32 = 0;
 
+/// The menu's Marquee row: null picks the scheme from the title, else an
+/// index into `art.schemes` for every game until the cart restarts.
+pub var theme: ?u8 = null;
+
 /// Pick the title and colour scheme for the ROM that just
-/// booted. Call after every boot (start, picker, Reset).
+/// booted. Call after every boot (start, picker, Reset) and after the
+/// menu changes `theme`.
 pub noinline fn load() void {
     var tb: [art.max_title]u8 = undefined;
     const from_file = romsrc.layout.title().len == 0;
     const title = art.clean_title(romsrc.title_name(), from_file, &tb);
     const l = art.layout(title, text.glyphs());
     mask = l.mask;
-    const c = art.colors(art.schemes[art.scheme_index(title)], &l);
+    const c = art.colors(art.schemes[theme orelse art.scheme_index(title)], &l);
     for (&bg_words, &c.bg) |*words, *col| to_words(words, col);
     to_pixels(&pal.shadow, &c.shadow, false);
     to_pixels(&pal.fill, &c.fill, false);
@@ -70,6 +75,27 @@ noinline fn to_pixels(dst: []cart.Pixel, src: []const u32, shine: bool) void {
 /// A background column as row-pair words (the upper row in the low half).
 noinline fn to_words(dst: []u32, src: []const u32) void {
     for (dst, 0..) |*word, k| word.* = @as(u32, px(src[2 * k]).bits) | @as(u32, px(src[2 * k + 1]).bits) << 16;
+}
+
+/// Step `theme` through Auto and the schemes (`dir` 1 forward, -1 back)
+/// and reload.
+pub fn cycle_theme(dir: i2) void {
+    const n = art.schemes.len + 1;
+    const i: usize = if (theme) |t| t + 1 else 0;
+    const next = if (dir < 0) (i + n - 1) % n else (i + 1) % n;
+    theme = if (next == 0) null else @intCast(next - 1);
+    load();
+}
+
+/// The menu row: "Marquee: Auto" or "Marquee: Neon".
+pub fn theme_label() []const u8 {
+    const labels = comptime blk: {
+        var l: [art.schemes.len + 1][]const u8 = undefined;
+        l[0] = "Marquee: Auto";
+        for (art.scheme_names, 1..) |name, i| l[i] = "Marquee: " ++ name;
+        break :blk l;
+    };
+    return labels[if (theme) |t| t + 1 else 0];
 }
 
 /// Paint rows 0..h-1 completely. Marks no dirty rect (the game presents

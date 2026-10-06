@@ -800,8 +800,27 @@ normal play.
    other carts' UF2s byte-identical; a GIF of raycast and Hard Drivin'
    (docs/m8_marquee.gif) and a still with a sidecar BMP.
 
+## M8.1 Marquee row: contract
+
+Adrian (2026-10-06): a way to change the marquee's theme. A menu row
+"Marquee: Auto" after Sound: Right or A step Auto -> Sunset -> Neon ->
+Fire -> Jungle -> Atari -> Candy -> Auto, Left back. A scheme applies to
+every game (Reset and Pick ROM keep it) until the cart restarts (no
+saves on this firmware). While the cursor is on the row the menu's title
+band shows the live marquee (rows 0..25) over the menu title, so each
+step previews. The row makes up to eleven rows for nine slots, so the
+list scrolls to keep the cursor in view with a 2 px scroll bar at the
+panel's right edge; the Debug overlay row no longer gives way. Gates:
+tests, all carts build, badge-bench play/scrub unchanged (menu only).
+
 ## Status
 
+- 2026-10-06: M8.1 Marquee row done (tag `snouty-lynx/m8.1`). Menu row
+  after Sound cycles Auto and the six schemes, the band previews the live
+  marquee, the list scrolls (Debug overlay always shows now).
+  docs/m8_1_marquee_row.gif. `.text` 136,220 -> 137,420 B (arena ~39.3 ->
+  ~38.1 KB). Bench unchanged: m3_scrub 6.25 / 10.89, m2_play 6.85 /
+  10.39. Tests 172/173, chord rewind check passes.
 - 2026-10-06: BMP override dropped (Adrian). `.text` 139,276 -> 136,220
   B, the scrub arena ~36.3 -> ~39.3 KB (origin/main before M8: ~49.0 KB).
   About is back to nine lines at most. Bench unchanged from M8: m3_scrub

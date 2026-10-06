@@ -303,6 +303,13 @@ pub const schemes = [_]Scheme{
     .{ .bg_edge = 0x28042C, .bg_glow = 0xF060B0, .hi_top = 0xFFFFFF, .hi_bot = 0xA8FFFF, .lo_top = 0x2080FF, .lo_bot = 0xA0E0FF, .outline = 0x10002C, .band = 0x80207C },
 };
 
+/// The schemes' names, for the menu's Marquee row.
+pub const scheme_names = [_][]const u8{ "Sunset", "Neon", "Fire", "Jungle", "Atari", "Candy" };
+
+comptime {
+    if (scheme_names.len != schemes.len) @compileError("one name per scheme");
+}
+
 /// FNV-1a of the title: the scheme every boot of this game gets.
 pub fn scheme_index(title: []const u8) usize {
     var x: u32 = 0x811C9DC5;
