@@ -36,7 +36,8 @@ its design and milestone status.
   trombone over the same sensor: hand height is the slide, side to side
   the embouchure; the theremin's sibling), `snouty-morph` (a demoscene
   mesh that follows and deforms with your hand over the same sensor;
-  `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3),
+  `lib/tof_pose.zig` is the hand pose from its zones, 3x3 GRID or the
+  8-stripe STRIPES mask of `lib/tof_zones.zig`, docs/TOF.md M3 and M5),
   `snouty-shader` (a Shadertoy-style gallery of abstract per-pixel shaders
   whose uniforms are the same sensor's depth field and hand pose),
   `snouty-beam` (sends carts badge to badge over the link cable into the
