@@ -59,8 +59,10 @@ pub const Hit = struct {
 
     pub fn signal(h: Hit) u32 {
         if (h.surface == .none) return 0;
-        const d: u64 = @max(h.mm, 50);
-        return @intCast(@min(@as(u64, refl[@backingInt(h.surface)]) * 1_000_000 / (d * d), 1_000_000));
+        // u32 throughout (refl <= 200, mm <= 4000): no 64-bit division
+        // on the badge, where -Dtof-fake=true builds run this per SPAD.
+        const d: u32 = @max(h.mm, 50);
+        return @min(refl[@backingInt(h.surface)] * 1_000_000 / (d * d), 1_000_000);
     }
 };
 
@@ -136,8 +138,8 @@ pub const Kind = enum(u8) { room, hand };
 /// 300..450 mm in front of a wall at `tof_virtual.wall_mm` (900), in view
 /// 6.5 s of every 8, on tof_virtual.scene's path: its 1/256-zone
 /// positions over map 6's 41 x 52 deg field, as tangents.
-pub const hand_r_q10: i64 = 190;
-pub const hand_wall_mm: i64 = 900;
+pub const hand_r_q10: i32 = 190;
+pub const hand_wall_mm: i32 = 900;
 
 pub fn hand_at(t_us: u64) ?[3]i64 {
     if (t_us % 8_000_000 >= 6_500_000) return null;
@@ -150,15 +152,35 @@ pub fn hand_at(t_us: u64) ?[3]i64 {
 }
 
 pub fn trace_hand(t_us: u64, tx: i32, ty: i32) Hit {
-    const len: i64 = @intCast(isqrt(@intCast(@as(i64, tx) * tx + @as(i64, ty) * ty + 1024 * 1024)));
-    if (hand_at(t_us)) |h| {
-        const dx = tx - h[0];
-        const dy = ty - h[1];
+    return trace_hand_at(hand_at(t_us), tx, ty);
+}
+
+/// `trace_hand` for a hand position already worked out (once per
+/// measurement): 32-bit only, cheap enough for every SPAD sample.
+pub fn trace_hand_at(hand: ?[3]i64, tx: i32, ty: i32) Hit {
+    const len: i32 = @intCast(isqrt32(@intCast(tx * tx + ty * ty + 1024 * 1024)));
+    if (hand) |h| {
+        const dx = tx - @as(i32, @intCast(h[0]));
+        const dy = ty - @as(i32, @intCast(h[1]));
         if (dx * dx + dy * dy <= hand_r_q10 * hand_r_q10) {
-            return .{ .mm = @intCast(@divTrunc(h[2] * len, 1024)), .surface = .ball };
+            return .{ .mm = @intCast((@as(i32, @intCast(h[2])) * len) >> 10), .surface = .ball };
         }
     }
-    return .{ .mm = @intCast(@divTrunc(hand_wall_mm * len, 1024)), .surface = .wall };
+    return .{ .mm = @intCast((@as(i32, hand_wall_mm) * len) >> 10), .surface = .wall };
+}
+
+fn isqrt32(v: u32) u32 {
+    var x: u32 = 0;
+    var bit: u32 = 1 << 30;
+    var n = v;
+    while (bit > n) bit >>= 2;
+    while (bit != 0) : (bit >>= 2) {
+        if (n >= x + bit) {
+            n -= x + bit;
+            x = (x >> 1) + bit;
+        } else x >>= 1;
+    }
+    return x;
 }
 
 pub fn trace_in(kind: Kind, t_us: u64, tx: i32, ty: i32) Hit {
@@ -180,6 +202,13 @@ pub fn spad_hits_in(kind: Kind, t_us: u64, x: usize, y: usize) [2]Hit {
     };
 }
 
+fn spad_hits_hand(hand: ?[3]i64, x: usize, y: usize) [2]Hit {
+    return .{
+        trace_hand_at(hand, tan_col[x], tan_half_row[2 * y]),
+        trace_hand_at(hand, tan_col[x], tan_half_row[2 * y + 1]),
+    };
+}
+
 /// Zone results for a user mask at `t_us`: zone c - 1 from channel c's
 /// enabled, live SPADs (zones without SPADs, or with only dead ones, are
 /// empty).
@@ -188,6 +217,7 @@ pub fn zone_results(t_us: u64, m: *const spad.Mask, zones: *[types.zones]types.Z
 }
 
 pub fn zone_results_in(kind: Kind, t_us: u64, m: *const spad.Mask, zones: *[types.zones]types.Zone) void {
+    const hand = if (kind == .hand) hand_at(t_us) else null;
     // Every enabled live SPAD's two samples, tagged with their zone.
     var hits: [2 * spad.rows * spad.cols]Hit = undefined;
     var zone_of: [2 * spad.rows * spad.cols]u8 = undefined;
@@ -200,7 +230,8 @@ pub fn zone_results_in(kind: Kind, t_us: u64, m: *const spad.Mask, zones: *[type
         const py = m.phys_row(r);
         if (px < 0 or px >= phys_cols or py < 0 or py >= phys_rows) continue;
         if (is_dead(px, py)) continue;
-        for (spad_hits_in(kind, t_us, @intCast(px), @intCast(py))) |h| {
+        const pair = if (kind == .hand) spad_hits_hand(hand, @intCast(px), @intCast(py)) else spad_hits(t_us, @intCast(px), @intCast(py));
+        for (pair) |h| {
             hits[n] = h;
             zone_of[n] = c - 1;
             n += 1;
