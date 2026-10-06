@@ -77,7 +77,9 @@ pub const Geometry = struct {
     ref_x: f32 = 1,
     ref_y: f32 = 1,
 
-    pub fn init(layout: Layout, orient: Orientation, fov_x_deg: f32, fov_y_deg: f32) Geometry {
+    /// Not inlined: once per layout or orientation change, and the trig
+    /// would otherwise be copied into every caller (cart RAM is tight).
+    pub noinline fn init(layout: Layout, orient: Orientation, fov_x_deg: f32, fov_y_deg: f32) Geometry {
         var g: Geometry = .{ .layout = layout, .orient = orient };
         const wx = deg(fov_x_deg) / 3.0;
         const wy = deg(fov_y_deg) / 3.0;
@@ -200,7 +202,7 @@ pub const Geometry = struct {
     }
 };
 
-fn zone(dev: u4, ax: f32, ay: f32, hax: f32, hay: f32) Zone {
+noinline fn zone(dev: u4, ax: f32, ay: f32, hax: f32, hay: f32) Zone {
     return .{
         .dev = dev,
         .ax = ax,
@@ -228,7 +230,7 @@ fn sin(x: f32) f32 {
     return a * (1.0 - a2 / 6.0 * (1.0 - a2 / 20.0 * (1.0 - a2 / 42.0 * (1.0 - a2 / 72.0))));
 }
 
-fn tan(x: f32) f32 {
+noinline fn tan(x: f32) f32 {
     return sin(x) / sin(x + std.math.pi / 2.0);
 }
 

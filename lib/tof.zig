@@ -549,7 +549,7 @@ pub fn Tof(comptime Bus: type) type {
         /// polls, as for `configure`; asking for the layout already
         /// measuring (or pending) does nothing. Frames carry the layout
         /// they were measured with (`Frame.layout`).
-        pub fn set_layout(self: *Self, layout: types.Layout, grid: Config) void {
+        pub noinline fn set_layout(self: *Self, layout: types.Layout, grid: Config) void {
             const cur = self.pending orelse self.config;
             switch (layout) {
                 .stripes => {
@@ -572,7 +572,7 @@ pub fn Tof(comptime Bus: type) type {
             return if (self.mask_is_stripes()) .stripes else .user;
         }
 
-        fn mask_is_stripes(self: *const Self) bool {
+        noinline fn mask_is_stripes(self: *const Self) bool {
             const m = spad.stripes();
             return spad.diff(&self.mask, &m) == null;
         }
