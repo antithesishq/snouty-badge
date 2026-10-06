@@ -27,13 +27,15 @@
 //!   when we swallow one we send an empty frame (FRAMEBUFFER_READY_V2 with
 //!   no dirty rect) for the front buffer, which the OS answers with a fresh
 //!   FRAMEBUFFER_DONE for `present` to find. The caller passes the front
-//!   buffer index (`1 - cart.framebufferIndex()`).
+//!   buffer index (`1 - cart.framebufferIndex()`). The FIFO handling lives
+//!   in lib/os_mailbox.zig, shared with lib/cart_files.zig.
 //!
 //! Backends: `badge` on the cart core; `fake` on hosts (tests): an
 //! in-memory chip that starts absent (`fake.present`); none in the wasm
 //! simulator (no chip, so no 2 MB array in its memory).
 const std = @import("std");
 const builtin = @import("builtin");
+const os_mailbox = @import("os_mailbox.zig");
 
 /// The Cortex-M33 cart core; false for wasm and hosts.
 pub const is_badge = builtin.os.tag == .freestanding and (builtin.cpu.arch.isThumb() or builtin.cpu.arch.isArm());
@@ -154,62 +156,22 @@ fn status_error(s: Status) Error!void {
 }
 
 const badge = struct {
-    const sio_fifo_st: *volatile u32 = @ptrFromInt(0xD0000050);
-    const sio_fifo_wr: *volatile u32 = @ptrFromInt(0xD0000054);
-    const sio_fifo_rd: *volatile u32 = @ptrFromInt(0xD0000058);
-    const fifo_rdy: u32 = 1 << 1;
-    const fifo_vld: u32 = 1 << 0;
-    /// The pinned runtime's FRAMEBUFFER_DONE and FRAMEBUFFER_READY_V2 tag.
-    const framebuffer_done: u32 = 0x25000002;
-    const framebuffer_ready_v2: u32 = 0x28;
+    const mailbox = os_mailbox.badge;
     /// Longest we wait for an answer (the OS's worst case is ~0.3 s).
     const timeout_us: u32 = 2_000_000;
 
     var req: Request align(4) = undefined;
 
-    fn micros() u32 {
-        const timelr: *const volatile u32 = @ptrFromInt(0x400b000c);
-        return timelr.*;
-    }
-
-    fn put(word: u32) bool {
-        const t0 = micros();
-        while (sio_fifo_st.* & fifo_rdy == 0) {
-            if (micros() -% t0 > timeout_us) return false;
-        }
-        sio_fifo_wr.* = word;
-        asm volatile ("sev");
-        return true;
-    }
-
+    /// FIFO-answered: lib/os_mailbox.zig `wait_fifo` re-arms `present`
+    /// when it swallows a FRAMEBUFFER_DONE (the top of this file).
     noinline fn request(op: Op, offset: u32, src: u32, len: u32, front: u1) Error!void {
         @as(*volatile Request, &req).* = .{ .op = op, .offset = offset, .src = src, .len = len };
-        asm volatile ("dmb" ::: .{ .memory = true });
-        const primask: u32 = asm volatile ("mrs %[r], primask"
-            : [r] "=r" (-> u32),
-        );
-        asm volatile ("cpsid i" ::: .{ .memory = true });
-        defer asm volatile ("msr primask, %[p]"
-            :
-            : [p] "r" (primask),
-            : .{ .memory = true });
-        const word: u32 = (msg_type << 24) | @as(u32, @intCast((@intFromPtr(&req) - 0x2000_0000) / 4));
-        if (!put(word)) return error.Timeout;
-        var swallowed = false;
-        defer if (swallowed) {
-            // Re-arm the runtime's `present` (see the top of this file).
-            _ = put((framebuffer_ready_v2 << 24) | front);
-        };
-        const t0 = micros();
-        while (true) {
-            if (sio_fifo_st.* & fifo_vld != 0) {
-                const msg = sio_fifo_rd.*;
-                if (msg >> 24 == msg_type) return status_error(@fromBackingInt(@intCast(@as(u24, @truncate(msg)))));
-                if (msg == framebuffer_done) swallowed = true;
-                continue;
-            }
-            if (micros() -% t0 > timeout_us) return error.Timeout;
-        }
+        mailbox.dmb();
+        const primask = mailbox.irq_disable();
+        defer mailbox.irq_restore(primask);
+        if (!mailbox.put(os_mailbox.word(msg_type, @intFromPtr(&req)), timeout_us)) return error.Timeout;
+        const msg = mailbox.wait_fifo(msg_type, timeout_us, front) orelse return error.Timeout;
+        return status_error(@fromBackingInt(@intCast(@as(u24, @truncate(msg)))));
     }
 };
 

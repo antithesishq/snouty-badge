@@ -9,6 +9,8 @@ test {
     _ = @import("link.zig");
     _ = @import("beam_slot.zig");
     _ = @import("ext_flash.zig");
+    _ = @import("os_mailbox.zig");
+    _ = @import("cart_files.zig");
     _ = @import("i2c_rp2350.zig");
     _ = @import("tof.zig");
     _ = @import("tof_pose.zig");
