@@ -3,16 +3,18 @@
 An Atari Lynx emulator cart for the SYCL Badge V2, written in Zig for
 Antithesis. On the badge it plays a `.lnx` (or headerless `.lyx`) ROM copied
 onto the badge's USB drive; the badge cart carries no ROM of its own (the
-web simulator embeds one). The Lynx's 160x102 picture sits 1:1 at the top of the
-badge's 160x128 screen with a 26-row status strip below it. The core
+web simulator embeds one). The Lynx's 160x102 picture sits 1:1 at the
+bottom of the badge's 160x128 screen with a 26-row arcade marquee for the
+game above it (its title in backlit lettering, or your own 160x26 BMP).
+The core
 emulates the 65C02, Suzy's sprite engine and math unit, and Mikey's
 timers and palette; the menu has a time scrubber (SPEC.md). On the badges'
 new OS firmware it plays the Lynx's sound through the speaker (M5).
 
 Status: M0-M5 are on main, history in PLAN.md. The
 Iris-mark splash, then the game (the real core since M1: the 65C02, Mikey,
-Suzy, the boot without the boot ROM), the strip with "SNOUTY LYNX", the
-ROM name and where it came from, the emulator menu and picker (M2) and the
+Suzy, the boot without the boot ROM), the marquee above the picture (M8;
+a status strip under it before), the emulator menu and picker (M2) and the
 time scrubber (M3), the sound (M5, below; off by default); the neopixels
 stay off. The simulator's embedded ROM is `roms/raycast.lnx`,
 42Bastian's textured raycaster (Apache-2.0, `roms/LICENSE-raycast.txt`);
@@ -29,7 +31,7 @@ the boot path that decrypts a cart's loader without the Lynx boot ROM is
 | Start                    | Pause                                                  |
 | Select, tap              | Option 1 (200 ms after the release: the double-tap window) |
 | Select, hold 500 ms      | Emulator menu (the game pauses under it)               |
-| Select, tap, then press and hold | Fast forward while held (silent, `>>2x` or `>>1.5x` top right) |
+| Select, tap, then press and hold | Fast forward while held (silent, `>>2x` or `>>1.5x` top right of the marquee) |
 | Left during that hold    | Chorded rewind: the game freezes, Left/Right step time; let go of Select to play on |
 | Left/Right in the menu   | Time scrubber: 0.5 s back / forward (not on a setting row) |
 | Start + Select           | Back to the badge OS (the OS's chord)                  |
@@ -52,10 +54,10 @@ what fits: about 1.5x in raycast and Hard Drivin', up to 4x for light
 frames (docs/RUNNING.md, PLAN.md "Fast forward"). The scrubber keeps
 every fast-forwarded frame. Left is reserved while fast forwarding:
 pressing it turns the rest of the hold into rewind (the chorded rewind).
-The game freezes under the menu's scrub bar ("Scrub: -1.7 / 1.7s", or
-"Rewind: no history"), Left steps back a record (1 s) at once and
-Left/Right step back and forward with the menu's repeat; no button
-reaches the game and Start holds the position. Letting go of Select
+The game freezes under the menu's scrub bar (in the marquee: "Scrub:
+-1.7 / 1.7s", or "Rewind: no history"), Left steps back a record (1 s)
+at once and Left/Right step back and forward with the menu's repeat; no
+button reaches the game and Start holds the position. Letting go of Select
 plays on from there and drops the later history, as resuming from the
 menu does.
 
@@ -66,11 +68,11 @@ menu does.
 | Sound: Off               | Sound on or off (off at boot, `-Dsound=true` starts it on; not in the simulator) |
 | Press Option 2           | Resume with Option 2 held for 4 frames                 |
 | Restart Pause+Opt1       | Resume with Pause + Option 1 held for 4 frames (the Lynx restart chord) |
-| Debug overlay: Off       | The strip shows fps, step times, instructions, Suzy pixels, and with sound on the audio queue and underruns ("q1470/0") in place of the ROM name |
+| Debug overlay: Off       | Three lines over the marquee: title and ROM name, fps and step times, instructions and Suzy pixels; with sound on the audio queue and underruns ("q1470/0") in place of the ROM name |
 | Reset                    | Power on again (the boot reruns)                       |
 | Pick ROM                 | The drive's ROM list (only with two or more playable files) |
 | Link cable               | The LINK screen: two badges on the link cable play a ComLynx game (docs/CABLE.md); "Leave link" while linked; not in the simulator |
-| About                    | Version, file, header title and maker, size, source, CRC |
+| About                    | Version, file, header title and maker, size, source and CRC, boot error, `fragmented`, `EEPROM: not saved`, the marquee's source |
 
 With Sound, Pick ROM and Link cable all showing, the Debug overlay row
 gives way (nine rows fit). `-Dlynx-link=false` builds the cart without
@@ -110,13 +112,14 @@ default build (`-Dlynx-rom-source=drive`):
    [docs/INSTALL.md](../../docs/INSTALL.md) at the repository root), and
    copy one `.lnx` file (or a headerless `.lyx` dump) next to it.
    Best on a freshly wiped drive, so the file is contiguous; a fragmented
-   file still works through the per-cluster path and the strip says `frag`.
+   file still works through the per-cluster path and About says `fragmented`.
 3. **Eject the drive before playing.** The OS writes flash while a host
    writes the drive, and a cart reading it at the same time could see torn
    data (docs/ROM_DRIVE.md section 2 at the repository root).
-4. Start Snouty Lynx. The strip reads `SNOUTY LYNX` and the ROM's header
-   title (or file name), then `drive 128 KB` and `crc 6DF63834` (plus
-   `raw` for a headerless file, `frag` for a fragmented one). With two or
+4. Start Snouty Lynx. The marquee above the picture shows the ROM's
+   header title (or file name); the menu's About page has the file, `128
+   KB`, `Drive CRC 6DF63834` (plus `No header (raw)` for a headerless
+   file, `fragmented` for a fragmented one). With two or
    more playable files a list opens after the splash: Up/Down, A plays, B
    runs the first; the menu's Pick ROM row brings it back and restarts
    into the chosen file. With no playable Lynx file on the drive (or no

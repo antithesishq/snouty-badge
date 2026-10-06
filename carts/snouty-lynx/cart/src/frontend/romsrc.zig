@@ -1,5 +1,5 @@
 //! Where the ROM comes from (docs/ROM_DRIVE.md sections 4 and 5, SPEC.md
-//! section 11), plus the facts the status strip and About show.
+//! section 11), plus the facts the menu's About page shows.
 //!
 //! Badge build with `rom.source == .drive`: scan the FAT12 volume at
 //! `romfs.base_addr` for `.lnx`/`.lyx` files (frontend/drive.zig), run the
@@ -76,7 +76,7 @@ pub fn name() []const u8 {
 }
 
 /// The ROM's display name: the header title when there is one, else the
-/// file name (the strip and the menu band). Set with `layout`.
+/// file name (the menu band, the debug overlay). Set with `layout`.
 pub fn title_name() []const u8 {
     return title;
 }
@@ -85,19 +85,6 @@ var title: []const u8 = "";
 fn set_title() void {
     const t = layout.title();
     title = if (t.len > 0) t else name();
-}
-
-/// "drive" or "embedded".
-pub fn origin_word() []const u8 {
-    return if (origin == .drive) "drive" else "embedded";
-}
-
-/// "drive 128 KB" or "embedded 27 KB" (the strip's second line).
-pub fn origin_line(buf: *[24]u8) []const u8 {
-    var n = debug.put(buf, origin_word());
-    n += debug.put(buf[n..], " ");
-    n += put_size(buf[n..], size);
-    return buf[0..n];
 }
 
 /// What happens after the splash (main.zig's state machine).

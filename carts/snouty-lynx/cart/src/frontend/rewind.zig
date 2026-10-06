@@ -21,8 +21,8 @@
 //! Picture while parked. `step` leaves the console exactly at the record
 //! boundary; `show` copies the frame at the latched DISPADR and the
 //! palette into the console's display (`Lynx.refresh_display`, what the
-//! vertical blank does) without stepping, then draws it and the status
-//! strip, so the parked state is never disturbed.
+//! vertical blank does) without stepping, then draws it and the marquee
+//! band above it, so the parked state is never disturbed.
 //!
 //! Resuming. The first frame stepped after a scrub must drop the records
 //! ahead (they hold the future) and open a fresh record from the parked
@@ -126,8 +126,8 @@ pub fn step(l: *core.Lynx, dir: i2) bool {
 }
 
 /// Draw the current (parked) state: the picture at the latched display
-/// address and the status strip under it. Out of line: one copy for every
-/// step.
+/// address and the marquee band above it (frontend/strip.zig). Out of
+/// line: one copy for every step.
 pub noinline fn show(l: *core.Lynx) void {
     l.refresh_display();
     video.show(l.frame());

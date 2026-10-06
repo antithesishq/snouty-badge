@@ -59,7 +59,7 @@ var up = false;
 pub var open = false;
 /// The core has a ComLynx port (GO came and the console restarted).
 pub var linked = false;
-/// A note over the status strip's last line ("Partner left link"), updates
+/// A note over the marquee band's bottom rows ("Partner left link"), updates
 /// left to show it.
 pub var note: []const u8 = "";
 pub var note_left: u16 = 0;
