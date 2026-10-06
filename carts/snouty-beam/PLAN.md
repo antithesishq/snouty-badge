@@ -113,6 +113,53 @@ picks, so stale packets from an aborted transfer are dropped).
   (`feature/cart-transfer` stays standalone and in FEATURES), monorepo
   merged to main with `-Dbeam_receive=false`, dist in `~/beam-dist/`.
 
+## M3: received carts as files on the drive (branch `beam/files`)
+
+Adrian (2026-10-06): store received carts on the regular drive, on a
+branch. The OS side is fork branch `feature/cart-files`
+(fork/CART_FILES.md: os_flags bit 6, mailbox `0x2D`, `FileRequest`). It
+lets a cart create, write and commit a file on SYCLBADGE or SYCLEXTRA, and
+refuses while a USB host has the drive mounted.
+
+- **What is sent:** in file mode, the UF2 file itself, byte for byte. The
+  copy on the receiver is identical to the sender's, so XIP carts and carts
+  bigger than the slot can be sent too. It is about twice the bytes of an
+  image (Boy about 9 s instead of 4.5 s).
+- **Choosing the mode:** the receiver advertises what it can take (file,
+  slot, or nothing) in the existing link handshake, and the sender offers a
+  file when the receiver takes files, else a slot image as in M1.
+  Old M1 receivers keep working with slot transfers.
+- **Protocol v2:** OFFER gains a kind (slot image / file). File offers carry
+  the file name (up to 63 bytes) and size instead of the slot header, sent
+  as block `0xFFFF` the way the slot header is. BLOCK/DATA/ACK/NAK
+  unchanged. Each 4 KB block is one `write` request, and DONE follows
+  `commit`.
+- **Where it goes:** SYCLBADGE if it has the room (free bytes and root
+  directory entries for the name), else SYCLEXTRA. If neither fits but the
+  cart fits the slot, it falls back to the slot. Otherwise REJECT "no
+  space". If the name is taken, the cart tries `name-2.uf2`, `name-3.uf2`,
+  and so on.
+- **USB warning:** while `FileFlags.usb_host` is set, the footer reads
+  "UNPLUG FROM THE COMPUTER TO RECEIVE", and offers are answered with REJECT
+  reason "usb". If a host attaches mid-transfer, the write fails, and the
+  cart aborts and says why.
+- **Cable pulled or sender cancels:** the receiver sends `abort`, and the
+  drive is unchanged.
+- **Screens:** Offer shows "RECEIVE <name>, <KB> KB to SYCLBADGE?".
+  RECEIVED shows the drive and the final file name. Home lists carts from
+  both drives (already) and greys out nothing extra in file mode.
+- **Code:** `lib/cart_files.zig` (raw IPC for mailbox `0x2D`, like
+  lib/ext_flash.zig, host-testable through an interface). proto.zig and
+  main.zig gain the file sink beside the slot sink.
+- **Gates:** proto_test covers a file transfer to a fake drive
+  (byte-identical file), `exists` renames, `no_space` falls back to the
+  slot, `usb_host` at offer time and mid-transfer, the cable pulled
+  mid-file (abort, no file), an M1 receiver against an M3 sender and the
+  reverse, and loss and stall seeds as M1 does. All monorepo tests and
+  builds pass.
+- **Build flag:** still `-Dbeam_receive`. The branch stays off main until
+  the badge check, per Adrian's "on a branch".
+
 ## Status
 
 **2026-10-06: M1 cart track done** (branch `beam/m0`, worktree
