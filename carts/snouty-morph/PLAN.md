@@ -103,6 +103,44 @@ polish. First full bench: worst 12.57 ms (25 % of cycles in software
   (calibrated, `bench_m0.json`, 3840 frames): worst 6.83 / mean 4.22 ms
   (no ghost frames any more), `-Dtof-fake=true` worst 10.10 / mean 5.72.
 
+### M5 (docs/TOF.md M5: stripes and arm rejection) — built 2026-10-06, branch `tof/stripes`
+
+- ZONES setting: GRID (default, the normal map 1) or STRIPES (the
+  8-stripe user mask). Hold Select 1 s to flip it (`select_hold.zig`):
+  Select's press still toggles the sound at once, and the hold undoes
+  that toggle, so the gesture displaces nothing (every other button is
+  bound; a long Select hold had no meaning). A `ZONES GRID` / `ZONES
+  STRIPES` toast shows the result. Ignored during the Start+Select chord.
+- `hand.set_zones` -> `sensor.set_layout` (driver `set_layout`: stop,
+  pages, MEASURE, no reset) and `Estimator.set_layout` (starts afresh);
+  frames of the other layout (in flight around a switch) are dropped
+  before the estimator and the HUD. `-Dtof-fake=true` selects the
+  model's SPAD-level hand scene (`user_scene = .hand`).
+- STRIPES degrades as designed: y = 0 (the mesh rests at centre height),
+  pitch and yaw confidence 0 (body.zig's tilt springs already scale by
+  confidence, so they relax to rest), roll still measured; the pose's x
+  is rescaled to GRID's angular scale so the mesh travels the same per
+  hand movement. The HUD zone map draws `hand.geom` (8 thin bars).
+- Arm rejection is the library's (x, y from the near cluster, 40 mm;
+  z, tilt and yaw from the hand body, 100 mm); morph keeps the defaults.
+- RAM: the `-Dtof-fake=true` ELF overflowed the window by ~2.4 KB with
+  the M5 library code; `mesh.zig`'s pools went from 2048 / 4096 to
+  1600 / 3072 (1458 / 2812 used, the mesh test checks it). Now ~15 KB
+  left under the stack in the fake build, ~31 KB in the normal one.
+- Tests: `select_hold.zig` (tap = sound only, 1 s hold = ZONES with the
+  sound restored and only once, the chord never toggles), `hand.zig`
+  (a STRIPES sweep: y 0, no pitch/yaw confidence, x never jumps more
+  than 0.2 per frame; the same hand gives the same mesh x in GRID and
+  STRIPES; stale GRID frames ignored; the hand rests across a switch).
+- badge-bench (calibrated, `bench_m0.json`, 3840 frames), busy ms worst /
+  mean: normal build GRID 6.83 / 4.23, STRIPES poke 6.83 / 4.23 (no
+  sensor: unchanged from M1.2's 6.83 / 4.22); `-Dtof-fake=true` GRID
+  10.12 / 5.73 (M1.2: 10.10 / 5.72), STRIPES 11.75 / 6.56. The STRIPES
+  extra is the model tracing its hand SPAD by SPAD (360 samples per
+  measurement), which a real sensor does not cost; still under the 12 ms
+  rule, 0 frames over 16.7 ms.
+- Not done: no hardware run. Hardware check: docs/TOF.md section 5, M5.
+
 ## Deferred questions (defaults taken)
 
 1. Name: `snouty-morph` (binary `snouty-morph`).

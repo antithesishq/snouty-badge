@@ -1,6 +1,7 @@
 //! On-screen extras (SPEC.md section 3): the active source top-left, the
-//! 3x3 zone map top-right (coverage of the hand per zone, dim grey for
-//! zones that only see the background), the mesh name and sound toasts,
+//! zone map top-right (3x3 or 8 stripes, docs/TOF.md M5: coverage of the
+//! hand per zone, dim grey for zones that only see the background), the
+//! mesh name, sound and ZONES toasts,
 //! and, while no hand is in view, a greetings scroller along the bottom.
 const std = @import("std");
 const cart = @import("cart-api");
@@ -26,10 +27,21 @@ pub fn show_sound(on: bool) void {
     sound_toast = toast_frames;
 }
 
+var zones_toast: u32 = 0;
+var zones_label: []const u8 = "";
+
+/// ZONES changed (hold Select): "ZONES GRID" / "ZONES STRIPES".
+pub fn show_zones(l: tof_pose.types.Layout) void {
+    zones_label = if (l == .stripes) "ZONES STRIPES" else "ZONES GRID";
+    zones_toast = toast_frames;
+    // The sound toggle of the press was undone: no SOUND toast.
+    sound_toast = 0;
+}
+
 const source_name = [_][]const u8{ "NO SENSOR", "STICK", "SENSOR" };
 const source_rgb = [_]u32{ 0x9090a8, 0xffd850, 0x60ff90 };
 
-const greetings = "SNOUTY MORPH  *  WAVE A HAND OVER THE SENSOR  *  STICK MOVES IT, B+STICK PUSHES AND TURNS, A PUNCHES  *  START: NEXT MESH  SELECT: SOUND  *  A 3X3 TIME-OF-FLIGHT SENSOR IS NINE PIXELS: THE REST IS MATHS  *  GREETINGS TO EVERY SYCL BADGE HACKER  *  ";
+const greetings = "SNOUTY MORPH  *  WAVE A HAND OVER THE SENSOR  *  STICK MOVES IT, B+STICK PUSHES AND TURNS, A PUNCHES  *  START: NEXT MESH  SELECT: SOUND  HOLD SELECT: ZONES  *  A 3X3 TIME-OF-FLIGHT SENSOR IS NINE PIXELS: THE REST IS MATHS  *  GREETINGS TO EVERY SYCL BADGE HACKER  *  ";
 
 pub fn draw(t: u32) void {
     const src = @backingInt(hand.source);
@@ -45,33 +57,53 @@ pub fn draw(t: u32) void {
         const s: []const u8 = if (sound_on) "SOUND ON" else "SOUND OFF";
         text.shadowed(s, text.centre_x(s, 1), 14, .rgb(0xffd850), 1);
     }
+    if (zones_toast > 0) {
+        zones_toast -= 1;
+        text.shadowed(zones_label, text.centre_x(zones_label, 1), 14, .rgb(0x60ff90), 1);
+    }
     if (hand.source != .stick and !hand.pose.present) scroller(t) else scroll = 0;
 }
 
+/// Size (pixels) of one cell of the zone map along an axis with `n` cells:
+/// a 3x3 grid of 5 px cells, 8 stripes of 2 px across and 17 px along.
+pub fn map_cell(n: u8, other: u8) i32 {
+    if (n > 3) return 2;
+    if (n == 1 and other > 3) return 17;
+    return 5;
+}
+
+/// The zone map: `hand.geom`'s cells (3x3, or 8 stripes) in screen order;
+/// a hand cell by its coverage, the others by the background's nearness.
 fn mini_map(p: tof_pose.Pose, f: *const tof_pose.types.Frame, rgb: u32) void {
-    const cell = 5;
-    const x0: i32 = 160 - 3 - 3 * (cell + 1);
+    const g = &hand.geom;
+    if (g.n == 0) return;
+    const cw = map_cell(g.cols, g.rows);
+    const ch = map_cell(g.rows, g.cols);
+    const w: i32 = @as(i32, g.cols) * (cw + 1);
+    const h: i32 = @as(i32, g.rows) * (ch + 1);
+    const x0: i32 = 160 - 3 - w;
     const y0: i32 = 3;
-    cart.rect(.{ .x = x0 - 1, .y = y0 - 1, .width = 3 * (cell + 1) + 1, .height = 3 * (cell + 1) + 1, .fill_color = .rgb(0x000000) });
-    for (0..9) |ci| {
-        const c = p.coverage[ci];
+    cart.rect(.{ .x = x0 - 1, .y = y0 - 1, .width = @intCast(w + 1), .height = @intCast(h + 1), .fill_color = .rgb(0x000000) });
+    const pose_ok = p.layout == g.layout;
+    const frame_ok = f.layout == g.layout;
+    for (0..g.n) |ci| {
+        const c = if (pose_ok) p.coverage[ci] else 0;
         var colour: u32 = 0x181420;
         if (p.present and c > 0) {
             colour = mix(0x302848, rgb, @intFromFloat(@min(1.0, c) * 256.0));
-        } else {
-            // Background only: brighter when nearer (device order, not
-            // the screen orientation; close enough for a glance).
-            const z = f.zones[ci];
+        } else if (frame_ok) {
+            // Background only: brighter when nearer.
+            const z = f.zones[g.zones[ci].dev];
             if (z.near.valid()) {
                 const near: u32 = @min(255, 255 * 300 / @max(@as(u32, z.near.mm), 300));
                 colour = mix(0x181420, 0x5a5468, near);
             }
         }
         cart.rect(.{
-            .x = x0 + @as(i32, @intCast(ci % 3)) * (cell + 1),
-            .y = y0 + @as(i32, @intCast(ci / 3)) * (cell + 1),
-            .width = cell,
-            .height = cell,
+            .x = x0 + @as(i32, g.col(ci)) * (cw + 1),
+            .y = y0 + @as(i32, g.row(ci)) * (ch + 1),
+            .width = @intCast(cw),
+            .height = @intCast(ch),
             .fill_color = .rgb(colour),
         });
     }

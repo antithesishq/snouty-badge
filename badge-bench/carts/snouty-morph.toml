@@ -2,4 +2,4 @@
 budget_ms = 16.7
 frames = 3840
 script = "carts/snouty-morph/tools/scripts/bench_m0.json"
-note = "No sensor in badge-bench (sensor_frame() is null): each mesh runs for 960 ticks with no hand except the stick moves below (the -Dtof-fake=true model has a wandering hand). KNOT 0..959 with an A punch at 700; START at 960 to BOING, with stick moves, B+stick push/turn and three punches 1300..1620; START at 1920 to SNOUTY (punch at 2500); START at 2880 to IRIS (punch at 3300). Gate: worst busy ms <= 12."
+note = "No sensor in badge-bench (sensor_frame() is null): each mesh runs for 960 ticks with no hand except the stick moves below (the -Dtof-fake=true model has a wandering hand). KNOT 0..959 with an A punch at 700; START at 960 to BOING, with stick moves, B+stick push/turn and three punches 1300..1620; START at 1920 to SNOUTY (punch at 2500); START at 2880 to IRIS (punch at 3300). Gate: worst busy ms <= 12. --poke morph_zones=2 starts in STRIPES (the 8-stripe user mask; with -Dtof-fake=true the model traces its hand SPAD by SPAD), 0/1 GRID (docs/TOF.md M5)."

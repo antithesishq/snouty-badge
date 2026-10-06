@@ -6,4 +6,5 @@ test {
     _ = @import("raster.zig");
     _ = @import("hand.zig");
     _ = @import("body.zig");
+    _ = @import("select_hold.zig");
 }

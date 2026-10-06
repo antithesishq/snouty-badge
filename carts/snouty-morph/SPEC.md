@@ -37,6 +37,32 @@ squared) give the covered fraction properly. The library reports a
 confidence per DoF and the cart scales each effect by it, so a weak DoF
 fades out instead of jittering.
 
+### ZONES: GRID or STRIPES (docs/TOF.md M5)
+
+The sensor can also measure through a user SPAD mask of 8 full-height
+vertical stripes (`lib/tof_spad.zig` `stripes()`, about 4.8 degrees per
+inner stripe over 43 degrees): side to side about three times finer than
+the 3x3 grid, but no vertical axis at all. Morph defaults to GRID (it
+uses y and pitch); holding Select for 1 s flips to STRIPES and back.
+
+| DoF | GRID | STRIPES |
+|---|---|---|
+| x | three cells + partial coverage | 8 stripes, half-stripe steps even when confidence saturates |
+| y | three cells | none: y = 0, the mesh rests at the centre height |
+| z, punch | unchanged | unchanged |
+| roll | plane fit | plane fit across the stripes (often better: more points) |
+| pitch, yaw | plane fit, moments | none (confidence 0: the tilt springs relax to rest) |
+
+Both layouts reject the arm (lib/tof_pose.zig M5): x and y come from the
+hand zones within 40 mm of the nearest point (a forearm reaching in from
+one side no longer pulls the mesh toward it), while z, tilt and yaw use
+the hand body within 100 mm (a palm tilted 45 degrees keeps its tilt).
+Morph takes these defaults as they are. The pose's x is +-1 at the outer
+zones' centres, 11 degrees off axis in GRID (map 1) and 18 in STRIPES;
+the cart rescales STRIPES to GRID's scale so the same hand moves the mesh
+as far in either layout (STRIPES then reaches about +-1.6, clamped to
++-1.3 as before).
+
 ## 2. The pose library (`lib/tof_pose.zig`, pure, host-tested)
 
 `Estimator.update(frame, histograms_or_null, orientation) -> Pose`, run
@@ -142,8 +168,8 @@ hand's yaw (x confidence) on top of a slow autonomous spin.
 ### Sources and controls
 
 - **SENSOR** (sensor present): a seen hand's pose drives everything; with
-  no hand in view the mesh rests. A 3x3 mini map top-right shows the zones
-  (coverage as brightness).
+  no hand in view the mesh rests. A mini map top-right shows the zones
+  (coverage as brightness): a 3x3 grid, or 8 thin bars in STRIPES.
 - **STICK**: the joystick moves the virtual hand (x/y); B + stick: up/down
   pushes/pulls (z), left/right yaws. Tilt leans into stick motion. A
   punches. Stick input takes over at once and lets go 6 s after the last
@@ -152,8 +178,13 @@ hand's yaw (x confidence) on top of a slow autonomous spin.
   had a GHOST attract hand here and whenever no hand was in view; removed
   2026-10-06, Adrian: it made the sensor hard to demo.)
 - Start: next mesh. Select: sound on/off (boots off unless `-Dsound=true`,
-  a toast says which). Nothing reacts while Start and Select are both held
-  (the OS chord). Joystick click is never bound.
+  a toast says which). Select held 1 s: ZONES GRID / STRIPES (toast
+  `ZONES ...`); the press's sound toggle is undone at that moment, so the
+  sound ends as it was (`cart/src/select_hold.zig`). Every other button
+  was bound and Select acted on its press with no meaning for a long
+  hold, so the hold displaces nothing. Nothing reacts while Start and
+  Select are both held (the OS chord), and a hold the chord touched never
+  becomes ZONES. Joystick click is never bound.
 - The source is shown top-left (SENSOR / STICK / NO SENSOR), the mesh name
   as a toast on change; a greetings scroller runs along the bottom while
   no hand is in view.
@@ -192,7 +223,8 @@ on badge builds.
 ~1 ms, backdrop 0.5..1.2 ms, pose 0.05 ms: ~5 ms. Knobs in
 `cart/src/config.zig` (tube segments and sides, sphere level, dither,
 plasma on/off, ripple count). RAM: all four meshes generated at start
-(~60 KB) plus ~40 KB of per-frame vertex buffers.
+(pools for 1600 vertices / 3072 faces, 1458 / 2812 used, ~46 KB) plus
+~40 KB of per-frame vertex buffers.
 
 ## 6. Risks
 

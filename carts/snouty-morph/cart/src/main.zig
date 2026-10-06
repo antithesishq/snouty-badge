@@ -3,8 +3,9 @@
 //! breakout on the Qwiic port (docs/TOF.md). See SPEC.md for the design,
 //! PLAN.md for the status.
 //!
-//! update(): input (Start next mesh, Select sound; nothing while Start and
-//! Select are both held, the OS chord; joystick click never bound), the
+//! update(): input (Start next mesh, Select sound, Select held 1 s ZONES
+//! GRID / STRIPES (select_hold.zig); nothing while Start and Select are
+//! both held, the OS chord; joystick click never bound), the
 //! hand (sensor or stick: hand.zig), the body's springs and
 //! deformations (body.zig), then the backdrop, the mesh and the HUD, and
 //! the sound.
@@ -20,6 +21,7 @@ const input = @import("input.zig");
 const math = @import("math.zig");
 const mesh = @import("mesh.zig");
 const render = @import("render.zig");
+const select_hold = @import("select_hold.zig");
 const sound = @import("sound.zig");
 const text = @import("text.zig");
 
@@ -31,6 +33,11 @@ comptime {
 /// can `--poke start_mesh=N` before start(); the wasm build has
 /// debug_set_mesh for the same.
 var start_mesh: u8 = 0;
+/// The ZONES layout the cart starts in: 0 (or 1) GRID, 2 STRIPES. Exported
+/// on the badge build for `--poke morph_zones=2`; the wasm build has
+/// debug_set_zones.
+var morph_zones: u8 = 0;
+var select: select_hold.SelectHold = .{};
 
 var current: usize = 0;
 var frame: u32 = 0;
@@ -47,6 +54,12 @@ pub fn start() void {
     hand.reset();
     body.reset();
     select_mesh(start_mesh % mesh.count);
+    if (morph_zones == 2) hand.set_zones(.stripes);
+}
+
+fn toggle_zones() void {
+    hand.set_zones(if (hand.zones == .stripes) .grid else .stripes);
+    hud.show_zones(hand.zones);
 }
 
 fn select_mesh(i: usize) void {
@@ -58,14 +71,18 @@ fn select_mesh(i: usize) void {
 pub fn update() void {
     input.update(read_controls());
     var stick: hand.Stick = .{};
+    // Select: a press toggles the sound, a 1 s hold undoes that and flips
+    // ZONES (select_hold.zig; nothing during the OS chord).
+    const sel = select.step(input.held(.select), input.held(.start));
+    if (sel.sound) {
+        sound.set(!sound.enabled);
+        hud.show_sound(sound.enabled);
+    }
+    if (sel.zones) toggle_zones();
     if (input.held(.start) and input.held(.select)) {
         // Start+Select is the OS's chord: react to neither button.
     } else {
         if (input.pressed(.start)) select_mesh((current + 1) % mesh.count);
-        if (input.pressed(.select)) {
-            sound.set(!sound.enabled);
-            hud.show_sound(sound.enabled);
-        }
         stick = .{
             .up = input.held(.up),
             .down = input.held(.down),
@@ -128,8 +145,11 @@ comptime {
         @export(&debug_render_us, .{ .name = "debug_render_us" });
         @export(&debug_pixel_checksum, .{ .name = "debug_pixel_checksum" });
         @export(&debug_sound, .{ .name = "debug_sound" });
+        @export(&debug_zones, .{ .name = "debug_zones" });
+        @export(&debug_set_zones, .{ .name = "debug_set_zones" });
     } else {
         @export(&start_mesh, .{ .name = "start_mesh" });
+        @export(&morph_zones, .{ .name = "morph_zones" });
     }
 }
 
@@ -165,6 +185,14 @@ fn debug_render_us() callconv(.c) u32 {
 }
 fn debug_sound() callconv(.c) u32 {
     return @intFromBool(sound.enabled);
+}
+/// ZONES: 1 GRID, 2 STRIPES.
+fn debug_zones() callconv(.c) u32 {
+    return if (hand.zones == .stripes) 2 else 1;
+}
+fn debug_set_zones(z: u32) callconv(.c) void {
+    hand.set_zones(if (z == 2) .stripes else .grid);
+    hud.show_zones(hand.zones);
 }
 /// Sum of all framebuffer words of the last frame, for regression checks.
 fn debug_pixel_checksum() callconv(.c) u32 {

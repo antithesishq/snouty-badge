@@ -16,6 +16,11 @@ notes.
   (no attract hand: Adrian removed it so the sensor demos honestly);
   `sensor.zig` is the single integration point with the driver
   (`sensor_frame()`: lib/tof.zig on the badge, null in the simulator).
+- `cart/src/select_hold.zig`: Select's press (sound) and 1 s hold
+  (ZONES GRID / STRIPES, docs/TOF.md M5). Pure, host-tested.
+- `hand.set_zones` switches the driver (`sensor.set_layout`) and the
+  estimator; frames are read by their own `frame.layout`, and the HUD's
+  zone map draws `hand.geom` (3x3 or 8 stripes).
 - `cart/src/body.zig`: the 6DoF follow and the deformation springs
   (REACH, JELLY, TWIST, SHOCKWAVE) -> `Params`.
 - `cart/src/mesh.zig`: the four generated meshes (`head_mesh.zig` is
@@ -34,13 +39,16 @@ notes.
 - f32 only and no libm: `zig build check-float` covers this cart. Use the
   sine table (`math.sin_turns`), `tof_pose.atan`/`atan2`, `@sqrt`.
 - Host tests (`cart/src/host_tests.zig`) cover the cart-API-free modules:
-  math, mesh, raster, hand, body. lib/tof_pose's tests run from
+  math, mesh, raster, hand, body, select_hold. lib/tof_pose's tests run from
   lib/tests.zig. Both in `zig build test`.
 - No comptime-heavy data (Adrian's Mac Zig): meshes are generated at
   start(), the head is a small const table.
 - Sound boots off (`-Dsound=true` flips it), Select toggles; badge builds
   never call `cart.tone2` (lib/tone_stream.zig instead).
 - Never bind the stick click; ignore Start/Select while both are held.
+- The `-Dtof-fake=true` build (sensor model + driver) is the RAM-tightest
+  build (~15 KB left under the stack after M5); `mesh.zig`'s pools were
+  trimmed to 1600 / 3072 for it. Check `size -A` when meshes or buffers grow.
 
 ## Commands (repository root)
 

@@ -35,10 +35,13 @@ render time (us) and faces drawn bottom-right.
 | A | punch: SHOCKWAVE ripple, flash, shake |
 | Start | next mesh: KNOT, BOING, SNOUTY, IRIS |
 | Select | sound on / off (boots off) |
+| Select held 1 s | ZONES: GRID (3x3, default) / STRIPES (8 vertical stripes, finer side to side, no up/down or pitch); the sound comes back as it was |
 
 Top-left shows the source: SENSOR (the breakout; with no hand in view the
 mesh rests), STICK (lets go 6 s after the last input) or NO SENSOR.
-Top-right is the 3x3 zone map (hand coverage per zone) for SENSOR.
+Top-right is the zone map (hand coverage per zone) for SENSOR: 3x3 in
+GRID, 8 bars in STRIPES (docs/TOF.md M5). If STRIPES looks scrambled or
+mirrored against GRID on a badge, hold Select again to go back to GRID.
 Without the breakout (and always in the simulator) only the stick moves
 the mesh; `cart/src/sensor.zig` runs lib/tof.zig on the badge.
 
@@ -63,7 +66,8 @@ jerks, REACH, TWIST, punches, SNOUTY's tongue when very close).
 Debug exports (wasm): `debug_frame`, `debug_mesh`, `debug_set_mesh(n)`,
 `debug_source` (0 none, 1 stick, 2 sensor), `debug_present`,
 `debug_hand_z` (0..1000), `debug_ripples`, `debug_faces`,
-`debug_render_us`, `debug_pixel_checksum`, `debug_sound`.
+`debug_render_us`, `debug_pixel_checksum`, `debug_sound`, `debug_zones`
+(1 GRID, 2 STRIPES), `debug_set_zones(n)`.
 
 ## 5. badge-bench
 
@@ -74,5 +78,6 @@ badge-bench/bench.sh zig-out/firmware/snouty-morph.elf --symbols
 Uses `badge-bench/carts/snouty-morph.toml` (3840 frames: each mesh for
 16 s, stick moves and punches; a `-Dtof-fake=true` ELF adds the sensor
 model's wandering hand). The badge
-build exports `start_mesh` for `--poke start_mesh=N`. Numbers are in
+build exports `start_mesh` for `--poke start_mesh=N` and `morph_zones`
+for `--poke morph_zones=2` (start in STRIPES; 0 or 1 GRID). Numbers are in
 `PLAN.md`.

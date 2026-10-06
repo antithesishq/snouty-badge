@@ -39,8 +39,12 @@ pub const Mesh = struct {
 pub const count = 4;
 pub var meshes: [count]Mesh = undefined;
 
-const pool_verts = 2048;
-const pool_faces = 4096;
+/// All four meshes together (1458 vertices, 2812 faces with config.zig's
+/// knobs; the mesh test checks they fit). Trimmed from 2048 / 4096 in M5:
+/// the `-Dtof-fake=true` build (the sensor model and the STRIPES code)
+/// overflowed the RAM window by ~2.4 KB. Raise them with the mesh knobs.
+const pool_verts = 1600;
+const pool_faces = 3072;
 var pos_pool: [pool_verts][3]f32 = undefined;
 var nrm_pool: [pool_verts][3]f32 = undefined;
 var face_pool: [pool_faces][3]u16 = undefined;
@@ -501,4 +505,6 @@ test "meshes: sizes, indices, unit radius, outward winding" {
     try std.testing.expectEqual(@as(usize, config.knot_segments * config.knot_sides), meshes[0].pos.len);
     try std.testing.expectEqual(@as(usize, config.boing_lon * 2 * (config.boing_lat - 1)), meshes[1].faces.len);
     try std.testing.expectEqual(@as(usize, head.faces.len * 4), meshes[2].faces.len);
+    // Every mesh fits the shared pools.
+    try std.testing.expect(used_verts <= pool_verts and used_faces <= pool_faces);
 }
