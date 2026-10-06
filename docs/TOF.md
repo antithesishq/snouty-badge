@@ -587,6 +587,59 @@ orients EYES and DEPTH).
    Leaving DEPTH goes back to the normal SPAD map (LIVE should look as
    before).
 
+**M5 addendum: stripes and arm rejection** (branch `tof/stripes`;
+steps 1-7 first: they set the orientation, and snouty-sense's DIAG is
+still the page to photograph when anything fails). Every sensor cart
+now has a ZONES setting: GRID (the 3x3 of a pre-defined map, as
+before) or STRIPES (8 narrow full-height stripes from a user SPAD mask:
+finer side to side, no up/down). A switch stops the sensor, writes the
+mask or the map and restarts it in about 0.1 s, with no reset; it
+should never show NO SENSOR or stall. Arm rejection is on in both
+layouts: side to side and the instruments' height come from the part
+of the hand nearest the sensor, so pointing a finger down, or reaching
+in from the side, should track the hand or fingertip, not the forearm.
+
+10. **Theremin** (STRIPES by default; ZONES is the last menu row,
+    Start opens the menu). The zone picture shows 8 vertical stripes.
+    Move a flat hand slowly left and right ~25 cm up: the dot slides
+    stripe by stripe, the cyan outline follows without jumping back.
+    Point one finger down and sweep sideways: the outline stays on one
+    or two stripes under the fingertip, the pitch follows its height.
+    2 HAND: pitch over the right three stripes, volume over the left
+    three, a hand over the middle two plays neither. A hand nearer
+    than ~4 cm does not play in STRIPES (the near limit, below).
+11. **Trombone** (STRIPES by default; ZONES row before DEMO). Sweep a
+    hand left and right at low, middle and high heights (10-45 cm):
+    the cyan lip marker should walk all seven ladder cells, each
+    holdable with a still hand (~14 mm of travel per partial at 15 cm,
+    ~25 mm at 27 cm). Then ZONES GRID and compare (expect coarser,
+    uneven partials). Point a finger down with the arm coming in from
+    the side: the lip follows the fingertip.
+12. **Morph** (GRID by default): hold Select 1 s (a tap still toggles
+    the sound; the hold leaves it as it was): "ZONES STRIPES", the map
+    top right turns into 8 bars. A sideways sweep should glide the
+    mesh more smoothly than GRID; it stays at centre height and only
+    rolls (no pitch, no turn). Reach in from the side: it follows the
+    hand, not the arm (both layouts).
+13. **Shader** (GRID by default): hold Select 1 s (a tap is still
+    MIRROR): "ZONES STRIPES"; with B held the panel shows 8 bars and
+    its dot. A slow sweep lights the bars one by one, the field lights
+    full-height columns under the hand, INK and CELLS bend toward the
+    hand more precisely than in GRID.
+14. **Toggle ZONES back and forth** a few times in any cart: each
+    switch settles within a fraction of a second.
+
+If STRIPES looks scrambled in any cart (bars or stripes light out of
+order, a stripe never lights, the lateral direction is reversed against
+GRID, or every stripe lights with no hand there), switch that cart to
+ZONES GRID: it is exactly the M1-M4 behaviour (plus arm rejection).
+Then tell me which: out of order or a dead stripe = the channel to
+triplet mapping (section 3, inferred); reversed against GRID = the SPAD
+column order (`tof_zones.stripes_reversed`); every stripe lit at a few
+cm = crosstalk without calibration (raise `min_mm_stripes`, 40 mm). A
+photo of the theremin's stripes with your hand over one side shows all
+three.
+
 ## 6. Deferred questions
 
 1. Theremin boots with sound on (it is an instrument) instead of the
@@ -597,3 +650,7 @@ orients EYES and DEPTH).
    (`Scan.settle`): from the step 9 photos.
 4. M2: EYES boots silent like every other cart (A turns the sound on,
    `-Dsound=true` starts with it on), unlike the theremin.
+5. M5: ZONES defaults (STRIPES for theremin and trombone, GRID for morph
+   and shader), the 40 mm STRIPES near limit, and whether confidence
+   tracks coverage on the real chip (it decides whether STRIPES gives
+   more than half-stripe steps): from the M5 addendum checks.
