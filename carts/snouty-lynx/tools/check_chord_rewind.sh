@@ -8,7 +8,7 @@
 # Left at 317, Select let go at 336). Both park on game frame 180 (a
 # 60-frame record boundary) and resume there; with no input after, both
 # runs must reach game frame 510 with identical console exports and an
-# identical picture (rows 0..101, the Lynx screen). Run from the
+# identical picture (rows 26..127, the Lynx screen). Run from the
 # repository root after `zig build -Dcart=snouty-lynx`:
 #   sh carts/snouty-lynx/tools/check_chord_rewind.sh [zig-out/bin/snouty-lynx.wasm]
 # Exit 0 when they match.
@@ -61,8 +61,8 @@ for k in em:
     if em[k] != ec[k]:
         print(f"{k}: menu {em[k]} chord {ec[k]}"); ok = False
 rm, rc = rows(f"{out}/menu/{fm}"), rows(f"{out}/chord/{fc}")
-if rm[0:102] != rc[0:102]:
-    print("picture rows 0..101 differ"); ok = False
+if rm[26:128] != rc[26:128]:
+    print("picture rows 26..127 differ"); ok = False
 print("chorded rewind matches the menu path" if ok else "MISMATCH")
 sys.exit(0 if ok else 1)
 PY

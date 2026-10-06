@@ -48,12 +48,13 @@
 //! scrub bar (`draw_scrub_bar`) over the frozen frame (`freeze_frame`). Resuming
 //! from a scrubbed position plays on from there and drops the future
 //! (main.zig, `rewind.resume_if_parked`). After a scrub step the panel
-//! gives way to that line in a bar at the bottom (`scrub_view`) so
-//! the restored frame, drawn by `rewind.step`, is visible; Left/Right keep
-//! scrubbing, B or a Select tap resume, and Up/Down/A bring the full menu
-//! back. The bar lies inside the panel's rectangle, so the panel covers it
-//! completely when it comes back. Reset and Pick ROM forget the history
-//! (`rewind.reset` after the boot, here and in main.zig's `boot`).
+//! gives way to that line in a bar in the marquee band above the picture
+//! (`scrub_view`) so the restored frame, drawn by `rewind.step`, shows
+//! whole; Left/Right keep scrubbing, B or a Select tap resume, and
+//! Up/Down/A bring the full menu back. The bar lies inside the title
+//! band's rectangle, so the band covers it completely when it comes back.
+//! Reset and Pick ROM forget the history: both boot through main.zig's
+//! `boot` (`rewind.reset` after the boot, then `marquee.load`).
 //!
 //! The Lynx's Option 2 and its restart chord have no badge button (SPEC.md
 //! 5, 18.4): their rows resume the game with `hold_pad` held for
@@ -72,11 +73,13 @@ const text = @import("text.zig");
 const rewind = @import("rewind.zig");
 const cable = @import("cable.zig");
 const audio = @import("audio.zig");
+const video = @import("video.zig");
+const marquee = @import("marquee.zig");
 const hint = @import("hint");
 
 pub const version = "0.7.0-m7";
 
-/// The title the menu band and the status strip show.
+/// The title the menu band and the debug overlay show.
 pub const title = "SNOUTY LYNX";
 
 /// What main.zig does after a menu update.
@@ -84,6 +87,9 @@ pub const Result = enum {
     stay,
     /// Close, suppress held buttons, run a game frame (with `hold_pad`).
     resume_game,
+    /// Reset: boot the same cart again (main.zig `boot`, which every boot
+    /// goes through), then as `resume_game`.
+    reset,
     /// Close, suppress held buttons, `picker.reset()`, enter the picker.
     pick_rom,
     /// Close and open the LINK screen (frontend/cable_screen.zig).
@@ -99,10 +105,10 @@ pub var hold_frames_left: u8 = 0;
 const hold_frames = 4;
 
 /// The fast-forward gesture (frontend/input.zig): main.zig's in-play
-/// strip after `hint.hold_select`, and a footer turn.
+/// hint after `hint.hold_select`, and a footer turn.
 pub const fast_hint = "2x Sel+hold: fast";
 /// The chorded rewind's hint: the footer turn after `fast_hint`, and the
-/// in-play strip's third line.
+/// in-play hint's third turn.
 pub const rewind_hint = "then Left: rewind";
 /// The footer's turns: how to leave, fast forward, chorded rewind.
 const footers = [_][]const u8{ hint.back, fast_hint, rewind_hint };
@@ -180,9 +186,9 @@ pub fn freeze_frame() void {
 pub fn close() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     // The present of the frame drawn next still sends only marked rects
-    // (badge-bench --lcd): without this the right end of the scrub bar's
-    // frame, which the status strip's fill repaints unmarked, stayed on
-    // the LCD for that one update after a resume.
+    // (badge-bench --lcd): without this the scrub bar, which the marquee
+    // band repaints unmarked (`marquee.draw` marks nothing), stayed on the
+    // LCD for that one update after a resume.
     cart.mark_dirty_rect(0, 0, cart.screen_width, cart.screen_height);
 }
 
@@ -212,17 +218,10 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
                 .resume_game => return .resume_game,
                 .opt2 => return hold(core.Pad.opt2),
                 .restart => return hold(core.Pad.pause | core.Pad.opt1),
-                .reset => {
-                    // Power on again: the boot (core/boot.zig) reruns.
-                    // `init_in_place` with the same cart is `reset`, and
-                    // the out-of-line call shares main.zig's copy.
-                    // The boot writes RAM past the undo hooks: forget the
-                    // history.
-                    @call(.never_inline, core.Lynx.init_in_place, .{ l, l.cart });
-                    rewind.reset(l);
-                    cable.after_boot(l);
-                    return .resume_game;
-                },
+                // Power on again: main.zig's `boot` with the same cart
+                // reruns the boot (core/boot.zig), forgets the scrub
+                // history and reloads the marquee.
+                .reset => return .reset,
                 .pick_rom => return .pick_rom,
                 .link_cable => {
                     if (cable.linked) {
@@ -309,20 +308,22 @@ const row_h = 8;
 const bar_rows = row_h + 1;
 const text_x = panel_x + 4;
 const first_row_y = panel_y + 2;
-/// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
-/// the rows. Fixed below the ninth row even when Pick ROM or Sound is
+/// The panel's bottom line (y 110): "Scrub: ..." on the rows, About's
+/// tenth line. Fixed below the ninth row even when Pick ROM or Sound is
 /// hidden.
 pub const scrub_line_y = first_row_y + panel_rows * row_h;
 /// The footer under it (y 119): how to leave the menu (`hint.back`), in
-/// turns with `fast_hint`.
+/// turns with `fast_hint`; "B: back" on About.
 const footer_y = scrub_line_y + 9;
-/// The scrub bar shown after a step (`scrub_view`): the panel's bottom
-/// strip (y 118..127, over the status strip's last line), so the panel
-/// hides it entirely when it comes back.
+/// The scrub bar shown after a step (`scrub_view`) and in the chorded
+/// rewind: centred in the marquee band above the picture (y 8..17 of
+/// 0..25), so the restored picture shows whole and the title band hides
+/// the bar entirely when the full menu comes back.
 const bar_h = 10;
-const bar_y = panel_y + panel_h - bar_h;
-/// About lines above the bottom line.
-const about_lines = panel_rows;
+const bar_y = (video.top - bar_h) / 2;
+/// About lines: the nine rows' and the bottom line's (the footer holds
+/// "B: back"), enough for About's worst case (`draw_about`).
+const about_lines = panel_rows + 1;
 
 /// Characters of the 8 px font across the screen (title band).
 const screen_cols = cart.screen_width / 8;
@@ -372,8 +373,9 @@ fn draw(l: *const core.Lynx) void {
     var buf: [24]u8 = undefined;
 
     if (scrub_view) {
-        // Only the bar: the rest is the restored frame and strip, redrawn
-        // in full by every scrub step (frontend/rewind.zig `show`).
+        // Only the bar: the rest is the restored frame and the marquee
+        // band, redrawn in full by every scrub step (frontend/rewind.zig
+        // `show`).
         draw_scrub_bar(false);
         return;
     }
@@ -414,10 +416,10 @@ fn draw(l: *const core.Lynx) void {
     text.draw(footer, text_x, footer_y, dim_color, panel_color);
 }
 
-/// The scrub bar (the panel's bottom strip, rows 118..127 over the status
-/// strip's last line): the menu after a scrub step, and the whole display
-/// of the chorded rewind (main.zig), which passes `chord` so an empty
-/// history reads `hint.rewind_empty` rather than "Scrub: live / 0.0s".
+/// The scrub bar (rows 8..17, in the marquee band above the picture): the
+/// menu after a scrub step, and the whole display of the chorded rewind
+/// (main.zig), which passes `chord` so an empty history reads
+/// `hint.rewind_empty` rather than "Scrub: live / 0.0s".
 /// Out of line: the menu and main.zig share one copy.
 pub noinline fn draw_scrub_bar(chord: bool) void {
     var buf: [24]u8 = undefined;
@@ -481,9 +483,14 @@ pub fn boot_error_text(l: *const core.Lynx) ?[]const u8 {
     return @errorName(e);
 }
 
-/// About (PLAN.md M2): version, file name, header title and manufacturer
-/// (headered ROMs), size and block size, source, then while lines remain:
-/// the core's boot error, the drive's CRC32, "fragmented", the EEPROM warning.
+/// About (PLAN.md M2, M8): version, file name, header title and
+/// manufacturer (headered ROMs; "No header (raw)" otherwise), size and
+/// block size, the source ("Source: embedded", or "Drive CRC 1A2B3C4D"
+/// with the drive file's CRC32), then the core's boot error, "fragmented",
+/// the EEPROM warning and the marquee's line (`marquee.about_line`). Ten
+/// lines at most (two for the header, one each for the rest), all of
+/// `about_lines`; the `n < about_lines` guards only keep a later line
+/// from overflowing.
 fn draw_about(l: *const core.Lynx) void {
     var bufs: [about_lines][24]u8 = undefined;
     var lines: [about_lines][]const u8 = undefined;
@@ -519,7 +526,15 @@ fn draw_about(l: *const core.Lynx) void {
     n += 1;
 
     const drive = romsrc.origin == .drive;
-    lines[n] = if (drive) "Source: drive" else "Source: embedded";
+    if (drive) {
+        w = .{ .buf = &bufs[n] };
+        w.put("Drive CRC ");
+        var hex: [8]u8 = undefined;
+        w.put(romsrc.hex8(&hex, romsrc.crc));
+        lines[n] = w.done();
+    } else {
+        lines[n] = "Source: embedded";
+    }
     n += 1;
 
     if (boot_error_text(l)) |s| {
@@ -529,22 +544,17 @@ fn draw_about(l: *const core.Lynx) void {
         lines[n] = w.done();
         n += 1;
     }
-    if (drive) {
-        if (n < about_lines) {
-            w = .{ .buf = &bufs[n] };
-            w.put("CRC ");
-            var hex: [8]u8 = undefined;
-            w.put(romsrc.hex8(&hex, romsrc.crc));
-            lines[n] = w.done();
-            n += 1;
-        }
-        if (romsrc.fragmented and n < about_lines) {
-            lines[n] = "fragmented";
-            n += 1;
-        }
+    if (drive and romsrc.fragmented and n < about_lines) {
+        lines[n] = "fragmented";
+        n += 1;
     }
     if (lay.warn_eeprom() and n < about_lines) {
         lines[n] = "EEPROM: not saved";
+        n += 1;
+    }
+    if (n < about_lines) {
+        var m: [24]u8 = undefined;
+        lines[n] = fit(&bufs[n], marquee.about_line(&m), panel_cols);
         n += 1;
     }
 
@@ -553,7 +563,7 @@ fn draw_about(l: *const core.Lynx) void {
         text.draw(s, text_x, y, row_color, panel_color);
         y += row_h;
     }
-    text.draw(back_hint, text_x, scrub_line_y, dim_color, panel_color);
+    text.draw(back_hint, text_x, footer_y, dim_color, panel_color);
 }
 
 /// `s` cut to `cols` characters, the last one replaced by '~' when
@@ -609,7 +619,7 @@ comptime {
     check_width("Sound: Off", panel_cols);
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
-    check_width("CRC 00000000", panel_cols);
+    check_width("Drive CRC 00000000", panel_cols);
     check_width("512 KB, 2048 B blk", panel_cols);
     check_width("Boot: BadCheckByte", panel_cols);
     check_width("EEPROM: not saved", panel_cols);
@@ -623,9 +633,13 @@ comptime {
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
     check_width("Scrub: -99 / 99s", panel_cols);
-    // The last row's cursor bar ends at scrub_line_y - 1.
-    if (bar_y + 1 < scrub_line_y) @compileError("scrub bar overlaps the rows");
-    if (bar_y + bar_h > panel_y + panel_h) @compileError("scrub bar outside the panel");
+    // About's ten lines end above the footer that holds "B: back".
+    if (about_lines < 10) @compileError("About's worst case is ten lines");
+    if (first_row_y + about_lines * row_h > footer_y) @compileError("About lines over the footer");
+    // The scrub bar stays off the picture (rows video.top..127) and inside
+    // the title band, which hides it when the full menu comes back.
+    if (bar_y + bar_h > video.top) @compileError("scrub bar over the picture");
+    if (bar_y + bar_h > band_h) @compileError("scrub bar outside the title band");
 }
 
 comptime {

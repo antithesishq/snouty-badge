@@ -2,11 +2,12 @@
 //! 14), trimmed from Snouty Gear's overlay
 //! (carts/snouty-gear/cart/src/frontend/debug.zig): the numbers are kept
 //! every frame; `line`, `line2` and `audio_line` format them for the
-//! status strip when `enabled`. Allocation-free and std.fmt-free. In wasm `micros_since_boot`
-//! adds 1000 per call, so only hardware numbers mean anything.
+//! three lines over the marquee band (frontend/strip.zig) when `enabled`.
+//! Allocation-free and std.fmt-free. In wasm `micros_since_boot` adds 1000
+//! per call, so only hardware numbers mean anything.
 
-/// Off at boot; the menu's "Debug overlay" row toggles it (the strip then
-/// shows the numbers instead of the ROM origin).
+/// Off at boot; the menu's "Debug overlay" row toggles it (the title, ROM
+/// name and these numbers then sit over the marquee).
 pub var enabled: bool = false;
 
 /// Instructions and Suzy pixels of the last stepped frame.
@@ -116,7 +117,7 @@ pub fn line2(buf: *[32]u8) []const u8 {
 }
 
 /// "qNNNN/N" (the audio queue in samples and the underruns since the
-/// start, frontend/audio.zig); the strip fits it in the ROM name's place.
+/// start, frontend/audio.zig); the overlay fits it in the ROM name's place.
 pub fn audio_line(buf: *[32]u8, queued: u32, underruns: u32) []const u8 {
     var i: usize = 0;
     i += put(buf[i..], "q");

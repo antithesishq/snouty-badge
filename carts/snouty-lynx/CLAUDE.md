@@ -44,8 +44,9 @@ CLAUDE.md and docs have the longer explanations.
   interface contract between these files.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
   the wasm shims and exports, the state machine (splash -> running | pick | help, running <-> menu,
-  menu -> pick -> running | help), the status strip and the no-ROM screen. `frontend/`: `video` (Lynx frame ->
-  rows 0..101, 16-entry palette cache), `input` (pad word, Select tap =
+  menu -> pick -> running | help), the play hints and `>>2x` over the
+  marquee band, and the no-ROM screen. `frontend/`: `video` (Lynx frame ->
+  rows 26..127, down to the bottom edge, 16-entry palette cache), `input` (pad word, Select tap =
   Option 1 after the 200 ms double-tap window, Select hold = menu,
   Select double tap and hold = fast forward, Left during it = the
   chorded rewind, `Repeat` shared with the menu; main.zig `run_frame`), `drive` (drive scan and Cart from a drive
@@ -63,7 +64,12 @@ CLAUDE.md and docs have the longer explanations.
   `cable_screen` (the LINK screen; the menu's Link cable row;
   docs/CABLE.md), `rewind` (the time
   scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
-  (stack guard, wasm arena, the fast-forward knobs), `strip` (the status strip), `audio` (M5:
+  (stack guard, wasm arena, the fast-forward knobs), `marquee` (M8: the
+  arcade marquee in rows 0..25 above the picture, drawn from the title or
+  the drive's `NAME.BMP`; `load` after every boot, `draw` every frame),
+  `strip` (the band of rows 0..25: the marquee, with the debug overlay's
+  three lines and a boot error over it; the status strip under the
+  picture before M8), `audio` (M5:
   `audio_out` into the streaming ring of `lib/stream_audio.zig`, rate
   control, ramp out / prime on resume; host-tested by
   `tests/stream_unit.zig`). `debug.enabled` is off at boot and a menu row;

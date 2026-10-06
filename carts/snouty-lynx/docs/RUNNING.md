@@ -9,13 +9,15 @@ Status: M4 (perf) done, on main; M2 is the frontend described here, M3
 the scrubber, M4 the perf pass (PLAN.md Status). Boot splash (the Iris mark and
 "SNOUTY LYNX" slide down onto a dark screen, 1.2 s, any button skips; the
 cart is silent), then the real core (`core/`: the 65C02, Mikey, Suzy, the
-boot without the boot ROM). Rows 102..127 are the status strip: "SNOUTY
-LYNX" and the ROM name (header title, else file name); then the origin
-("drive 27 KB" / "embedded 27 KB") and the detail (the drive CRC and
-`frag`/`raw`/`no-EEP`), or with the debug
-overlay on (a menu row, off at boot) fps, mean (`u`) and worst (`w`) step
-microseconds, then instructions (`i`) and Suzy pixels (`px`) of the last
-frame. A boot error replaces the last line.
+boot without the boot ROM). The picture fills rows 26..127; rows 0..25
+above it are the game's arcade marquee (M8, SPEC.md section 6). With the
+debug overlay on (a menu row, off at boot) three lines sit over the
+marquee: "SNOUTY LYNX" and the ROM name (header title, else file name),
+fps, mean (`u`) and worst (`w`) step microseconds, then instructions
+(`i`) and Suzy pixels (`px`) of the last frame. A boot error is a red
+line on the marquee's bottom 10 rows (in place of the overlay's last
+line). The origin, CRC and flags (`fragmented`, `No header (raw)`,
+`EEPROM: not saved`) are on the menu's About page.
 
 Controls: d-pad, A, B as on the Lynx; Start = Pause; Select tap = Option
 1 (200 ms after the release, the fast-forward window below); Select tap,
@@ -28,8 +30,8 @@ with more than one playable drive file), About. M3 (time scrubber,
 time back/forward one undo record (30 frames, 0.5 s), 4 steps a second
 while held; the panel's bottom line reads "Scrub: live / 3.5s" or "Scrub:
 -1.5 / 3.5s" (dim with no history, "Scrub: no memory" when the arena has
-no room for two records). After a step only a bar at the bottom remains
-over the restored picture; Left/Right keep scrubbing, B or a Select tap
+no room for two records). After a step only a bar in the marquee remains
+above the restored picture (M8; at the bottom before); Left/Right keep scrubbing, B or a Select tap
 play on from there (the history ahead is dropped), Up/Down/A bring the
 panel back. Reset and Pick ROM forget the history. Several playable files on
 the drive open the picker after the splash (A plays, B runs the first);
@@ -40,7 +42,7 @@ menu leaves.
 
 On-screen hints (`lib/hint.zig`, shared with Boy, Gear and Genesis): the
 splash and the first 3 s of play after the splash or the picker show "Hold
-Select: menu" (over the status strip's last line, gone at the first button
+Select: menu" (over the marquee's bottom 10 rows, gone at the first button
 press); in the menu the bottom line on Resume reads "Left/Right: rewind"
 ("Rewind: no history" before the first record; the `Scrub:` readout once
 parked or on other rows) and the footer reads "B: back to game", taking
@@ -54,8 +56,8 @@ frames) and hold it. While it is held each update spans two badge frames
 (`ff_periods`) and steps unshown, silent Lynx frames until 4 a badge
 frame ran or about 29.6 ms of the 33.3 went (`ff_max_frames`,
 `ff_budget_us`; Gear's rule: the time so far plus twice the dearest frame
-must fit), then one shown frame; the speed (`>>2x`, `>>1.5x`) sits top
-right of the picture. A Lynx frame costs 6-10 ms on the badge, so that is
+must fit), then one shown frame; the speed (`>>2x`, `>>1.5x`) sits in
+the marquee's top right corner. A Lynx frame costs 6-10 ms on the badge, so that is
 about 1.5x in raycast and Hard Drivin' (4x for light frames, and always
 4x in the simulator, which has no clock). The d-pad and buttons reach the
 game as usual; letting go is 1x and delivers nothing; the second press
@@ -73,7 +75,8 @@ without the `>>`), the first step back happens at once and Left/Right
 then step one record (60 frames, 1 s) back or forward with the menu's
 repeat (`input.Repeat`, 4 a second while held), through the same
 `rewind.step`; the only thing drawn is the menu's scrub bar
-(`menu.draw_scrub_bar`: "Scrub: -1.7 / 1.7s", or "Rewind: no history").
+(`menu.draw_scrub_bar`, in the marquee above the picture: "Scrub: -1.7 /
+1.7s", or "Rewind: no history").
 No button reaches the game; Start holds the position. Letting go of
 Select resumes exactly as the menu's resume: held buttons wait for a
 release, the history ahead of the position is dropped, the sound comes
@@ -250,7 +253,7 @@ last Press Option 2 / Restart row asked for: 4 or 264),
 `debug_sleep_ticks` (CPU asleep while Suzy draws), `debug_display_frames`
 (vertical blanks copied), `debug_boot_error` (0 booted, 1-4 the
 `core.boot.BootError`), `debug_pc`. In wasm `micros_since_boot` adds 1000
-per call, so the strip's step times mean nothing there.
+per call, so the overlay's step times mean nothing there.
 
 The scrubber (M3), `tools/scripts/m3_scrub.json`, 480 updates: A at 40,
 `m1_play.json`'s moves up to 280 (Up+B 241-280), Select held 285-320 (the
@@ -390,7 +393,8 @@ badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --romfs out/lynx-romfs.img
 ## 6. A ROM on the badge drive
 
 See README.md ("A ROM on the badge drive"): copy the UF2 and one `.lnx`
-file onto `SYCLBADGE`, **eject**, start the cart; the strip names the file.
+file onto `SYCLBADGE`, **eject**, start the cart; the marquee shows the
+ROM's title and About names the file.
 
 ## 7. Flash the badge
 

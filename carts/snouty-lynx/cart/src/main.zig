@@ -1,10 +1,11 @@
-//! Snouty Lynx: Atari Lynx emulator cart (M5: sound). The Iris-mark
+//! Snouty Lynx: Atari Lynx emulator cart (M8: the marquee). The Iris-mark
 //! splash (frontend/splash.zig), then the game: the core steps 1/60 s of
-//! Lynx time per update and its last completed frame goes to rows 0..101,
-//! the 26-row status strip below it (SPEC.md section 6) has the title and
-//! the ROM name, then the ROM origin or, with the debug overlay on
-//! (frontend/debug.zig, a menu row, off at boot), fps, mean/worst step
-//! microseconds, instructions and Suzy pixels per frame.
+//! Lynx time per update and its last completed frame goes to rows 26..127;
+//! the 26-row band above it (SPEC.md section 6, frontend/strip.zig) is the
+//! game's arcade marquee (frontend/marquee.zig, loaded at every boot) and,
+//! with the debug overlay on (frontend/debug.zig, a menu row, off at
+//! boot), the title and ROM name, fps, mean/worst step microseconds,
+//! instructions and Suzy pixels per frame over it.
 //!
 //! States (PLAN.md "M2 Frontend"): splash -> running | pick | help,
 //! running <-> menu, menu -> pick -> running | help. After the splash the
@@ -30,19 +31,21 @@
 //! spans `tuning.ff_periods` badge frames (a Lynx frame is too dear for
 //! two in one) and steps up to `tuning.ff_max_frames` game frames per
 //! period within `tuning.ff_budget_us`, only the last one shown (the
-//! others skip the display conversion, `video.show`, and the strip), none
+//! others skip the display conversion, `video.show`, and the band), none
 //! with sound (`audio_render` off, the stream ramps out as in the menu),
 //! every one recorded for the scrubber; the speed (`>>2x`, `>>1.5x`) sits
-//! in the picture's top right corner meanwhile. Left during that hold
+//! in the marquee band's top right corner meanwhile. Left during that hold
 //! turns it into the chorded rewind (`input.Rewind`): the game freezes
-//! under the menu's scrub bar (`menu.draw_scrub_bar`), Left/Right step
-//! time through `rewind.step` as in the menu, and letting go of Select
-//! resumes from there as the menu's resume does.
+//! under the menu's scrub bar (`menu.draw_scrub_bar`, in the marquee band,
+//! so the picture shows whole), Left/Right step time through `rewind.step`
+//! as in the menu, and letting go of Select resumes from there as the
+//! menu's resume does.
 //!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and
-//! over the status strip's last line for the first 3 s of play after the
-//! splash or the picker, then "2x Sel+hold: fast" and "then Left: rewind"
-//! for 3 s each (gone at the first fresh press); the menu has its own.
+//! over the marquee band's bottom 10 rows (`strip.note_y`, as the cable
+//! notes) for the first 3 s of play after the splash or the picker, then
+//! "2x Sel+hold: fast" and "then Left: rewind" for 3 s each (gone at the
+//! first fresh press); the menu has its own.
 //!
 //! Sound (M5, PLAN.md "M5 Sound: contract"): every stepped frame's
 //! `audio_out` goes to the new firmware's streaming ring
@@ -63,6 +66,7 @@ const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
 const picker = @import("frontend/picker.zig");
 const strip = @import("frontend/strip.zig");
+const marquee = @import("frontend/marquee.zig");
 const rewind = @import("frontend/rewind.zig");
 const cable = @import("frontend/cable.zig");
 const cable_screen = @import("frontend/cable_screen.zig");
@@ -91,7 +95,7 @@ var controls_state: input.State = .{};
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
 /// "Hold Select: menu", then `menu.fast_hint` and `menu.rewind_hint`, over
-/// the status strip's last line for the first seconds of play
+/// the marquee band's bottom 10 rows for the first seconds of play
 /// (lib/hint.zig): `hint.play_seconds` each.
 var play_hint: hint.Overlay = .{};
 const play_hint_updates = hint.play_seconds * 60;
@@ -176,14 +180,16 @@ fn live_edge() input.Edge {
     return controls_state.live_edge();
 }
 
-/// (Re)start the core on `c` (start and the picker; the menu's Reset makes
-/// the same call) and forget the scrub history: the boot writes RAM past
-/// the undo hooks. The boot is one out-of-line call for every site so the
-/// boot code (core/boot.zig, ~2 KB once inlined) is not copied into each.
+/// (Re)start the core on `c` (start, the picker and the menu's Reset, the
+/// only boots) and forget the scrub history: the boot writes RAM past the
+/// undo hooks. Then the marquee for that ROM (title, colours, drive BMP).
+/// The boot is one out-of-line call for every site so the boot code
+/// (core/boot.zig, ~2 KB once inlined) is not copied into each.
 pub fn boot(c: core.Cart) void {
     @call(.never_inline, core.Lynx.init_in_place, .{ &lynx, c });
     rewind.reset(&lynx);
     cable.after_boot(&lynx);
+    marquee.load();
 }
 
 /// One picker update (drive builds). A choice restarts the core on that
@@ -200,6 +206,12 @@ fn menu_frame() void {
     switch (menu.update(&lynx, live_edge())) {
         .stay => {},
         .resume_game => {
+            menu.close();
+            enter(.running, cart.micros_since_boot());
+        },
+        .reset => {
+            // `init_in_place` with the same cart is the Lynx's reset.
+            boot(lynx.cart);
             menu.close();
             enter(.running, cart.micros_since_boot());
         },
@@ -272,7 +284,7 @@ fn run_frame(t1: u64) void {
                 play_hint.stop();
                 menu.freeze_frame();
                 // The last presented frame carries the `>>` indicator:
-                // redraw the picture and the strip without it.
+                // redraw the picture and the marquee band without it.
                 video.show(lynx.frame());
                 strip.draw(&lynx);
                 cart.mark_dirty_rect(0, 0, cart.screen_width, cart.screen_height);
@@ -294,7 +306,7 @@ fn run_frame(t1: u64) void {
     rewind.resume_if_parked(&lynx);
 
     // Fast forward: the frames before the last one are not shown (no
-    // display conversion, no strip) and none renders sound; the console
+    // display conversion, no marquee band) and none renders sound; the console
     // steps exactly as at 1x (tests/ff_determinism.zig).
     var n: u32 = 1;
     _ = cable.before_frame(&lynx);
@@ -332,15 +344,15 @@ fn run_frame(t1: u64) void {
     video.show(lynx.frame());
     strip.draw(&lynx);
     if (fast) draw_fast(n);
-    // Over the strip's last line (the ROM detail), so no picture is hidden.
+    // Over the marquee band's bottom 10 rows, so no picture is hidden.
     // A press held over from the splash or picker is suppressed, not fresh.
     if (play_hint.tick(live_edge().any_pressed())) {
         const s = if (play_hint.left >= 2 * play_hint_updates) hint.hold_select else if (play_hint.left >= play_hint_updates) menu.fast_hint else menu.rewind_hint;
-        hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, strip.accent, strip.bg);
+        hint.draw_strip(cart, text.draw, s, strip.note_y, strip.accent, strip.bg);
     } else if (cable.note_left > 0) {
         // "Link cable: linked", "Partner left link", "Link cable out".
         cable.note_left -= 1;
-        hint.draw_strip(cart, text.draw, cable.note, cart.screen_height - hint.strip_h, strip.accent, strip.bg);
+        hint.draw_strip(cart, text.draw, cable.note, strip.note_y, strip.accent, strip.bg);
     }
 }
 
@@ -361,11 +373,11 @@ fn step(pad: u16) void {
 }
 
 /// The speed, `n` frames over `ff_periods` badge frames (`>>2x`,
-/// `>>1.5x`), in the picture's top right corner, rows 0..7: the debug
-/// overlay and the play hint are in the status strip below the picture.
-/// The game redraws the whole screen every update (`.no_copy_full_frame`),
-/// so it is gone the update fast forward stops; `text.draw` marks its own
-/// dirty rect.
+/// `>>1.5x`), in the marquee band's top right corner, rows 0..7, clear of
+/// the play hint on the band's bottom rows (with the debug overlay on it
+/// covers the end of the overlay's first line). The game redraws the whole
+/// screen every update (`.no_copy_full_frame`), so it is gone the update
+/// fast forward stops; `text.draw` marks its own dirty rect.
 fn draw_fast(n: u32) void {
     comptime {
         if (ff_periods > 2 or ff_cap > 9 * ff_periods) @compileError("the indicator shows one digit and halves");
@@ -375,12 +387,12 @@ fn draw_fast(n: u32) void {
     k += debug.put_num(buf[k..3], n / ff_periods);
     if (n % ff_periods != 0) k += debug.put(buf[k..], ".5");
     k += debug.put(buf[k..], "x");
-    text.draw(buf[0..k], @intCast(cart.screen_width - 8 * k), video.top, strip.accent, strip.bg);
+    text.draw(buf[0..k], @intCast(cart.screen_width - 8 * k), 0, strip.accent, strip.bg);
 }
 
 /// The no-ROM screen (drive builds): how to add a ROM, then why the drive
 /// gave none ("drive: NoVolume", "drive: X.LNX: rotated"), word-wrapped to
-/// the screen width, in the status strip's colours on black. Redrawn every
+/// the screen width, in the band's text colours on black. Redrawn every
 /// update (the buffers swap); no key leaves it.
 fn draw_help() void {
     const lines = [_][]const u8{ "No Lynx ROM on the", "badge drive.", "", "Copy a .lnx file to", "SYCLBADGE, eject and", "restart the cart." };
