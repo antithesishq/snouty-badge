@@ -422,6 +422,22 @@ Plan and decisions (defaulted, not asked):
    layout.
 9. snouty-sense: no new page; it must build, test and behave unchanged.
 
+Status 2026-10-06: built on branch `tof/stripes`, nothing run on
+hardware. All four carts have ZONES (theremin and trombone: a menu row,
+default STRIPES; morph and shader: hold Select 1 s, default GRID; no
+binding displaced). badge-bench (calibrated, busy ms worst / mean;
+each cart's toml run unless noted; 0 frames over budget, 0 underruns):
+
+| Cart | normal | demo hand GRID / STRIPES | `-Dtof-fake` GRID | `-Dtof-fake` STRIPES |
+|---|---|---|---|---|
+| theremin | 0.98 / 0.58 | 1.10 / 0.62, 1.11 / 0.61 (2-hand) | 3.66 / 2.07 | 4.18 / 2.32 |
+| trombone | 2.83 / 1.37 | 3.62 / 2.11, 3.57 / 2.07 (900 frames) | 4.69 / 2.84 (900) | 5.16 / 3.10 (900) |
+| morph | 6.83 / 4.23 | (none) | 10.12 / 5.73 | 10.01 / 5.76 |
+| shader | 8.95 / 5.08 (GRID), 8.45 / 4.83 (STRIPES) | (none) | 11.39 / 6.13 | 10.30 / 6.06 |
+
+The `-Dtof-fake` STRIPES extra is the model tracing its hand SPAD by
+SPAD; the real sensor costs the same bus reads in both layouts.
+
 Open questions (for the badge check, section 5 M5):
 
 1. Whether the real confidence tracks coverage (it decides how much
