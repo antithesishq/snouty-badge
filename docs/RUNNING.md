@@ -262,3 +262,25 @@ refuses a UF2 that mixes flash and RAM blocks. Flash it like any other cart.
 Untested on hardware as of 2026-09-27: whether the current OS menu accepts an
 XIP UF2, the erase-and-program time per launch, and the frame time versus the
 RAM build (the fps overlay shows the XIP cache hit rate). Root `PLAN.md` M3.
+
+## 9. Sending carts badge to badge (Snouty Beam)
+
+`carts/snouty-beam` copies a cart from one badge to another over the
+link cable (docs/LINK.md); carts/snouty-beam/README.md is the user guide.
+
+```sh
+zig build -Dcart=snouty-beam                         # send-only (main)
+zig build -Dcart=snouty-beam -Dbeam_receive=true     # can also receive
+zig build test-beam                                  # its host tests
+zig build beam-slot -- zig-out/firmware/snouty-pong.uf2 out/pong-slot.bin
+zig build beam-slot -- --info zig-out/firmware/*.uf2 # which carts fit a slot
+badge-bench/bench.sh zig-out/firmware/snouty-beam.elf --poke beam_bench_no_pump=1
+```
+
+Sending works on any firmware. Receiving needs the receive build and the
+fork firmware with cart transfer (adrian-computering/sycl-badge,
+fork/CART_TRANSFER.md): the received cart lands in the external flash's
+slot and the firmware's menu lists it. The simulator has no drives and no
+link, so it shows only the empty home screen; the preview GIF stages its
+scenes through the wasm-only `beam_demo` export (PLAN.md).
+

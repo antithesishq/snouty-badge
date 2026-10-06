@@ -47,7 +47,7 @@ picks, so stale packets from an aborted transfer are dropped).
 | Type | Dir | Body | Meaning |
 |---|---|---|---|
 | `0x01 OFFER` | S->R | xfer, header_len u8 | a transfer starts; the 96-byte header follows as block `0xFFFF` |
-| `0x11 BLOCK` | S->R | xfer, block u16, len u16, crc32 u32 | the next block's packets follow |
+| `0x11 BLOCK` | S->R | xfer, block u16, len u16, crc32 u32, flags u8 | the next block's packets follow (flags bit 0: all zero, no DATA follows) |
 | `0x10 DATA` | S->R | xfer, seq u16, up to 8 bytes | bytes `seq*8 ..` of the current block |
 | `0x12 ACK` | R->S | xfer, block u16 | block received (image blocks: and written) |
 | `0x13 NAK` | R->S | xfer, block u16, first_missing u16 | go back to that seq |
@@ -112,6 +112,104 @@ picks, so stale packets from an aborted transfer are dropped).
   both test suites, fork merged into the combined `main`
   (`feature/cart-transfer` stays standalone and in FEATURES), monorepo
   merged to main with `-Dbeam_receive=false`, dist in `~/beam-dist/`.
+
+## Status
+
+**2026-10-06: M1 cart track done** (branch `beam/m0`, worktree
+`~/snouty-badge-beam`, unpushed, unmerged). Everything above is built;
+deviations and additions:
+
+- **Spec change (agreed with the OS side, fork/CART_TRANSFER.md):** UF2
+  blocks wholly below the IPC block's end (0x20035100) are dropped. Our
+  cart linker loads the ELF and program headers at 0x20030000 (a
+  framebuffer), which made every image ~20 KB longer with zeros; a block
+  straddling 0x20035100 makes a UF2 non-transferable. `load_addr >=
+  0x20035100` is part of "valid slot".
+- BLOCK carries a flags byte: an all-zero 4 KB block is sent as the flag
+  alone (no DATA), the receiver still erases and programs it.
+- The sender repeats OFFER every 2 s while it waits for the answer, and
+  the receiver repeats its last answer (REJECT, DONE) or ACCEPT when asked
+  again: a lost ACCEPT/REJECT/DONE costs a repeat, not a 35 s timeout.
+  The receiver also repeats ACCEPT / the last ACK after 600 ms without a
+  BLOCK (5 tries, then it gives up).
+- Both badges pressing A at once: each refuses the other (REJECT busy,
+  "PARTNER IS BUSY, TRY AGAIN").
+- `lib/link.zig` got `LinkQueue(Port, n)`: one poll of a full 256-byte DMA
+  ring parses up to 17 DATA packets, more than the default queue of 8.
+  The cart uses 32.
+- Vsync is off while preparing, sending or receiving: `present` otherwise
+  waits up to ~3-4 ms for the vsync, and the tests show a 3 ms gap
+  overruns the 256-byte ring (74 NAKs over 4 pong transfers, all
+  recovered). With vsync off the gap is the draw (~1 ms).
+- lib/ext_flash.zig waits for the 0x2B answer on the SIO FIFO, where the
+  pinned runtime's FRAMEBUFFER_DONE also arrives. When it swallows one it
+  re-arms `present` with an empty frame for the front buffer (the pinned
+  runtime would otherwise wait for it forever). Needs the badge check.
+- Footer wording: send-only build "RECEIVING NEEDS THE / FORK FIRMWARE
+  BUILD"; receive build on firmware without bits 2 and 5 "CAN'T RECEIVE:
+  NEEDS / THE FORK FIRMWARE".
+
+**Host tests** (`zig build test-beam`, in `zig build test`): 14 tests.
+lib/beam_slot.zig adds 7 (golden header bytes checked against Python's
+zlib, every validity rule, flattening vs the loader model in and out of
+order with overlaps, every refusal, write_area) and lib/ext_flash.zig 2.
+The pong fixture flattens to the loader model, its dropped blocks hold no
+CART_MAGIC, and `beam-slot` reproduces `beam_slot_pong.bin` (also checked
+against an independent Python flattener). Transfer results (two badges,
+own clocks, 14 ms pump windows, 50-300 ms flash stalls):
+
+| Case | Result |
+|---|---|
+| pong (23.8 KB), 24 seeds, both cable kinds, DMA ring, 0.8 ms draw gap | all byte-identical, worst 1.94 s, 0 NAKs |
+| 1 in 50 packets dropped both ways, 16 seeds | all identical, worst 3.1 s (~990 NAKs and 6 resends over the 16 runs) |
+| 8-byte PIO FIFO instead of the ring, 2.7 ms gap, 4 seeds | all identical, worst 7.0 s (70 KB of FIFO overflow recovered) |
+| ring, 3 ms gap (vsync left on) | identical, 3 KB overflow, 74 NAKs |
+| 150 KB synthetic image, typical flash (50-60 ms per 4 KB) | 5.2 s, 29 KB/s |
+| cable pulled after 8 KB | both LINK LOST, slot invalid, a new transfer then works |
+| decline; no answer for 30 s; firmware can't receive; too big | REJECT reasons, the old slot untouched |
+| sender cancel; both offering at once | receiver sees the cancel, slot invalid; both REJECT busy |
+| power cut after k = 0..15 flash writes | the old slot intact (k = 0) or none valid, never a partial one |
+| re-send from the received slot | the second slot is byte-identical |
+| stale transfer's packets mid-transfer | ignored by both machines |
+
+**badge-bench** (no cable, drive image of five UF2s fragmented 7
+clusters at a time, `badge-bench/carts/snouty-beam.toml`): 14.27 ms every
+frame by design (it pumps the link until 14 ms). With
+`--poke beam_bench_no_pump=1` the frame's own work: mean 2.66 ms, worst
+3.62 ms (frame 3, analysing snouty-boy.uf2's 500 blocks), the list and
+reasons as on the badge (PNG check). Stack peak 5.2 KB; the verify step
+adds a 4 KB buffer when receiving. Sending and receiving are not
+benchmarked (the bench has no partner).
+
+**RAM** (`size -A`): send-only `.text` 41.0 KB, `.data` 32 B, `.bss`
+18.4 KB; receive build `.text` 48.7 KB, `.data` 4.4 KB, `.bss` 18.4 KB.
+About 72 KB of the 307 KB window.
+
+**Which carts can be beamed** (`zig build beam-slot -- --info
+zig-out/firmware/*.uf2`, 2026-10-06 main + this branch; a slot holds
+252 KB of image): fit: snouty (150), snouty-bugs (212), snoutenstein
+(235), snouty-reflections (245), snouty-boy (125), snouty-maze (147),
+snouty-gear (167), snouty-lynx (219), snouty-flyover (239), siwoo (43),
+snouty-gc (251, 1 KB to spare), snouty-pipes (146), snouty-link (29),
+snouty-cycles (211), snouty-pong (24), paperclips (173),
+raspberry-trail (109), snouty-sense (131), snouty-theremin (86),
+snouty-morph (248), snouty-shader (219), badge-calibrate (101),
+snouty-beam (59). Too big: demosnout (259), snouty-genesis RAM (277),
+snouty-zero RAM (264). XIP (never): snouty-genesis-xip, snouty-lynx-xip,
+snouty-zero-xip.
+
+**Expected transfer time**: ~29 KB/s, so pong ~1 s, snouty-boy ~4.5 s, a
+full 250 KB slot ~9 s (host model; wire 77 ms + flash ~55 ms per 4 KB).
+
+**Open risks**
+
+- The `present` re-arm in lib/ext_flash.zig is reasoned from the pinned
+  runtime and the fork kernel, not seen on a badge.
+- The DMA ring and the pump keep up in the model; on the badge the draw
+  between pump windows must stay ~1 ms (the progress screens draw little).
+- Readback goes through the cached 0x11000000 window; the fork flushes
+  the XIP cache after every write (ext_flash.zig eraseRaw/programRaw).
+- Hardware: nothing has run on a badge.
 
 ## Hardware check (Adrian)
 

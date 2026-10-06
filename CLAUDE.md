@@ -36,7 +36,11 @@ its design and milestone status.
   mesh that follows and deforms with your hand over the same sensor;
   `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3),
   `snouty-shader` (a Shadertoy-style gallery of abstract per-pixel shaders
-  whose uniforms are the same sensor's depth field and hand pose).
+  whose uniforms are the same sensor's depth field and hand pose),
+  `snouty-beam` (sends carts badge to badge over the link cable into the
+  fork firmware's received-cart slot; `lib/beam_slot.zig` is the slot
+  format, `lib/ext_flash.zig` the fork's external flash; receiving is
+  compiled in with `-Dbeam_receive=true`).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
