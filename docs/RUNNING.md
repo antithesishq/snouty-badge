@@ -278,9 +278,12 @@ badge-bench/bench.sh zig-out/firmware/snouty-beam.elf --poke beam_bench_no_pump=
 ```
 
 Sending works on any firmware. Receiving needs the receive build and the
-fork firmware with cart transfer (adrian-computering/sycl-badge,
-fork/CART_TRANSFER.md): the received cart lands in the external flash's
-slot and the firmware's menu lists it. The simulator has no drives and no
+fork firmware (adrian-computering/sycl-badge) with cart files
+(fork/CART_FILES.md: the cart is saved as a `.uf2` on SYCLBADGE or
+SYCLEXTRA, refused while a computer has the drive mounted) or cart
+transfer (fork/CART_TRANSFER.md: the external flash's one slot); the
+firmware's menu lists it. Receiving as files is on branch `beam/files`
+(M3), off main until the badge check. The simulator has no drives and no
 link, so it shows only the empty home screen; the preview GIF stages its
 scenes through the wasm-only `beam_demo` export (PLAN.md).
 

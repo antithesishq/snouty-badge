@@ -993,6 +993,9 @@ test "file: pong's UF2 arrives byte-identical on SYCLBADGE, both cable kinds, ma
 }
 
 test "file: snouty-boy's UF2 (250.5 KB) byte-identical; typical and slow drives" {
+    var pong_typical: Tally = .{};
+    pong_typical.add(try file_transfer(.{ .kind = .crossed, .seed = 419, .stall_min_us = 50_000, .stall_max_us = 60_000 }, pong_uf2, "snouty-pong.uf2"));
+    pong_typical.print("file: snouty-pong UF2, typical writes (50-60 ms per 4 KB)");
     var typical: Tally = .{};
     var seed: u32 = 420;
     while (seed < 422) : (seed += 1) typical.add(try file_transfer(.{ .kind = .crossed, .seed = seed, .stall_min_us = 50_000, .stall_max_us = 60_000 }, boy_uf2, "snouty-boy.uf2"));

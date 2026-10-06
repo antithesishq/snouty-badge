@@ -3,7 +3,8 @@
 # pumps the link until 14 ms into every frame by design: `busy ms` reads
 # ~14. The drive image below holds five UF2s (fragmented, 7 clusters at a
 # time): the first frames analyse one per frame (the worst frames), then
-# Down x3 and A (a refused XIP cart, then "PLUG IN THE CABLE").
+# Down x3 and A ("PLUG IN THE CABLE"; with no partner nothing is greyed
+# but invalid UF2s, since an M3 partner takes XIP carts as files).
 # Build the image with
 #   python3 tools/make_romfs.py out/beam-romfs.img zig-out/firmware/snouty-pong.uf2 \
 #     zig-out/firmware/snouty-beam.uf2 zig-out/firmware/snouty-boy.uf2 \

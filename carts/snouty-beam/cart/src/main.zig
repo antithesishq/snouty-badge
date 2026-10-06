@@ -884,10 +884,11 @@ fn draw_receiving(full: bool) void {
             switch (receiver.result) {
                 .received => if (file) {
                     // The drive and the final name (numbered if taken).
-                    say(72, fmt(&buf, "RECEIVED ON {s}", .{cart_files.volume_names[receiver.volume]}), good);
-                    say(81, clip(receiver.name(), 20), accent);
-                    say(93, "OPEN THE MENU", fg);
-                    say(102, "TO RUN IT.", fg);
+                    say(68, "RECEIVED ON", good);
+                    say(77, cart_files.volume_names[receiver.volume], good);
+                    say(87, clip(receiver.name(), 20), accent);
+                    say(100, "OPEN THE MENU", fg);
+                    say(109, "TO RUN IT.", fg);
                 } else {
                     say(76, "RECEIVED", good);
                     say(88, "OPEN THE MENU", fg);

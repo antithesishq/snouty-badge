@@ -162,6 +162,165 @@ refuses while a USB host has the drive mounted.
 
 ## Status
 
+**2026-10-06: M3 cart side done** (branch `beam/files`, worktree
+`~/snouty-badge-beamfiles`, unpushed, unmerged; the OS side,
+fork `feature/cart-files`, is being built in parallel and nothing has run
+against it yet). Built as planned above; the details:
+
+- **Capabilities** ride in the link HELLO's app-version nibble
+  (`link.app_version`, high nibble of the version byte): `proto.Caps`
+  bit 0 slot, bit 1 file, bit 3 `v2` (set by every M3 cart, even
+  send-only). M1 carts send 0 there, so "no v2 bit" means an M1 partner:
+  slot offers only. A receive build sets slot from os_flags bits 2+5 and
+  file from bit 6 plus a `probe` (only when bit 6 is set, so stock
+  firmware never waits) at `start`, before the first HELLO.
+  `proto.plan(caps, file_ok, slot_ok)` picks the offer: a file when the
+  partner takes files, with the slot image as fallback when the cart has
+  one and the partner takes slots; else a slot image; else nothing
+  ("PARTNER CAN'T RECEIVE", or the row's slot reason).
+- **Protocol v2** (proto.zig header comment): OFFER is `01 x hlen kind`
+  (kind 0 slot, 1 file; a 3-byte v1 OFFER parses as slot, and M1
+  receivers ignore the extra byte). A file offer's block FFFF is
+  `size u32, crc32 u32, name_len u8, name` (10..72 bytes; the CRC is the
+  whole file's, computed while PREPARING). BLOCK/DATA/ACK/NAK unchanged.
+  New REJECT reasons 6 usb, 7 no_space, 8 drive; ABORT 4 usb, 5 drive;
+  DONE 3 usb, 4 drive. A file offer refused `no_space` makes a sender
+  holding a fallback re-offer the slot image under the next xfer; a
+  fallback refused `too_big` reports no_space.
+- **Receiver, file mode**: on the header it `stat`s SYCLBADGE (a
+  `usb_host` flag: REJECT usb, no slot fallback), then picks the first
+  drive with the clusters and root entries (name + 3 bytes for a
+  number), else REJECT no_space. Accept `create`s the file: `exists`
+  -> `name-2.uf2` ... `name-99.uf2`; no_space/dir_full -> SYCLEXTRA if
+  it has room (the drive filled up meanwhile); usb -> REJECT usb. One
+  `write` per 4 KB block from the receiver's block buffer (cart RAM);
+  after the last block the running CRC is checked against the offer's,
+  then `commit`, then DONE. Every failure, cancel, sender abort, lost
+  cable or superseding offer calls `abort` (the drive is unchanged).
+  The received file's name is the sender's, made valid
+  (`cart_files.sanitize`: forbidden characters to `_`, edges trimmed).
+- **Sender**: rows keep a slot reason and a file reason; file mode
+  refuses only what the menu couldn't run anyway (not a UF2, wrong
+  family, not a cart), so XIP carts, carts over 252 KB and UF2s with a
+  block straddling the IPC end are sendable to a file partner. With no
+  partner connected the list judges rows as files (nothing extra
+  greyed); the size column shows the bytes that would be sent. The
+  received slot row still goes as a slot image only.
+- **USB**: the footer polls `probe` once a second on Home (no flash, an
+  unmasked struct-answered request) and shows UNPLUG FROM THE COMPUTER TO
+  RECEIVE while `usb_host` is set; a host attaching mid-transfer fails
+  the next write or the commit, the receiver aborts and both screens
+  say so.
+- **lib/cart_files.zig**: ABI v1 types, `supported` (bit 6 + probe,
+  cached), `stat`, `create`, `write`, `commit`, `abort`, `refresh`,
+  name rules, `sanitize`, `numbered`, `root_entries`, and `Fake`, an
+  in-memory SYCLBADGE + SYCLEXTRA with the OS's rules (case-insensitive
+  names, reservations returned on abort, one open file) and failure
+  injection (`usb_after_writes`, `fail_write_at`, `fail_commit`). Each
+  test badge owns one.
+- **lib/os_mailbox.zig** (a named module; Zig 0.17 lets a file belong to
+  one module only): the FIFO send, PRIMASK masking, `wait_fifo` (the
+  FRAMEBUFFER_DONE swallow-and-re-arm moved out of lib/ext_flash.zig,
+  same behaviour) and `wait_struct`. Cart files answer through the
+  request struct, so its wait never reads the FIFO and the pinned
+  runtime's FRAMEBUFFER_DONE stays queued for `present`: the M1 re-arm
+  hazard does not arise for 0x2D. `create`/`write`/`commit` mask
+  interrupts and spin from RAM; give up only while still `pending`
+  (250 ms probe, 2 s otherwise; magic spoiled), never once `busy`.
+- **M1 interop**: `cart/src/proto_v1.zig` is a frozen, test-only copy of
+  M1's proto.zig (e5e46001). The tests run it on one badge of the pair,
+  advertising 0, in both directions. A copy of the real M1 code beats a
+  hand-written double: it is exactly what M1 badges run.
+
+**Host tests** (`zig build test-beam`): 32 (M1's 13 transfer tests
+unchanged and green under v2, 17 M3 transfer tests, 2 proto unit
+tests); lib/cart_files.zig adds 3 to the lib tests.
+Fixtures: snouty-pong.uf2 and **snouty-boy.uf2** (256.5 KB, 501 blocks,
+built from main, a 125 KB image), and a synthetic 200-block XIP UF2.
+
+| Case | Result |
+|---|---|
+| pong UF2 as a file, 16 seeds, both cable kinds, 50-300 ms writes | byte-identical on SYCLBADGE, worst 3.5 s, 0 NAKs, slot untouched |
+| pong UF2, typical writes (50-60 ms per 4 KB) | 1.76 s |
+| snouty-boy UF2, typical writes, 2 seeds / 50-300 ms writes | 8.7 s (29 KB/s) / 16.9 s, byte-identical |
+| 1 in 50 packets dropped, 12 seeds; 8-byte FIFO, 2 seeds | identical, worst 5.4 s / 11.9 s |
+| XIP UF2 | goes as a file, identical |
+| names taken (any case) | `snouty-pong-3.uf2` after `-2` |
+| SYCLBADGE full, out of root entries, or filled between offer and accept | SYCLEXTRA |
+| both drives full (or SYCLEXTRA absent) | slot fallback, slot launchable, drive untouched |
+| both full, XIP cart / partner without a slot | REJECT no_space, nothing written |
+| `usb_host` at offer / after 3 writes / at commit | REJECT usb / ABORT usb / DONE usb; no file |
+| write io_error / commit io_error | ABORT drive / DONE drive; no file |
+| cable pulled after 40 KB | both LINK LOST, abort issued, reservation returned; replugged, a new file arrives |
+| sender cancel, receiver cancel, decline | no file (decline: no create) |
+| receiver without cart files / with nothing | slot mode / nothing to offer (REJECT cannot_receive if offered) |
+| M1 sender -> M3 receiver, 4 seeds (one lossy) | slot identical |
+| M3 sender -> M1 receiver, 4 seeds (one lossy) | plan picks slot, identical; XIP: nothing to offer |
+| stale xfer mid-file | ignored |
+
+**badge-bench** (receive build, same drive image and presses as M1; the
+bench firmware sets no os_flags, so it runs as on stock firmware): 14.27
+ms every frame by design; `--poke beam_bench_no_pump=1`: mean 2.70 ms,
+worst 3.63 ms (frame 3), as M1.
+
+**RAM** (`size -A`, receive build): `.text` 63.1 KB, `.data` 4.5 KB,
+`.bss` 19.7 KB, about 88 KB of the 307 KB window (send-only: `.text`
+43.9 KB, `.bss` 19.5 KB).
+
+**Expected file-mode times** (host model, ~29 KB/s, the UF2 is about
+twice the image): Snouty Pong 48 KB UF2 ~1.8 s (slot: ~1 s), Snouty
+Boy 251 KB UF2 ~9 s (slot: 4.5 s). The real per-write time depends on
+how the OS lays out clusters (see risks).
+
+**Deferred decisions** (defaults taken, Adrian may change):
+
+1. USB host attached: refuse file offers (REJECT usb), no slot fallback
+   even though the slot is not on a USB drive. Alternative: warn and
+   allow, or fall back to the slot while USB is up.
+2. Name taken: numbered copy (`name-2.uf2`), nothing replaced.
+   Alternative: replace, which needs a delete op the cart-files ABI v1
+   doesn't have.
+3. What is sent: the raw UF2 (byte-identical copy, XIP and big carts
+   work, about twice the bytes). Alternative: send the flattened image
+   and have the receiver rebuild a UF2 (faster, RAM carts only), or
+   compress the UF2's zero padding (each 512-byte block carries 256
+   payload bytes and ~220 zeros).
+4. The received slot row can't be sent to a files-only partner (it
+   would need a UF2 rebuilt from the image).
+
+**ABI notes for fork/CART_FILES.md** (implemented to the spec, nothing
+worked around; checked against the fork branch's spec and OS code at
+246cd03, read only):
+
+- The layout, ops, statuses, flags and request flow match. The fork's
+  own cart-api says bit 6 alone is enough (no probe needed); the cart
+  probes anyway, once, which costs nothing on that firmware.
+- How long one `write` parks the cart with interrupts masked is given
+  only as datasheet figures (45 ms typical, 400 ms worst per erase,
+  about 60 ms per 4 KB with first-fit clusters). The protocol tolerates
+  up to ~3 s per block (resend after 600 ms of silence, 5 tries), so
+  even a worst-case erase is fine; the badge check should still measure
+  it (file-test, F0).
+- A request given up while still `pending` (magic spoiled) is safe, but
+  if the cart refills the same struct before the OS reads the stale
+  word, that word runs the new request: harmless for probe/stat and for
+  an in-flight write/commit (the OS matches it by address), but a
+  `create` could be answered `bad_request` on top of its `ok`. Only
+  after a 2 s pending timeout, so theoretical; a sequence number in a
+  reserved word would close it.
+- `create` reads only, yet the flow says to mask for it; the cart masks
+  (harmless).
+
+**Open risks (M3)**
+
+- Nothing has run against the real cart-files OS; the ABI is the spec.
+- Write and commit park times on the badge are modelled (50-300 ms per
+  4 KB, 150 ms commit), not measured.
+- The 1 s `probe` poll on Home waits for the OS's main loop to answer;
+  if that takes milliseconds it shows as a small frame-time bump.
+- Masked spins of several hundred ms while the DMA ring keeps filling:
+  the sender is stop-and-wait, so only keepalives arrive meanwhile.
+
 **2026-10-06: M1 cart track done** (branch `beam/m0`, worktree
 `~/snouty-badge-beam`, unpushed, unmerged). Everything above is built;
 deviations and additions:
@@ -274,3 +433,19 @@ flashed with the fork firmware from `~/beam-dist/`, `snouty-beam.uf2`
    received cart (the old one was erased when the transfer began).
 6. Power B off mid-transfer, power on: no received cart in the menu, the
    firmware boots normally.
+
+M3 (file mode), both badges on fork firmware with `feature/cart-files`
+and the receive build from `beam/files`:
+
+7. Footers read CAN RECEIVE FILES. Send Snouty Pong: the offer says TO
+   SYCLBADGE?, then RECEIVED ON SYCLBADGE with the name. Plug B into a
+   laptop: `snouty-pong.uf2` is on the drive, identical to A's (`cmp`).
+8. Send it again: it arrives as `snouty-pong-2.uf2`.
+9. Send an XIP cart (`snouty-lynx-xip.uf2`) and Snouty Boy; time Boy.
+10. Plug B into a laptop (mounted): footer UNPLUG FROM THE COMPUTER TO
+    RECEIVE; A's send says PARTNER: UNPLUG FROM THE COMPUTER. Plug it in
+    mid-transfer: the transfer stops, no file appears.
+11. Pull the cable mid-file: no file on B, the free space unchanged
+    (laptop `df`/`fsck.fat -n`).
+12. An M1 build on one badge and this one on the other: slot transfers
+    both ways.
