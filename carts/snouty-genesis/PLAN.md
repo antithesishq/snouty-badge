@@ -1625,10 +1625,11 @@ The driver (read from the Kosinski blob the 68000 uploads at boot, ROM
 
 Design (`core/s1dac.zig`, only in the RAM cart variant with the flag):
 
-- Detection at `reset`: header serial `GM 00004049-01` (REV01) or
-  `GM 00001009-00` (REV00) and its checksum word, plus the 68000 code at
-  the two `$A01FFF` writers and the driver upload site. Off: everything
-  as before (the stub, Z80 RAM reads 0).
+- Detection at `reset`: header serial `GM 00004049-01` (REV01) and its
+  checksum word AFC7, plus the 68000 code at the three `$A01FFF` writers
+  (0x71CA4, 0x71CB4, 0x71FAC). REV00 is left out: never run against the
+  oracle (the code addresses may differ). Off: everything as before (the
+  stub, Z80 RAM reads 0).
 - Z80 RAM lives in `Md.sram` (8 KB in the RAM cart, `rom.sram_max`):
   Sonic 1 declares no SRAM, so the buffer is free. 68000 reads return
   what it wrote (the Kosinski decompressor reads back its output). No new
@@ -1637,7 +1638,8 @@ Design (`core/s1dac.zig`, only in the RAM cart variant with the flag):
   (BUSREQ and RESET released) and `$1FFF` has bit 7 set, the fake takes
   the command as the driver would (`$1FFF` = id - $81, `$1FFD` = $1F, 2B =
   $80 for DPCM) and hands it to the renderer; a Z80 RESET does the
-  driver's init. These write only existing state (Z80 RAM in `sram`, the
+  driver's init (at the assertion: Sonic writes nothing before the
+  release). These write only existing state (Z80 RAM in `sram`, the
   YM registers, `z80_bank`), from console events only: deterministic, so
   link play's state hash still agrees between two badges with the flag.
 - Render side (`sound.Sound`, render-only like the synth): the sample
@@ -1645,9 +1647,9 @@ Design (`core/s1dac.zig`, only in the RAM cart variant with the flag):
   to the next DAC write and a pending id. `render_to` steps it per 44.1
   kHz output sample (81.17 Z80 T-states each) while the Z80 would run,
   and adds the DAC level per output sample instead of through the FM's
-  held 14.7 kHz value. BUSREQ / RESET changes catch the render up first,
-  so the DAC pauses while the 68000 holds the bus, as the real Z80 does.
-  Nothing renders when the Sound row is off.
+  held 14.7 kHz value. While a sample plays, BUSREQ writes catch the
+  render up first, so the DAC pauses while the 68000 holds the bus, as
+  the real Z80 does. Nothing renders when the Sound row is off.
 - Build: `-Dgenesis_s1dac=true` sets `build_options.s1dac` for the RAM
   cart only; the XIP cart and the wasm keep the real Z80.
 
@@ -1671,3 +1673,81 @@ Oracle and checks:
   flag off vs on: worst update under 33.3 ms, mean about unchanged.
 - Sizes: `arm-none-eabi-size -A` before and after; the link must keep
   the 20 KB stack reservation.
+
+### Status (2026-10-06): built, flag off by default
+
+Driver facts, all confirmed by the oracle (`s1dac-trace`, 11,300 frames:
+SEGA, title, Green Hill, every music id $81-$93, $E1): the 68000 sends
+$81 (kick, 1,700 nibbles, c = $17: 398/475 T-states, 8.2 kHz), $82
+(snare, 3,808 nibbles, c = 1: 112/189, 23.8 kHz), $83 (timpani, 8,236
+nibbles, the delay count written to `$00EA` first: $12, $15, $1C or $1D,
+333/410 to 476/553 T-states, 7.0-9.6 kHz) and $88 (SEGA: 27,000 ROM
+bytes from 0x79688, 220 T-states, 16.3 kHz, 1.66 s).
+$84-$87 are never sent. The Z80 itself writes only 2B = $80 and 2A, and
+the bank register (9 writes, $0F) after each RESET; the 68000 uploads the
+driver twice (SEGA screen, title) and polls `$1FFD` bit 7, retrying when
+it catches the Z80 between its two YM accesses. A DPCM sample is cut at a
+byte boundary by the next id (139 of 510 in the run); the SEGA never is.
+
+Oracle against the fake (`tools/s1dac_compare.py`): 512 samples started
+by both, 512 with the same 2A values in order (510 DPCM, 2 SEGA), 371 of
+the DPCM ones also the same length (the rest are cut a byte or more
+apart). First write, fake minus oracle: median +20 us, 90% within 61 us
+(the oracle's Z80 runs whole 63.5 us lines). Mean write spacing, BUSREQ
+pauses included, fake / oracle: median 0.9969 (0.90-1.10 per sample);
+the spacing histograms match to 0.2%. WAVs (host, both through the RAM
+cart's synthesis): SEGA RMS 23.8 / 23.9 (r = 0.934), title 21.1 / 21.1
+(0.952), Green Hill 23.4 / 23.4 (0.950), music test 22.1 / 22.1 (0.953);
+46 ms chunks of the chant correlate 0.959 (median).
+
+badge-bench, RAM cart with `-Dsound=true`, Sonic 1 from the drive
+(calibrated busy ms, mean / max, 0 over 33.3 in every run; 0 underruns
+at 1x):
+
+| Script | flag off (= main) | flag on |
+|---|---:|---:|
+| `snd_sonic1.json` (900) | 19.59 / 32.39 | 19.77 / 32.82 |
+| `ff_sonic1.json` (1,100) | 21.17 / 32.39 | 21.29 / 32.82 |
+
+The worst update is the same one (598, Green Hill's start, snare-heavy:
+about 800 DAC writes in the update). Stack peak 5,868 B (off 5,860).
+The `--wav` stream of the flag-on run has the chant (RMS 24.0 in the
+SEGA screen's window against 2.0 off, 1.59 s long against the oracle's
+1.56 s); its waveform is the host render's through `audio_feed`'s
+nearest-neighbour rate control, so it correlates with it only in shape.
+
+What it cost to keep the 68000's hot loop as it was: the first cut
+checked `md.s1dac_on` inside the bus code that `step_frame_pads` inlines
+(the whole 68000 interpreter is in it). That cost 45,000 to 180,000
+cycles per update in spilled registers (worst 33.61 to 35.51 ms), and the
+read path's call put a frame on `Bus.read16`'s ROM path. Now every hook
+is a whole out-of-line call in the flag-on build only (`z80_read`,
+`z80_read16` as a tail call, `ram_write`, `set_busreq`, and RESET through
+`sound.ym_was_reset`), and `step_frame_pads` costs the same cycles as
+main's (1,542,797 per update). Per-line hooks (`run_z80`) also spilled.
+
+Sizes (RAM ELF, `-Dsound=true`): flag off byte-identical to main in every
+loaded section (`.text` 125,364, `.bss` 155,312; XIP UF2 and wasm
+identical). Flag on: `.text` 127,660 (+2,296), `.ARM.extab` +72,
+`.ARM.exidx` +72, `.data` 168, `.bss` 155,304; 600 B between
+`__bss_end__` and `__stack_limit__` (off 3,152), the 20 KB stack kept.
+UF2 572,928 B.
+
+State: flag off, nothing changes. Flag on, other ROMs run exactly as
+without it (every RAM-cart test, goldens included, passes again in
+`snouty-genesis-s1dac-tests`). With Sonic 1, `Md.sram` holds Z80 RAM, and
+`$1FFF`, `$1FFD`, YM 2B, the YM address latch and `z80_bank` take the
+driver's writes, all from console events: deterministic (a test checks
+the state hash with rendering on and off), but different from a flag-off
+console, so link play's variant byte is 2 (`ram_s1dac`).
+
+Tests: `zig build test-genesis` 291 of 293 passed, 2 skipped (the
+SingleStep fixtures): 11 new `s1dac:` tests in
+`snouty-genesis-s1dac-tests`, which also reruns every RAM-cart test on
+the flag-on core. `zig build test` (every cart, with snouty-boy's test
+ROMs copied into the worktree) 741 of 746, 5 skipped.
+
+Open: a listen on a badge (levels, whether the 8.2-23.8 kHz drums alias
+at the 44.1 kHz output); the oracle's own Z80 does not wait for the
+68000's bus when it reads the banked ROM, so the real SEGA chant may run
+slightly slower than both; 600 B of RAM left in the flag-on build.
