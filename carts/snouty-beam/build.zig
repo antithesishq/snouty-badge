@@ -30,18 +30,21 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     common.add_float_check(b, opts, "snouty-beam", opts.cart_mode);
 
     // Host tests: the protocol on two virtual badges (cart/src/proto_test.zig)
-    // with the snouty-pong fixture and its slot (tests/fixtures/).
+    // with the snouty-pong fixture and its slot, and snouty-boy.uf2
+    // (tests/fixtures/).
     const mod = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/tests.zig"),
         .target = b.graph.host,
         .optimize = .ReleaseSafe,
         .imports = &.{
             .{ .name = "beam_slot", .module = beam_slot_module(b) },
+            .{ .name = "cart_files", .module = cart_files_module(b) },
             .{ .name = "link_host", .module = link_host_module(b) },
         },
     });
     mod.addAnonymousImport("pong_uf2", .{ .root_source_file = b.path(dir ++ "tests/fixtures/snouty-pong.uf2") });
     mod.addAnonymousImport("pong_slot", .{ .root_source_file = b.path(dir ++ "tests/fixtures/beam_slot_pong.bin") });
+    mod.addAnonymousImport("boy_uf2", .{ .root_source_file = b.path(dir ++ "tests/fixtures/snouty-boy.uf2") });
     const tests = b.addTest(.{ .root_module = mod });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
     const own = b.step("test-beam", "Run snouty-beam's host tests only");
@@ -57,6 +60,12 @@ fn add_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *B
     cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
     cart.addImport("ext_flash", b.createModule(.{ .root_source_file = b.path("lib/ext_flash.zig") }));
     cart.addImport("beam_slot", beam_slot_module(b));
+    cart.addImport("cart_files", cart_files_module(b));
+}
+
+/// lib/cart_files.zig (it imports lib/os_mailbox.zig beside it).
+fn cart_files_module(b: *Build) *Build.Module {
+    return b.createModule(.{ .root_source_file = b.path("lib/cart_files.zig") });
 }
 
 pub fn beam_slot_module(b: *Build) *Build.Module {

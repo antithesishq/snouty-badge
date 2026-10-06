@@ -1,61 +1,42 @@
-//! Snouty Beam's transfer protocol (PLAN.md "Protocol" and "M3"): pure
-//! state machines, no cart API, no clock of their own.
+//! TEST ONLY: a frozen copy of Snouty Beam M1's proto.zig (protocol v1, as
+//! merged to main at e5e46001), so proto_test.zig can run today's M3
+//! machines against an M1 badge on the virtual cable: an M1 sender to an
+//! M3 receiver and the reverse must still work in slot mode. Never edit it
+//! except to keep it compiling; the cart does not import it.
 //!
-//! `Sender(Io, Src)` offers a transfer and streams its bytes, 4 KB blocks
-//! stop and wait; `Receiver(Io)` takes the offer's header, asks its owner
-//! (`accept` / `decline`) and stores each block as it arrives. Two kinds of
-//! transfer (protocol v2):
+//! Snouty Beam's transfer protocol (PLAN.md "Protocol"): pure state
+//! machines, no cart API, no clock of their own.
 //!
-//! - **slot** (M1): a RAM image flattened from a UF2 into the external
-//!   flash's received-cart slot, its 96-byte slot header written last
-//!   (fork/CART_TRANSFER.md "Write order").
-//! - **file** (M3): the UF2 file itself, byte for byte, saved as a new file
-//!   on SYCLBADGE or SYCLEXTRA through the fork's cart files
-//!   (fork/CART_FILES.md, lib/cart_files.zig): `create` on accept (a taken
-//!   name becomes `name-2.uf2`...), one `write` per 4 KB block, `commit`
-//!   after the last, `abort` on any failure, cancel or lost cable.
-//!
-//! Which kind: each cart advertises what it can receive (`Caps`) in its
-//! link HELLO (lib/link.zig `app_version`, the high nibble of the version
-//! byte). A sender offers a file when the receiver takes files, else a
-//! slot image. A v1 (M1) cart advertises nothing (0) and speaks slot only.
-//! A file offer the receiver has no room for is answered REJECT
-//! `no_space`, and a sender holding a slot `fallback` then offers that.
-//!
+//! `Sender(Io, Src)` offers a slot header and streams the image, 4 KB
+//! blocks stop and wait; `Receiver(Io)` takes the header, asks its owner
+//! (`accept` / `decline`), writes each block into the slot area as it
+//! arrives and the header last (fork/CART_TRANSFER.md "Write order").
 //! Both get DATA packets from the link through `handle` and run timers
 //! and sends from `tick`; the cart (main.zig) or a test harness
 //! (proto_test.zig) pumps them.
 //!
 //! `Io` gives `now() u64` (microseconds; read again after a flash call,
 //! which parks the core), `send(bytes) bool` (a link DATA packet,
-//! <= 12 bytes) and, for the receiver: slot mode `erase(area_offset) bool`
-//! (one 4 KB sector), `program(area_offset, data) bool` (<= 4 KB, 256-byte
+//! <= 12 bytes) and, for the receiver, `erase(area_offset) bool` (one 4 KB
+//! sector), `program(area_offset, data) bool` (<= 4 KB, 256-byte
 //! multiple), `read(area_offset, dst)` (the slot area as memory),
-//! `area_size() u32`, `can_receive() bool` (slots); file mode
-//! `takes_files() bool`, `file_stat(volume)`, `file_create(volume, name,
-//! size)`, `file_write(offset, data)`, `file_commit()` (all
-//! `cart_files.Error`) and `file_abort()`. `Src` gives
-//! `read(offset, dst)`.
+//! `area_size() u32` and `can_receive() bool`. `Src` gives
+//! `read(image_offset, dst)`.
 //!
 //! Packets (first byte type, second `xfer`, the sender's transfer id):
-//!   OFFER  01 x hlen kind   a transfer starts, its header follows as block
-//!                           FFFF; kind 0 slot (96-byte slot header), 1 file
-//!                           (`FileHeader`); v1 sends no kind byte (= slot)
-//!   ACCEPT 03 x 0           the owner said yes (slot: the slot's header is
-//!                           erased; file: the file is created)
+//!   OFFER  01 x 96          a transfer starts, the header follows as block FFFF
+//!   ACCEPT 03 x 0           the owner said yes (the slot's header is erased)
 //!   REJECT 04 x reason
 //!   DATA   10 x seq16 b[..8] bytes seq*8.. of the current block
 //!   BLOCK  11 x blk16 len16 crc32 flags   the block's packets follow
 //!                           (flags bit 0: all zero, no DATA follows)
-//!   ACK    12 x blk16       block received (data blocks: and written)
+//!   ACK    12 x blk16       block received (image blocks: and written)
 //!   NAK    13 x blk16 seq16 resend from seq
-//!   DONE   14 x status      slot: image read back and header written;
-//!                           file: whole-file CRC checked and committed
+//!   DONE   14 x status      image read back and header written (or not)
 //!   ABORT  1F x reason      either side gives up
 //! Integers little-endian.
 const std = @import("std");
 const slot = @import("beam_slot");
-const cart_files = @import("cart_files");
 
 pub const T = struct {
     pub const offer: u8 = 0x01;
@@ -75,107 +56,9 @@ pub const block_size: u32 = slot.sector_size;
 pub const data_bytes: u32 = 8;
 const flag_zero: u8 = 1;
 
-/// What a transfer delivers (OFFER's fourth byte; a v1 OFFER has none).
-pub const Kind = enum(u8) { slot = 0, file = 1, _ };
-
-/// REJECT reasons. v2 adds `usb` (a computer has the receiver's drive
-/// mounted), `no_space` (no drive has room for the file) and `drive` (the
-/// drive refused the file for another reason).
-pub const Reject = enum(u8) { declined = 1, too_big = 2, cannot_receive = 3, busy = 4, bad_header = 5, usb = 6, no_space = 7, drive = 8, _ };
-/// ABORT reasons; v2 adds `usb` and `drive` (a file write failed).
-pub const AbortReason = enum(u8) { cancelled = 1, no_answer = 2, flash = 3, usb = 4, drive = 5, _ };
-/// DONE status; v2 adds `usb` and `drive` (the file's commit failed).
-pub const DoneStatus = enum(u8) { ok = 0, crc = 1, flash = 2, usb = 3, drive = 4, _ };
-
-/// What a cart can receive, sent as the high nibble of its link HELLO's
-/// version byte (lib/link.zig `app_version`). A v1 (M1) cart sends 0: no
-/// `v2` bit, so its capabilities are unknown and it is offered slots only
-/// (it answers REJECT cannot_receive when it can't take them).
-pub const Caps = packed struct(u4) {
-    slot: bool = false,
-    file: bool = false,
-    _reserved: u1 = 0,
-    /// Every protocol v2 cart sets it.
-    v2: bool = true,
-
-    pub fn nibble(c: Caps) u4 {
-        return @bitCast(c);
-    }
-
-    /// From the partner's HELLO version byte (`link.partner_version`).
-    pub fn of_partner(partner_version: u8) Caps {
-        return @bitCast(@as(u4, @truncate(partner_version >> 4)));
-    }
-
-    /// The kind to offer this partner, or null when it can receive nothing.
-    pub fn offer_kind(c: Caps) ?Kind {
-        if (!c.v2) return .slot;
-        if (c.file) return .file;
-        if (c.slot) return .slot;
-        return null;
-    }
-
-    /// Whether the partner may be offered a slot image.
-    pub fn takes_slot(c: Caps) bool {
-        return !c.v2 or c.slot;
-    }
-};
-
-/// How a sender offers a cart: its kind, and whether a slot image goes
-/// along as the fallback for a file offer refused for space.
-pub const Plan = struct { kind: Kind, fallback: bool };
-
-/// The offer for a partner advertising `caps`: a file when it takes files
-/// and the cart can go as one (`file_ok`: any UF2 the menu could run,
-/// XIP included), else a slot image when it takes slots and the cart has
-/// one (`slot_ok`: a RAM cart whose image fits a slot). Null: nothing this
-/// partner can take.
-pub fn plan(caps: Caps, file_ok: bool, slot_ok: bool) ?Plan {
-    if (caps.v2 and caps.file and file_ok) return .{ .kind = .file, .fallback = slot_ok and caps.slot };
-    if (caps.takes_slot() and slot_ok) return .{ .kind = .slot, .fallback = false };
-    return null;
-}
-
-/// A file offer's header (block FFFF of a file transfer): size u32, the
-/// whole file's CRC-32 u32, name length u8 (1..63), the name. 10..72 bytes.
-pub const FileHeader = struct {
-    size: u32,
-    crc32: u32,
-    name_len: u8,
-    name_buf: [cart_files.max_name]u8,
-
-    pub const min_len = 10;
-    pub const max_len = 9 + cart_files.max_name;
-
-    pub fn init(size: u32, crc: u32, file_name: []const u8) FileHeader {
-        var h: FileHeader = .{ .size = size, .crc32 = crc, .name_len = 0, .name_buf = undefined };
-        const n = @min(file_name.len, cart_files.max_name);
-        @memcpy(h.name_buf[0..n], file_name[0..n]);
-        h.name_len = @intCast(n);
-        return h;
-    }
-
-    pub fn name(h: *const FileHeader) []const u8 {
-        return h.name_buf[0..h.name_len];
-    }
-
-    pub fn encode(h: *const FileHeader, out: []u8) u8 {
-        put32(out[0..], h.size);
-        put32(out[4..], h.crc32);
-        out[8] = h.name_len;
-        @memcpy(out[9..][0..h.name_len], h.name());
-        return 9 + h.name_len;
-    }
-
-    pub fn parse(b: []const u8) ?FileHeader {
-        if (b.len < min_len or b.len > max_len) return null;
-        const n = b[8];
-        if (n == 0 or n > cart_files.max_name or b.len != 9 + @as(usize, n)) return null;
-        const size = get32(b[0..]);
-        if (size == 0) return null;
-        return init(size, get32(b[4..]), b[9..][0..n]);
-    }
-};
+pub const Reject = enum(u8) { declined = 1, too_big = 2, cannot_receive = 3, busy = 4, bad_header = 5, _ };
+pub const AbortReason = enum(u8) { cancelled = 1, no_answer = 2, flash = 3, _ };
+pub const DoneStatus = enum(u8) { ok = 0, crc = 1, flash = 2, _ };
 
 /// Timing in microseconds, adjustable in one place.
 pub const timing = struct {
@@ -196,8 +79,6 @@ pub const timing = struct {
     pub const offer_repeat: u64 = 2_000_000;
     /// Slot readback per `tick` while verifying.
     pub const verify_chunk: u32 = 4096;
-    /// File mode: the most `name-k` numbers tried when names are taken.
-    pub const rename_tries: u32 = 99;
 };
 
 fn put16(b: []u8, v: u16) void {
@@ -226,11 +107,6 @@ pub const Stats = struct {
     data_packets: u32 = 0,
 };
 
-/// The next transfer id after `x` (never 0).
-pub fn next_xfer(x: u8) u8 {
-    return if (x == 0xFF) 1 else x + 1;
-}
-
 // ---- sender ----------------------------------------------------------------------
 
 pub const SendResult = union(enum) {
@@ -241,14 +117,11 @@ pub const SendResult = union(enum) {
     no_answer,
     /// The receiver gave up (`AbortReason`).
     partner_aborted: AbortReason,
-    /// The receiver's readback, header write or commit failed.
+    /// The receiver's readback or header write failed.
     failed: DoneStatus,
     cancelled,
     link_lost,
 };
-
-/// The largest offer header (the slot header; a file header is <= 72).
-pub const max_header: u32 = slot.header_size;
 
 pub fn Sender(comptime Io: type, comptime Src: type) type {
     return struct {
@@ -256,42 +129,11 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
 
         pub const State = enum { idle, offering, waiting_answer, sending, finishing, finished };
 
-        /// One way to send a cart: its kind, the header for block FFFF,
-        /// the byte count and where the bytes come from.
-        pub const Offer = struct {
-            kind: Kind,
-            header: [max_header]u8 = undefined,
-            header_len: u8,
-            len: u32,
-            src: Src,
-
-            /// A slot image: `header` is the slot header the receiver will
-            /// write, `src` reads the image.
-            pub fn of_slot(header: *const [slot.header_size]u8, image_len: u32, src: Src) Offer {
-                var o: Offer = .{ .kind = .slot, .header_len = slot.header_size, .len = image_len, .src = src };
-                @memcpy(o.header[0..slot.header_size], header);
-                return o;
-            }
-
-            /// A file: `h` names it and holds its size and CRC, `src` reads
-            /// it byte for byte.
-            pub fn of_file(h: *const FileHeader, src: Src) Offer {
-                var o: Offer = .{ .kind = .file, .header_len = 0, .len = h.size, .src = src };
-                o.header_len = h.encode(&o.header);
-                return o;
-            }
-        };
-
         state: State = .idle,
         result: SendResult = .none,
         xfer: u8 = 0,
-        offer: Offer = undefined,
-        /// A slot offer to make if the file offer is refused for space.
-        fallback: ?Offer = null,
-        /// The fallback was taken.
-        fell_back: bool = false,
-        /// Bytes to send (the image or the file).
-        total: u32 = 0,
+        header: [slot.header_size]u8 = undefined,
+        image_len: u32 = 0,
         blocks: u16 = 0,
         /// Current block (`header_block` while offering).
         block: u16 = 0,
@@ -310,58 +152,48 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
         started_at: u64 = 0,
         offered_at: u64 = 0,
         last_offer: u64 = 0,
-        /// Bytes the receiver has acknowledged.
+        /// Image bytes the receiver has acknowledged.
         acked: u32 = 0,
         stats: Stats = .{},
+        src: Src = undefined,
 
-        /// Start offering `offer` (and `fallback`, a slot image, if the
-        /// receiver has no room for the file). `xfer` must differ from the
-        /// last transfer's (the cart takes a random non-zero byte); a
-        /// fallback uses `next_xfer(xfer)`.
-        pub fn start(self: *Self, io: *Io, offer: *const Offer, fallback: ?*const Offer, xfer: u8) void {
+        /// Start offering: `header` is the slot header the receiver will
+        /// write, `src` reads the image. `xfer` must differ from the last
+        /// transfer's (the cart takes a random non-zero byte).
+        pub fn start(self: *Self, io: *Io, header: *const [slot.header_size]u8, image_len: u32, src: Src, xfer: u8) void {
+            const now = io.now();
             self.* = .{
-                .fallback = if (fallback) |f| f.* else null,
-                .stats = .{},
+                .state = .offering,
+                .xfer = xfer,
+                .header = header.*,
+                .image_len = image_len,
+                .blocks = @intCast((image_len + block_size - 1) / block_size),
+                .src = src,
+                .started_at = now,
+                .offered_at = now,
             };
-            self.begin_offer(io.now(), offer, xfer);
-        }
-
-        fn begin_offer(self: *Self, now: u64, offer: *const Offer, xfer: u8) void {
-            self.state = .offering;
-            self.result = .none;
-            self.xfer = xfer;
-            self.offer = offer.*;
-            self.total = offer.len;
-            self.blocks = @intCast((offer.len + block_size - 1) / block_size);
-            self.acked = 0;
-            self.started_at = now;
-            self.offered_at = now;
             self.begin_block(now, header_block);
-        }
-
-        pub fn kind(self: *const Self) Kind {
-            return self.offer.kind;
         }
 
         pub fn active(self: *const Self) bool {
             return self.state != .idle and self.state != .finished;
         }
 
-        /// 0..1000 of the bytes acknowledged.
+        /// 0..1000 of the image acknowledged.
         pub fn permille(self: *const Self) u32 {
-            if (self.total == 0) return 0;
-            return @intCast(@as(u64, self.acked) * 1000 / self.total);
+            if (self.image_len == 0) return 0;
+            return @intCast(@as(u64, self.acked) * 1000 / self.image_len);
         }
 
         fn begin_block(self: *Self, now: u64, k: u16) void {
             self.block = k;
             if (k == header_block) {
-                self.len = self.offer.header_len;
-                @memcpy(self.buf[0..self.len], self.offer.header[0..self.len]);
+                self.len = slot.header_size;
+                @memcpy(self.buf[0..slot.header_size], &self.header);
             } else {
                 const off = @as(u32, k) * block_size;
-                self.len = @min(block_size, self.total - off);
-                self.offer.src.read(off, self.buf[0..self.len]);
+                self.len = @min(block_size, self.image_len - off);
+                self.src.read(off, self.buf[0..self.len]);
             }
             self.crc = slot.crc32(self.buf[0..self.len]);
             self.zero = k != header_block and all_zero(self.buf[0..self.len]);
@@ -375,10 +207,6 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
         fn finish(self: *Self, r: SendResult) void {
             self.state = .finished;
             self.result = r;
-        }
-
-        fn send_offer(self: *Self, io: *Io) void {
-            _ = io.send(&.{ T.offer, self.xfer, self.offer.header_len, @backingInt(self.offer.kind) });
         }
 
         /// Hold B: tell the receiver and stop.
@@ -413,7 +241,7 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
                     }
                     if (now -% self.last_offer >= timing.offer_repeat) {
                         self.last_offer = now;
-                        self.send_offer(io);
+                        _ = io.send(&.{ T.offer, self.xfer, slot.header_size });
                     }
                     return;
                 },
@@ -434,7 +262,7 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
                 self.announce = false;
                 if (self.block == header_block and self.pos == 0) {
                     self.last_offer = now;
-                    self.send_offer(io);
+                    _ = io.send(&.{ T.offer, self.xfer, slot.header_size });
                 }
                 var p: [12]u8 = undefined;
                 p[0] = T.block;
@@ -461,21 +289,6 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
                     self.quiet_since = now;
                 }
             }
-        }
-
-        fn on_reject(self: *Self, now: u64, why: Reject) void {
-            if (self.offer.kind == .file and why == .no_space) {
-                if (self.fallback) |*f| {
-                    // No drive has room: offer the slot image instead.
-                    const fb = f.*;
-                    self.fallback = null;
-                    self.fell_back = true;
-                    return self.begin_offer(now, &fb, next_xfer(self.xfer));
-                }
-            }
-            // A fallback the slot can't hold either: there is no room.
-            if (self.fell_back and why == .too_big) return self.finish(.{ .rejected = .no_space });
-            self.finish(.{ .rejected = why });
         }
 
         /// A DATA packet from the receiver.
@@ -527,14 +340,14 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
                 T.reject => {
                     if (p.len < 3) return;
                     if (self.state != .waiting_answer and self.state != .offering) return;
-                    self.on_reject(now, @fromBackingInt(@intCast(p[2])));
+                    self.finish(.{ .rejected = @fromBackingInt(@intCast(p[2])) });
                 },
                 T.done => {
                     if (p.len < 3) return;
                     if (self.state != .finishing and !(self.state == .sending and self.block + 1 == self.blocks)) return;
                     const st: DoneStatus = @fromBackingInt(@intCast(p[2]));
                     if (st == .ok) {
-                        self.acked = self.total;
+                        self.acked = self.image_len;
                         self.finish(.sent);
                     } else {
                         self.finish(.{ .failed = st });
@@ -554,19 +367,14 @@ pub fn Sender(comptime Io: type, comptime Src: type) type {
 
 pub const RecvResult = union(enum) {
     none,
-    /// The slot holds the new cart (its header written and read back), or
-    /// the file is committed on the drive.
+    /// The slot holds the new cart (its header written and read back).
     received,
     declined,
-    /// Refused without (or despite) the owner's yes: a bad header, too big,
-    /// no room on the drives, a computer on USB, the drive said no.
-    refused: Reject,
     /// The sender cancelled or gave up.
     sender_aborted: AbortReason,
     cancelled,
     link_lost,
-    /// The bytes checked wrong (`crc`), a flash call failed (`flash`), or
-    /// a file write or commit failed (`usb`, `drive`).
+    /// The image read back wrong (`crc`) or a flash call failed.
     failed: DoneStatus,
 };
 
@@ -581,21 +389,9 @@ pub fn Receiver(comptime Io: type) type {
         /// False while the cart is sending itself: offers get REJECT busy.
         accepting: bool = true,
         xfer: u8 = 0,
-        kind: Kind = .slot,
-        /// Slot mode: the offered header, once complete and valid.
+        /// The offered header, once complete and valid.
         header: slot.Header = undefined,
         header_bytes: [slot.header_size]u8 = undefined,
-        /// File mode: the offer, the drive it goes to and its name there
-        /// (the offered name made valid, then numbered if taken).
-        file: FileHeader = undefined,
-        volume: u1 = 0,
-        file_name_buf: [cart_files.max_name]u8 = undefined,
-        file_name_len: u8 = 0,
-        /// A file is created and not yet committed or aborted.
-        file_open: bool = false,
-        file_crc: std.hash.Crc32 = .init(),
-        /// Bytes to receive (the image or the file).
-        total: u32 = 0,
         blocks: u16 = 0,
 
         // The block being received.
@@ -608,7 +404,6 @@ pub fn Receiver(comptime Io: type) type {
         last_data: u64 = 0,
         nak_for: ?u16 = null,
         nak_at: u64 = 0,
-        /// In cart RAM: file writes hand the OS this buffer.
         buf: [block_size]u8 = undefined,
 
         asked_at: u64 = 0,
@@ -618,7 +413,7 @@ pub fn Receiver(comptime Io: type) type {
         prompts: u8 = 0,
         verify_at: u32 = 0,
         verify_crc: std.hash.Crc32 = .init(),
-        /// Bytes written.
+        /// Image bytes written.
         written: u32 = 0,
 
         /// The answer last given to a finished transfer, repeated when the
@@ -635,25 +430,15 @@ pub fn Receiver(comptime Io: type) type {
             };
         }
 
-        /// Bytes are being stored: in slot mode the slot no longer holds
-        /// what it did.
+        /// The flash is being written: the slot no longer holds what it did.
         pub fn writing(self: *const Self) bool {
             return self.state == .receiving or self.state == .verifying;
         }
 
-        /// The offered name (slot: the header's; file: the final name once
-        /// created, else the offered one made valid).
-        pub fn name(self: *const Self) []const u8 {
-            return switch (self.kind) {
-                .file => self.file_name_buf[0..self.file_name_len],
-                else => self.header.name(),
-            };
-        }
-
         pub fn permille(self: *const Self) u32 {
-            if (!self.writing() or self.total == 0) return 0;
+            if (!self.writing() or self.header.image_len == 0) return 0;
             if (self.state == .verifying) return 1000;
-            return @intCast(@as(u64, self.written) * 1000 / self.total);
+            return @intCast(@as(u64, self.written) * 1000 / self.header.image_len);
         }
 
         fn remember(self: *Self, bytes: []const u8) void {
@@ -667,22 +452,9 @@ pub fn Receiver(comptime Io: type) type {
             self.remember(bytes);
         }
 
-        /// Drop an open file: the drive stays as it was.
-        fn close_file(self: *Self, io: *Io) void {
-            if (!self.file_open) return;
-            io.file_abort();
-            self.file_open = false;
-        }
-
-        fn finish(self: *Self, io: *Io, r: RecvResult) void {
-            self.close_file(io);
+        fn finish(self: *Self, r: RecvResult) void {
             self.state = .finished;
             self.result = r;
-        }
-
-        fn refuse(self: *Self, io: *Io, why: Reject) void {
-            self.answer(io, &.{ T.reject, self.xfer, @backingInt(why) });
-            self.finish(io, .{ .refused = why });
         }
 
         pub fn reset(self: *Self) void {
@@ -692,18 +464,13 @@ pub fn Receiver(comptime Io: type) type {
             }
         }
 
-        /// The owner pressed A on the offer. Slot: erase the slot's header
-        /// sector (from now on the slot is invalid). File: create the file
-        /// (numbering the name while it is taken, the other drive if this
-        /// one filled up meanwhile). Then ACCEPT.
+        /// The owner pressed A on the offer: erase the slot's header sector
+        /// (from now on the slot is invalid), then ACCEPT.
         pub fn accept(self: *Self, io: *Io) void {
             if (self.state != .asking) return;
-            switch (self.kind) {
-                .file => if (!self.create_file(io)) return,
-                else => if (!io.erase(0)) {
-                    self.answer(io, &.{ T.abort, self.xfer, @backingInt(AbortReason.flash) });
-                    return self.finish(io, .{ .failed = .flash });
-                },
+            if (!io.erase(0)) {
+                self.answer(io, &.{ T.abort, self.xfer, @backingInt(AbortReason.flash) });
+                return self.finish(.{ .failed = .flash });
             }
             const now = io.now();
             self.state = .receiving;
@@ -715,70 +482,21 @@ pub fn Receiver(comptime Io: type) type {
             _ = io.send(&.{ T.accept, self.xfer, 0 });
         }
 
-        fn create_file(self: *Self, io: *Io) bool {
-            var base_buf: [cart_files.max_name]u8 = undefined;
-            const base = cart_files.sanitize(self.file.name(), &base_buf);
-            var vol = self.volume;
-            var k: u32 = 1;
-            while (k <= timing.rename_tries) {
-                var nb: [cart_files.max_name]u8 = undefined;
-                const n = if (k == 1) base else cart_files.numbered(base, k, &nb);
-                @memcpy(self.file_name_buf[0..n.len], n);
-                self.file_name_len = @intCast(n.len);
-                if (io.file_create(vol, self.file_name_buf[0..n.len], self.file.size)) {
-                    self.volume = vol;
-                    self.file_open = true;
-                    self.file_crc = .init();
-                    return true;
-                } else |e| switch (e) {
-                    error.Exists => k += 1,
-                    error.NoSpace, error.DirFull => {
-                        if (vol == 0 and self.room_on(io, 1)) {
-                            vol = 1;
-                            k = 1;
-                        } else {
-                            self.refuse(io, .no_space);
-                            return false;
-                        }
-                    },
-                    error.UsbHost => {
-                        self.refuse(io, .usb);
-                        return false;
-                    },
-                    else => {
-                        self.refuse(io, .drive);
-                        return false;
-                    },
-                }
-            }
-            // Every number up to the limit taken.
-            self.refuse(io, .drive);
-            return false;
-        }
-
-        /// `volume` can hold the offered file (with room for "-NN" in its
-        /// name); false when it is absent or a computer has the drives.
-        fn room_on(self: *Self, io: *Io, volume: u1) bool {
-            const st = io.file_stat(volume) catch return false;
-            if (st.flags.usb_host) return false;
-            return st.fits(self.file.size, @as(usize, self.file_name_len) + 3);
-        }
-
         pub fn decline(self: *Self, io: *Io) void {
             if (self.state != .asking) return;
             self.answer(io, &.{ T.reject, self.xfer, @backingInt(Reject.declined) });
-            self.finish(io, .declined);
+            self.finish(.declined);
         }
 
         /// Hold B while receiving.
         pub fn cancel(self: *Self, io: *Io) void {
             if (!self.busy()) return;
             self.answer(io, &.{ T.abort, self.xfer, @backingInt(AbortReason.cancelled) });
-            self.finish(io, .cancelled);
+            self.finish(.cancelled);
         }
 
-        pub fn link_lost(self: *Self, io: *Io) void {
-            if (self.busy()) self.finish(io, .link_lost);
+        pub fn link_lost(self: *Self) void {
+            if (self.busy()) self.finish(.link_lost);
         }
 
         fn begin(self: *Self, now: u64, k: u16, len: u32, crc: u32) void {
@@ -813,20 +531,12 @@ pub fn Receiver(comptime Io: type) type {
             _ = io.send(&p);
         }
 
-        /// The header block's length is right for the offer's kind.
-        fn header_len_ok(self: *const Self, len: u32) bool {
-            return switch (self.kind) {
-                .file => len >= FileHeader.min_len and len <= FileHeader.max_len,
-                else => len == slot.header_size,
-            };
-        }
-
         pub fn handle(self: *Self, io: *Io, p: []const u8) void {
             if (p.len < 2) return;
             const now = io.now();
             const x = p[1];
             switch (p[0]) {
-                T.offer => self.on_offer(io, now, x, if (p.len >= 4) @fromBackingInt(p[3]) else .slot),
+                T.offer => self.on_offer(io, now, x),
                 T.block => {
                     if (p.len < 11 or x != self.xfer or !self.busy() and self.state != .finished) return;
                     const k = get16(p[2..]);
@@ -835,7 +545,7 @@ pub fn Receiver(comptime Io: type) type {
                     const zero = p[10] & flag_zero != 0;
                     switch (self.state) {
                         .header => {
-                            if (k != header_block or !self.header_len_ok(len) or zero) return;
+                            if (k != header_block or len != slot.header_size or zero) return;
                             if (!self.have_block) self.begin(now, k, len, crc);
                         },
                         .asking => if (k == header_block) self.ack(io, header_block),
@@ -879,16 +589,16 @@ pub fn Receiver(comptime Io: type) type {
                 },
                 T.abort => {
                     if (p.len < 3 or x != self.xfer or !self.busy()) return;
-                    self.finish(io, .{ .sender_aborted = @fromBackingInt(@intCast(p[2])) });
+                    self.finish(.{ .sender_aborted = @fromBackingInt(@intCast(p[2])) });
                 },
                 else => {},
             }
         }
 
-        fn on_offer(self: *Self, io: *Io, now: u64, x: u8, kind: Kind) void {
+        fn on_offer(self: *Self, io: *Io, now: u64, x: u8) void {
             if (x == self.xfer) switch (self.state) {
                 // The sender is resending everything: start the header over.
-                .header => return self.begin_offer(io, now, x, kind),
+                .header => return self.begin_offer(now, x),
                 // It missed our ACK / ACCEPT.
                 .asking => return self.ack(io, header_block),
                 .receiving, .verifying => return {
@@ -902,34 +612,23 @@ pub fn Receiver(comptime Io: type) type {
             }
             // A new transfer. One that supersedes ours means the sender
             // restarted (its ABORT was lost): drop ours.
-            const can = switch (kind) {
-                .slot => io.can_receive(),
-                .file => io.takes_files(),
-                _ => false,
-            };
-            if (!can) {
-                self.close_file(io);
+            if (!io.can_receive()) {
                 self.xfer = x;
-                const why: Reject = if (kind == .slot or kind == .file) .cannot_receive else .bad_header;
-                self.answer(io, &.{ T.reject, x, @backingInt(why) });
+                self.answer(io, &.{ T.reject, x, @backingInt(Reject.cannot_receive) });
                 return;
             }
             if (!self.accepting) {
-                self.close_file(io);
                 self.xfer = x;
                 self.answer(io, &.{ T.reject, x, @backingInt(Reject.busy) });
                 return;
             }
-            self.begin_offer(io, now, x, kind);
+            self.begin_offer(now, x);
         }
 
-        fn begin_offer(self: *Self, io: *Io, now: u64, x: u8, kind: Kind) void {
-            self.close_file(io);
+        fn begin_offer(self: *Self, now: u64, x: u8) void {
             self.state = .header;
             self.result = .none;
             self.xfer = x;
-            self.kind = kind;
-            self.file_name_len = 0;
             self.have_block = false;
             self.last_data = now;
         }
@@ -944,29 +643,28 @@ pub fn Receiver(comptime Io: type) type {
                 return;
             }
             self.have_block = false;
-            if (self.state == .header) return self.header_done(io, now);
+            if (self.state == .header) {
+                @memcpy(&self.header_bytes, self.buf[0..slot.header_size]);
+                self.header = slot.parse(&self.header_bytes, io.area_size()) catch |e| {
+                    const why: Reject = if (e == error.ImageTooLong) .too_big else .bad_header;
+                    self.answer(io, &.{ T.reject, self.xfer, @backingInt(why) });
+                    return self.finish(.declined);
+                };
+                self.blocks = @intCast((self.header.image_len + block_size - 1) / block_size);
+                self.state = .asking;
+                self.asked_at = now;
+                self.ack(io, header_block);
+                return;
+            }
+            // An image block: erase its sector, program it padded to whole
+            // pages, ACK.
             const k = self.block;
-            switch (self.kind) {
-                .file => {
-                    // One `write` per block; the OS parks us meanwhile.
-                    io.file_write(@as(u32, k) * block_size, self.buf[0..self.len]) catch |e| {
-                        const usb = e == error.UsbHost;
-                        self.answer(io, &.{ T.abort, self.xfer, @backingInt(if (usb) AbortReason.usb else AbortReason.drive) });
-                        return self.finish(io, .{ .failed = if (usb) .usb else .drive });
-                    };
-                    self.file_crc.update(self.buf[0..self.len]);
-                },
-                else => {
-                    // An image block: erase its sector, program it padded
-                    // to whole pages.
-                    const at = slot.image_offset + @as(u32, k) * block_size;
-                    const padded = (self.len + 255) / 256 * 256;
-                    @memset(self.buf[self.len..padded], 0xFF);
-                    if (!io.erase(at) or !io.program(at, self.buf[0..padded])) {
-                        self.answer(io, &.{ T.abort, self.xfer, @backingInt(AbortReason.flash) });
-                        return self.finish(io, .{ .failed = .flash });
-                    }
-                },
+            const at = slot.image_offset + @as(u32, k) * block_size;
+            const padded = (self.len + 255) / 256 * 256;
+            @memset(self.buf[self.len..padded], 0xFF);
+            if (!io.erase(at) or !io.program(at, self.buf[0..padded])) {
+                self.answer(io, &.{ T.abort, self.xfer, @backingInt(AbortReason.flash) });
+                return self.finish(.{ .failed = .flash });
             }
             const after = io.now();
             self.written += self.len;
@@ -980,40 +678,6 @@ pub fn Receiver(comptime Io: type) type {
             } else {
                 self.block = k + 1;
             }
-        }
-
-        /// The offer's header is in: check it, see where it would go, ask.
-        fn header_done(self: *Self, io: *Io, now: u64) void {
-            switch (self.kind) {
-                .file => {
-                    self.file = FileHeader.parse(self.buf[0..self.len]) orelse return self.refuse(io, .bad_header);
-                    self.total = self.file.size;
-                    const n = cart_files.sanitize(self.file.name(), &self.file_name_buf);
-                    self.file_name_len = @intCast(n.len);
-                    // A computer has the drive: refuse (fork/CART_FILES.md
-                    // "Why this is safe").
-                    const st0 = io.file_stat(0) catch null;
-                    if (st0) |s| if (s.flags.usb_host) return self.refuse(io, .usb);
-                    if (self.room_on(io, 0)) {
-                        self.volume = 0;
-                    } else if (self.room_on(io, 1)) {
-                        self.volume = 1;
-                    } else {
-                        return self.refuse(io, .no_space);
-                    }
-                },
-                else => {
-                    @memcpy(&self.header_bytes, self.buf[0..slot.header_size]);
-                    self.header = slot.parse(&self.header_bytes, io.area_size()) catch |e| {
-                        return self.refuse(io, if (e == error.ImageTooLong) .too_big else .bad_header);
-                    };
-                    self.total = self.header.image_len;
-                },
-            }
-            self.blocks = @intCast((self.total + block_size - 1) / block_size);
-            self.state = .asking;
-            self.asked_at = now;
-            self.ack(io, header_block);
         }
 
         pub fn tick(self: *Self, io: *Io) void {
@@ -1032,7 +696,7 @@ pub fn Receiver(comptime Io: type) type {
                         self.prompts += 1;
                         if (self.prompts > timing.tries) {
                             self.answer(io, &.{ T.abort, self.xfer, @backingInt(AbortReason.no_answer) });
-                            return self.finish(io, .{ .sender_aborted = .no_answer });
+                            return self.finish(.{ .sender_aborted = .no_answer });
                         }
                         self.prompt_at = now;
                         if (self.block == 0) {
@@ -1042,28 +706,8 @@ pub fn Receiver(comptime Io: type) type {
                         }
                     }
                 },
-                .verifying => switch (self.kind) {
-                    .file => self.commit_file(io),
-                    else => self.verify_step(io),
-                },
+                .verifying => self.verify_step(io),
             }
-        }
-
-        /// File mode, after the last block: the whole file's CRC against
-        /// the offer's, then `commit` (the file appears on the drive).
-        fn commit_file(self: *Self, io: *Io) void {
-            if (self.file_crc.final() != self.file.crc32) {
-                self.answer(io, &.{ T.done, self.xfer, @backingInt(DoneStatus.crc) });
-                return self.finish(io, .{ .failed = .crc });
-            }
-            io.file_commit() catch |e| {
-                const st: DoneStatus = if (e == error.UsbHost) .usb else .drive;
-                self.answer(io, &.{ T.done, self.xfer, @backingInt(st) });
-                return self.finish(io, .{ .failed = st });
-            };
-            self.file_open = false;
-            self.answer(io, &.{ T.done, self.xfer, @backingInt(DoneStatus.ok) });
-            self.finish(io, .received);
         }
 
         fn verify_step(self: *Self, io: *Io) void {
@@ -1078,7 +722,7 @@ pub fn Receiver(comptime Io: type) type {
             }
             if (self.verify_crc.final() != self.header.image_crc32) {
                 self.answer(io, &.{ T.done, self.xfer, @backingInt(DoneStatus.crc) });
-                return self.finish(io, .{ .failed = .crc });
+                return self.finish(.{ .failed = .crc });
             }
             // The header, last: one page, the rest of it erased.
             var page: [256]u8 = @splat(0xFF);
@@ -1087,10 +731,10 @@ pub fn Receiver(comptime Io: type) type {
             if (io.program(0, &page)) io.read(0, &back);
             if (!std.mem.eql(u8, &back, &self.header_bytes)) {
                 self.answer(io, &.{ T.done, self.xfer, @backingInt(DoneStatus.flash) });
-                return self.finish(io, .{ .failed = .flash });
+                return self.finish(.{ .failed = .flash });
             }
             self.answer(io, &.{ T.done, self.xfer, @backingInt(DoneStatus.ok) });
-            self.finish(io, .received);
+            self.finish(.received);
         }
     };
 }
@@ -1111,40 +755,4 @@ pub fn to_receiver(t: u8) bool {
         T.offer, T.block, T.data, T.abort => true,
         else => false,
     };
-}
-
-test "proto: caps nibble and the offer kind" {
-    const v1 = Caps.of_partner(0x01); // M1: app_version 0, link protocol 1
-    try std.testing.expect(!v1.v2);
-    try std.testing.expectEqual(Kind.slot, v1.offer_kind().?);
-    try std.testing.expect(v1.takes_slot());
-    const both: Caps = .{ .slot = true, .file = true };
-    const back = Caps.of_partner(@as(u8, both.nibble()) << 4 | 1);
-    try std.testing.expectEqual(both, back);
-    try std.testing.expectEqual(Kind.file, back.offer_kind().?);
-    try std.testing.expectEqual(Kind.slot, (Caps{ .slot = true }).offer_kind().?);
-    try std.testing.expect((Caps{}).offer_kind() == null);
-    try std.testing.expect(!(Caps{ .file = true }).takes_slot());
-    // Plans.
-    try std.testing.expectEqual(Plan{ .kind = .file, .fallback = true }, plan(both, true, true).?);
-    try std.testing.expectEqual(Plan{ .kind = .file, .fallback = false }, plan(both, true, false).?);
-    try std.testing.expectEqual(Plan{ .kind = .file, .fallback = false }, plan(.{ .file = true }, true, true).?);
-    try std.testing.expectEqual(Plan{ .kind = .slot, .fallback = false }, plan(v1, true, true).?);
-    try std.testing.expect(plan(v1, true, false) == null); // an XIP cart to an M1 badge
-    try std.testing.expect(plan(.{}, true, true) == null);
-    try std.testing.expect(plan(.{ .slot = true }, true, false) == null);
-}
-
-test "proto: file header round trip and refusals" {
-    const h = FileHeader.init(48640, 0xDEADBEEF, "snouty-pong.uf2");
-    var b: [max_header]u8 = undefined;
-    const n = h.encode(&b);
-    try std.testing.expectEqual(@as(u8, 9 + 15), n);
-    const back = FileHeader.parse(b[0..n]).?;
-    try std.testing.expectEqual(@as(u32, 48640), back.size);
-    try std.testing.expectEqual(@as(u32, 0xDEADBEEF), back.crc32);
-    try std.testing.expectEqualStrings("snouty-pong.uf2", back.name());
-    try std.testing.expect(FileHeader.parse(b[0 .. n - 1]) == null);
-    b[8] = 0;
-    try std.testing.expect(FileHeader.parse(b[0..9]) == null);
 }
