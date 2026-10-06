@@ -24,6 +24,7 @@ const play = @import("play.zig");
 const voice = @import("voice.zig");
 const audio = @import("audio.zig");
 const input = @import("input.zig");
+const sensor = @import("sensor.zig");
 const screen = @import("screen.zig");
 
 comptime {
@@ -35,7 +36,7 @@ var player: play.Player = .{};
 var v: voice.Voice = .{};
 var feeder: audio.Feeder = .{};
 var in: input.Input = .{};
-var pose_est: tof_pose.Estimator = .{ .config = hand.pose_config };
+var pose_est: tof_pose.Estimator = .{ .config = hand.pose_config, .layout = play.Settings.default_zones };
 var reading: hand.Reading = .{};
 
 /// The breakout's mounting (docs/TOF.md deferred question 2); the MIRROR
@@ -55,11 +56,17 @@ var b_block = false;
 /// Start+Select were held together since both were last up: ignore buttons.
 var chord = false;
 
-/// badge-bench poke: `snouty_trombone_fake=1` runs the demo hand instead
-/// of the empty sensor.
+/// badge-bench pokes: `snouty_trombone_fake=1` runs the demo hand instead
+/// of the empty sensor; `snouty_trombone_zones` 1 GRID, 2 STRIPES (0: the
+/// default, STRIPES), applied before the first sensor poll.
 var bench_fake: u32 = 0;
+var bench_zones: u32 = 0;
+var zones_poked = false;
 comptime {
-    if (!cart.is_wasm) @export(&bench_fake, .{ .name = "snouty_trombone_fake" });
+    if (!cart.is_wasm) {
+        @export(&bench_fake, .{ .name = "snouty_trombone_fake" });
+        @export(&bench_zones, .{ .name = "snouty_trombone_zones" });
+    }
 }
 
 pub fn start() void {
@@ -68,14 +75,22 @@ pub fn start() void {
 }
 
 pub fn update() void {
+    if (!zones_poked) {
+        zones_poked = true;
+        if (bench_zones != 0) set_zones(if (bench_zones == 1) .grid else .stripes);
+    }
     if (bench_fake != 0 and !in.fake) set_demo(true);
     const c = read_controls();
     buttons(c);
 
     if (in.poll(cart.micros_since_boot(), tick)) |f| {
-        const p = pose_est.update(&f, null, orientation());
-        reading = hand.read(&f, &p, .{ .orientation = orientation() });
-        player.sensor(reading.height_mm, reading.lip_t, settings);
+        // Each frame by its own layout: the ones measured before a ZONES
+        // switch landed are dropped, never read as the other layout.
+        if (f.layout == pose_est.layout) {
+            const p = pose_est.update(&f, null, orientation());
+            reading = hand.read(&p, .{});
+            player.sensor(reading.height_mm, reading.lip_t, settings);
+        }
     }
     const live = !menu_open and !chord;
     const demo = in.fake_buttons(tick);
@@ -125,6 +140,17 @@ fn set_demo(on: bool) void {
     settings.demo = on;
 }
 
+/// ZONES: the sensor (stop, SPAD page or map, start: the driver's
+/// set_layout), the demo hand and the pose all move to `l`; the pose
+/// drops what it learned (zone i looks elsewhere now).
+fn set_zones(l: tof_types.Layout) void {
+    settings.zones = l;
+    sensor.set_layout(l);
+    in.layout = l;
+    pose_est.set_layout(l);
+    reading = .{};
+}
+
 // ---- Buttons (SPEC section 4) ----
 
 fn buttons(c: cart.Controls) void {
@@ -164,11 +190,12 @@ fn change(row: u8) void {
         1 => settings.snap = if (settings.snap == .off) .soft else .off,
         2 => {
             settings.mirror = !settings.mirror;
-            // The background it learned is per screen cell: start over.
-            pose_est = .{ .config = hand.pose_config };
+            // x changes sign: start the filters (and the background) over.
+            pose_est = .{ .config = hand.pose_config, .layout = settings.zones };
         },
         3 => settings.pedal = !settings.pedal,
         4 => settings.tone = if (settings.tone == .bright) .mellow else .bright,
+        5 => set_zones(if (settings.zones == .grid) .stripes else .grid),
         else => set_demo(!settings.demo),
     }
 }
@@ -221,6 +248,11 @@ fn debug_muted() callconv(.c) u32 {
 fn debug_menu() callconv(.c) u32 {
     return @intFromBool(menu_open);
 }
+/// ZONES from the harness: 1 GRID, 2 STRIPES; returns the layout (0 GRID, 1 STRIPES).
+fn debug_set_zones(mode: u32) callconv(.c) u32 {
+    if (mode != 0) set_zones(if (mode == 1) .grid else .stripes);
+    return @intFromBool(settings.zones == .stripes);
+}
 comptime {
     if (cart.is_wasm) {
         @export(&debug_set_fake_sensor, .{ .name = "debug_set_fake_sensor" });
@@ -232,6 +264,7 @@ comptime {
         @export(&debug_source, .{ .name = "debug_source" });
         @export(&debug_muted, .{ .name = "debug_muted" });
         @export(&debug_menu, .{ .name = "debug_menu" });
+        @export(&debug_set_zones, .{ .name = "debug_set_zones" });
     }
 }
 

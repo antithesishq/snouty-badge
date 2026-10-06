@@ -2,4 +2,4 @@
 budget_ms = 16.7
 frames = 900
 script = "carts/snouty-trombone/tools/scripts/stick.json"
-note = "M1: the stick plays (no sensor: badge-bench's I2C has none): A blows, Right/Left crack between partials, the sad trombone on Down taps with B wahs, a held gliss out to 7th and back, lip slurs and a held lip bend, the menu (SNAP SOFT, PEDAL ON), Select mutes and unmutes. --poke snouty_trombone_fake=1 runs the demo hand through the sensor path instead. The voice streams into the ring every update: the audio report must show no underruns after start-up."
+note = "M1: the stick plays (no sensor: badge-bench's I2C has none): A blows, Right/Left crack between partials, the sad trombone on Down taps with B wahs, a held gliss out to 7th and back, lip slurs and a held lip bend, the menu (SNAP SOFT, PEDAL ON), Select mutes and unmutes. --poke snouty_trombone_fake=1 runs the demo hand through the sensor path instead; --poke snouty_trombone_zones=1 / 2 picks ZONES GRID / STRIPES (default STRIPES; docs/TOF.md M5), for the demo hand and for a -Dtof-fake=true ELF. The voice streams into the ring every update: the audio report must show no underruns after start-up."

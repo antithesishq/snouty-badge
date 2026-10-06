@@ -20,6 +20,7 @@
 //! `glide_delay` the slide moves continuously (accelerating); Left/Right
 //! tap a partial down/up and, held, lip the pitch toward the next one.
 const horn = @import("horn.zig");
+const tof_types = @import("tof").types;
 const Cents = horn.Cents;
 
 pub const Blow = enum(u1) {
@@ -45,6 +46,9 @@ pub const Tone = enum(u1) {
 };
 
 pub const Settings = struct {
+    /// ZONES' boot value (also the pose estimator's and input's).
+    pub const default_zones: tof_types.Layout = .stripes;
+
     blow: Blow = .auto,
     snap: Snap = .off,
     /// Mirror the sensor left/right (`Orientation.flip_x`).
@@ -52,6 +56,10 @@ pub const Settings = struct {
     /// Partial 1 (the pedal) on the lip's low end.
     pedal: bool = false,
     tone: Tone = .bright,
+    /// ZONES: the sensor's zone layout (docs/TOF.md M5). STRIPES (8
+    /// full-height stripes) resolve side to side about 3x finer than GRID
+    /// (the 3x3 of the wide map); the lip span follows (hand.Config).
+    zones: tof_types.Layout = default_zones,
     /// The demo hand plays (SPEC section 4).
     demo: bool = false,
 };

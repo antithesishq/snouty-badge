@@ -1,7 +1,8 @@
 # Snouty Trombone: spec
 
 A slide trombone for the SYCL badge, played by hand over the SparkFun Qwiic
-Mini dToF Imager (ams OSRAM TMF8820, 3x3 zones) on the Qwiic port, or with
+Mini dToF Imager (ams OSRAM TMF8820: 3x3 zones, or 8 full-height stripes
+through a user SPAD mask, docs/TOF.md M5) on the Qwiic port, or with
 the stick when no sensor is plugged in. Sibling of carts/snouty-theremin:
 same sensor path (lib/tof.zig through one `input.sensor_frame`), same
 streaming audio (lib/stream_audio.zig), same button conventions. PLAN.md has
@@ -41,23 +42,36 @@ arm's length.
   (100..450 mm, `horn.SlideMap`), continuous, cents not snapped: a
   trombone has no frets. SNAP menu row: OFF (default) or SOFT (pulls
   toward the 7 positions with the theremin's soft curve, still
-  continuous). The height is each hand zone's distance along its ray
-  turned into a height (`tables.cell_depth_q12`, the wide map's
-  geometry), then the nearest hand zone and every hand zone within 40 mm
-  of it averaged (`hand.read`): the single nearest zone jumps between
-  fingertips and knuckles as the hand moves sideways. Which zones are the
-  hand is the pose's background model (lib/tof_pose.zig), so the room
-  never plays.
-- **Embouchure = hand side to side** (lib/tof_pose.zig coverage-weighted
-  centroid x; never the argmin zone, see the theremin M1.2 lesson).
-  Centroid x -0.85..0.85 is a lip tension 0..1 (`hand.lip_t`) spread in
-  equal bands over partials 2..8 (Bb2 F3 Bb3 D4 F4 Ab4 Bb4 at 1st
+  continuous). The height is lib/tof_pose.zig's `height_mm`: each hand
+  zone's distance along its ray turned into a height with that zone's own
+  geometry, then the nearest hand zone and every hand zone within 40 mm
+  of it averaged (the near cluster; M1 did this in the cart with a 3x3
+  table, M5 moved the same rule into the pose so it works for any
+  layout): the single nearest zone jumps between fingertips and knuckles
+  as the hand moves sideways. Which zones are the hand is the pose's
+  background model, so the room never plays.
+- **Embouchure = hand side to side** (lib/tof_pose.zig's arm-rejected
+  coverage centroid: the near cluster only, so a forearm reaching in from
+  one side does not pull it; never the argmin zone, see the theremin M1.2
+  lesson). The lip is the hand's angle off the sensor's axis (tangent
+  `x_mm / z_mm`), so both ends are reachable at every height: tangent
+  -span..+span is a lip tension 0..1 (`hand.lip_t`), with span 0.32 in
+  STRIPES (17.7 deg, about the outer stripes' centres: each partial is
+  ~5.2 deg, about one inner stripe, so at least two of the half-stripe
+  steps stripe membership alone gives fall in every partial) and 0.207 in
+  GRID (M1's 0.85 of the wide map's outer cell centres, unchanged). The
+  tension is spread in equal bands over partials 2..8 (Bb2 F3 Bb3 D4 F4 Ab4 Bb4 at 1st
   position; PEDAL adds partial 1, Bb1). The sounding partial is the
   nearest one with 0.15 of a partial of hysteresis (no warble at a
   boundary); away from a partial's centre (0.12 dead zone) the lip bends
   the pitch toward the next one, up to 40 cents at the crack point
   ("lipping"); past it the horn cracks over with a short split-tone
-  blip. MIRROR flips x (the breakout dangles on a cable). The partials
+  blip. MIRROR flips x (the breakout dangles on a cable). ZONES picks the
+  sensor's layout: STRIPES (default; side to side about 3x finer, every
+  partial holdable at every height on synthetic sweeps) or GRID (M1's 3x3
+  of map 6: some middle partials only a few mm wide, or unreachable, at
+  some heights). Every frame is read by the layout it was measured with;
+  the frames in flight around a switch are dropped. The partials
   use the real harmonic series (the 7th is 31 cents flat, as on a real
   horn).
 - **Pitch** = partial n of the fundamental Bb1 (58.27 Hz) lowered by the
@@ -118,12 +132,15 @@ line flips it); Select mutes; `-Dsound` does not apply.
 | Joystick click | never bound (the OS's FPS overlay) | | |
 
 Settings menu: BLOW (AUTO, A), SNAP (OFF, SOFT), MIRROR (OFF, ON),
-PEDAL (OFF, ON: adds partial 1), TONE (BRIGHT, MELLOW), DEMO (OFF, ON: the
-demo hand plays). With the stick a gentle vibrato (+-10 cents, 5.5 Hz)
+PEDAL (OFF, ON: adds partial 1), TONE (BRIGHT, MELLOW), ZONES (STRIPES,
+GRID: the sensor's zone layout, docs/TOF.md M5; switching stops the
+sensor, loads the stripes mask or the wide map, and restarts it, about
+0.1 s), DEMO (OFF, ON: the demo hand plays). With the stick a gentle vibrato (+-10 cents, 5.5 Hz)
 fades in on a note held still for 0.4 s; a hand brings its own.
 
 A demo hand (`input.fake_frame`: a flat synthetic hand rendered by
-lib/tof_synth.zig) drives the same path as the sensor (the pose,
+lib/tof_synth.zig through the ZONES layout, its x for each partial the
+middle of that partial's lip band at its height, `hand.x_for`) drives the same path as the sensor (the pose,
 `hand.read`, the player) for the DEMO row, the wasm
 `debug_set_fake_sensor` export and the badge-bench poke
 `snouty_trombone_fake`, and presses A and B on cue. Its tune: a bugle call
@@ -131,7 +148,7 @@ on 4th position (lip slurs D3 G3 B3 D4 B3 G3 D3), a glissando on the 5th
 partial out to 7th position and back, the sad trombone (D4 Db4 C4 B3, a
 plunger wah on each, the last held with slide vibrato and wah-wah), a
 rest, round again (~12 s). A host test plays it through the real path and
-checks every note.
+checks every note, in both layouts.
 
 ## 4.1 Screen
 
@@ -150,7 +167,7 @@ checks every note.
 
 As the theremin (copy its structure, not its code wholesale where it does
 not fit): `main.zig`, `input.zig` (`sensor_frame`, source selection, demo
-hand), `sensor.zig`, `hand.zig` (height + centroid from a frame),
+hand), `sensor.zig` (the driver, ZONES), `hand.zig` (height + lip from the pose),
 `horn.zig` (slide/partial/lip physics, note names; host-tested), `play.zig`,
 `voice.zig`, `audio.zig`, `screen.zig`, `gfx.zig`, `gen/` (generated art and
 tables + fonts), `host_tests.zig`, `tools/gen_*.py` with `--check`. As

@@ -41,7 +41,12 @@ headless tools).
   each partial plays at the current slide, the cyan marker is your lip).
   The horn blows while a hand is in range (BLOW AUTO); A re-tongues; hold
   B for the plunger (wah). If left and right come out reversed, set
-  MIRROR ON in the menu.
+  MIRROR ON in the menu. ZONES (menu) picks how the sensor sees you:
+  STRIPES (default, docs/TOF.md M5: 8 full-height stripes, side to side
+  about 3x finer, so each partial is about one stripe of hand travel,
+  ~25 mm at 27 cm) or GRID (M1's 3x3, the partials closer together and
+  some of them narrow). If STRIPES looks scrambled (the lip marker jumps,
+  or goes the wrong way where GRID does not), set ZONES GRID.
 - **Without the breakout** (and in the simulator): hold A to blow; Up and
   Down tap the slide one position in or out (hold to glide); Left and
   Right tap a partial down or up (hold to lip the pitch toward the next);
@@ -52,7 +57,8 @@ headless tools).
   wobble the slide (or let the stick's vibrato do it) while B goes on and
   off. Or turn DEMO on and listen.
 - Start opens the settings menu (BLOW AUTO/A, SNAP OFF/SOFT, MIRROR,
-  PEDAL, TONE BRIGHT/MELLOW, DEMO); Select mutes. Sound is ON at boot.
+  PEDAL, TONE BRIGHT/MELLOW, ZONES STRIPES/GRID, DEMO); Select mutes.
+  Sound is ON at boot. The demo hand plays in the ZONES layout too.
 
 ## 4. Simulator
 
@@ -90,21 +96,25 @@ Debug exports (wasm only): `debug_set_fake_sensor(0|1)` (the demo hand),
 `debug_note` (cents above MIDI 0, A4 = 6900), `debug_partial`,
 `debug_slide` (cents, 0 = 1st position .. 600 = 7th), `debug_level`
 (voice level, 65536 full), `debug_mute` (plunger held), `debug_source` (0
-stick, 1 sensor), `debug_muted`, `debug_menu`.
+stick, 1 sensor), `debug_muted`, `debug_menu`, `debug_set_zones(n)` (1
+GRID, 2 STRIPES, 0 just asks; returns 0 GRID, 1 STRIPES).
 
 ## 6. badge-bench (repository root)
 
 ```sh
 badge-bench/bench.sh zig-out/firmware/snouty-trombone.elf --symbols --wav /tmp/trombone.wav
 badge-bench/bench.sh zig-out/firmware/snouty-trombone.elf --no-config --frames 900 \
-  --poke snouty_trombone_fake=1 --wav /tmp/trombone_demo.wav
+  --poke snouty_trombone_fake=1 --poke snouty_trombone_zones=1 --wav /tmp/trombone_demo.wav
 zig build -Dcart=snouty-trombone -Dtof-fake=true && \
-  badge-bench/bench.sh zig-out/firmware/snouty-trombone.elf --no-config --frames 900
+  badge-bench/bench.sh zig-out/firmware/snouty-trombone.elf --no-config --frames 900 \
+  --poke snouty_trombone_zones=2
 ```
 
 The first run uses `badge-bench/carts/snouty-trombone.toml` (the stick
 script, 900 frames); the second runs the demo hand through the sensor
-path; the third the real driver against the virtual TMF8820. All must
+path; the third the real driver against the virtual TMF8820.
+`--poke snouty_trombone_zones=1` runs GRID, `=2` STRIPES (the default
+when not poked); it is applied before the first sensor poll. All must
 show `underruns 0 samples` in the audio report. PLAN.md has the numbers.
 Rebuild without `-Dtof-fake` afterwards.
 
@@ -112,7 +122,7 @@ Rebuild without `-Dtof-fake` afterwards.
 
 `python3 tools/gen_tables.py` rewrites `cart/src/gen/tables.zig` (the
 harmonic series, semitone and cent ratios, the MIDI-0 phase increment,
-the filter coefficients, the zones' ray-to-height factors);
+the filter coefficients);
 `python3 tools/gen_art.py` rewrites `cart/src/gen/art.zig` (the trombone;
 `--png out.png` previews it). `--check` on either exits 1 if the
 committed file differs.

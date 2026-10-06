@@ -340,13 +340,15 @@ fn hint_line(w: View) void {
     _ = gfx.text(s, @divTrunc(gfx.W - gfx.text_width(s), 2), 119, gfx.rgb(dim));
 }
 
-pub const menu_rows = [_][]const u8{ "BLOW", "SNAP", "MIRROR", "PEDAL", "TONE", "DEMO" };
+/// ZONES sits before DEMO so the bench script's row numbers (BLOW..TONE)
+/// stay put.
+pub const menu_rows = [_][]const u8{ "BLOW", "SNAP", "MIRROR", "PEDAL", "TONE", "ZONES", "DEMO" };
 
 fn menu(w: View) void {
     const x0: i32 = 14;
-    const y0: i32 = 18;
+    const y0: i32 = 14;
     const mw: i32 = 132;
-    const mh: i32 = 90;
+    const mh: i32 = 98;
     gfx.fill(x0, y0, mw, mh, gfx.rgb(0x101626));
     gfx.frame(x0, y0, mw, mh, gfx.rgb(brass));
     _ = gfx.text("SETTINGS", x0 + 42, y0 + 4, gfx.rgb(brass));
@@ -362,6 +364,7 @@ fn menu(w: View) void {
             2 => if (s.mirror) "ON" else "OFF",
             3 => if (s.pedal) "ON" else "OFF",
             4 => s.tone.label(),
+            5 => s.zones.label(),
             else => if (s.demo) "ON" else "OFF",
         };
         const vx = x0 + mw - 12 - gfx.text_width(val);

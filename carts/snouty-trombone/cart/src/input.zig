@@ -22,6 +22,7 @@ const tof = @import("tof");
 const tof_types = tof.types;
 const sensor = @import("sensor.zig");
 const horn = @import("horn.zig");
+const hand = @import("hand.zig");
 pub const Frame = tof_types.Frame;
 
 /// The sensor's latest frame, or null (none yet, no sensor, or the driver
@@ -46,6 +47,8 @@ pub const Input = struct {
     fake: bool = false,
     /// The update the demo hand started at (its tune starts there).
     fake_from: u32 = 0,
+    /// The zone layout the demo hand renders (ZONES).
+    layout: tof_types.Layout = .stripes,
 
     pub fn set_fake(in: *Input, on: bool, tick: u32) void {
         if (!in.fake and on) in.fake_from = tick & ~@as(u32, 1);
@@ -54,7 +57,7 @@ pub const Input = struct {
 
     /// The new frame this update, if any; updates `source`.
     pub fn poll(in: *Input, now_us: u64, tick: u32) ?Frame {
-        const got = if (in.fake) fake_frame(tick -% in.fake_from) else sensor_frame(now_us);
+        const got = if (in.fake) fake_frame(tick -% in.fake_from, in.layout) else sensor_frame(now_us);
         if (got) |f| {
             if (in.last_seq == null or in.last_seq.? != f.seq) {
                 in.last_seq = f.seq;
@@ -83,7 +86,7 @@ const Mute = enum { open, wah, wahwah };
 
 /// One step of the demo tune: `frames` sensor frames (30 Hz) with the hand
 /// gliding from slide `from` to `to` (cents), at `x` mm (the partial, see
-/// `x_for`), re-tongued (A) on its first frame, with the plunger pattern.
+/// `hand.x_for`), re-tongued (A) on its first frame, with the plunger pattern.
 const Step = struct {
     frames: u16,
     from: i16 = 0,
@@ -142,26 +145,13 @@ fn where(n: u32) Where {
     unreachable;
 }
 
-/// The hand's x (mm, screen right positive) that the pose reads as the
-/// middle of `partial`'s lip band, at the hand heights the demo plays
-/// (found with the host test below against lib/tof_synth.zig's hand and
-/// lib/tof_pose.zig; the pose's x moves in steps over a 3x3 sensor, so
-/// these are band centres, not a formula).
-fn x_for(partial: u4) f32 {
-    return switch (partial) {
-        3 => -34,
-        4 => -17,
-        6 => 17,
-        7 => 34,
-        else => 0,
-    };
-}
-
 /// The demo hand's scene: a flat hand, a ceiling at 1.3 m.
 const scene_base: tof.synth.Scene = .{ .fov_x_deg = 41, .fov_y_deg = 52, .noise_mm = 1.5, .background_mm = @splat(1300) };
 
-/// One synthetic frame every other update (30 Hz).
-pub fn fake_frame(tick: u32) ?Frame {
+/// One synthetic frame every other update (30 Hz), seen through `layout`.
+/// The hand's x for a partial is the middle of that partial's lip band at
+/// its height (hand.x_for: the lip is an angle, so x scales with height).
+pub fn fake_frame(tick: u32, layout: tof_types.Layout) ?Frame {
     if (tick % 2 != 0) return null;
     const n = tick / 2;
     const w = where(n);
@@ -177,10 +167,12 @@ pub fn fake_frame(tick: u32) ?Frame {
             const tri = [6]f32{ 0, 5, 5, 0, -5, -5 };
             z += tri[w.within % 6];
         }
-        scene.hand = .{ .x_mm = x_for(s.partial), .z_mm = z, .pitch = 0.04 };
+        const span = (hand.Config{}).span(layout);
+        scene.hand = .{ .x_mm = hand.x_for(s.partial, false, z, span), .z_mm = z, .pitch = 0.04 };
     } else {
         scene.hand = null;
     }
+    scene.layout = layout;
     var seed: u32 = n *% 2654435761 +% 12345;
     tof.synth.render(&scene, .{}, &f, null, &seed);
     return f;
@@ -205,7 +197,6 @@ pub fn demo_buttons(tick: u32) DemoButtons {
 
 const std = @import("std");
 const testing = std.testing;
-const hand = @import("hand.zig");
 const play = @import("play.zig");
 
 test "input: no sensor and no demo is the stick" {
@@ -232,8 +223,13 @@ test "input: frames switch to the sensor, a long silence back to the stick" {
 
 // The whole demo through the real path (hand.zig, the pose, the player):
 // the notes it plays, one per tongued or slurred step.
-test "input: the demo hand plays its tune through the sensor path" {
+test "input: the demo hand plays its tune through the sensor path, both layouts" {
+    for ([_]tof_types.Layout{ .grid, .stripes }) |l| try demo_tune(l);
+}
+
+fn demo_tune(layout: tof_types.Layout) !void {
     var est: tof.pose.Estimator = .{ .config = hand.pose_config };
+    est.set_layout(layout);
     var p: play.Player = .{};
     const s: play.Settings = .{};
     var prev: DemoButtons = .{};
@@ -245,9 +241,10 @@ test "input: the demo hand plays its tune through the sensor path" {
     const total = tune_frames() * 2;
     var tick: u32 = 0;
     while (tick < total) : (tick += 1) {
-        if (fake_frame(tick)) |f| {
+        if (fake_frame(tick, layout)) |f| {
+            try testing.expectEqual(layout, f.layout);
             const pose = est.update(&f, null, .{});
-            const r = hand.read(&f, &pose, .{});
+            const r = hand.read(&pose, .{});
             p.sensor(r.height_mm, r.lip_t, s);
         }
         const b = demo_buttons(tick);

@@ -13,18 +13,21 @@ this file adds the cart's specifics.
 ## Layout
 
 - `cart/src/`: `main.zig` (`start`/`update`, buttons, the simulator tone
-  shim, debug exports, the `snouty_trombone_fake` badge-bench poke,
-  simulator shims); `input.zig` (**the sensor integration point
+  shim, debug exports, the `snouty_trombone_fake` and
+  `snouty_trombone_zones` badge-bench pokes, ZONES switching, simulator
+  shims); `input.zig` (**the sensor integration point
   `sensor_frame`**, source selection, the demo hand and its tune);
-  `sensor.zig` (lib/tof.zig on the badge, wide SPAD map 6); `hand.zig`
-  (height from the hand zones, lip tension from lib/tof_pose.zig's
-  centroid x); `horn.zig` (slide map, harmonic series, embouchure with
+  `sensor.zig` (lib/tof.zig on the badge: GRID = wide SPAD map 6,
+  STRIPES = the 8-stripe user mask, docs/TOF.md M5); `hand.zig` (height
+  = the pose's near-cluster `height_mm`, lip tension from the pose's
+  arm-rejected centroid as an angle, span per layout); `horn.zig` (slide map, harmonic series, embouchure with
   hysteresis and lip bend, note names, phase increments); `play.zig`
   (settings, the per-update player: blowing, smoothing, cracks, stick);
   `voice.zig` (the brass voice: band-limited pulse, state-variable filter,
   blat, crack split tone, plunger); `audio.zig` (the streaming-ring
   feeder, a copy of the theremin's); `screen.zig`, `gfx.zig` (drawing);
-  `gen/tables.zig` (written by `tools/gen_tables.py`), `gen/art.zig`
+  `gen/tables.zig` (written by `tools/gen_tables.py`; M5 dropped its 3x3
+  ray-to-height table, the pose does that now), `gen/art.zig`
   (written by `tools/gen_art.py`), `gen/font5x7.zig` and `gen/font8.zig`
   (per-cart copies of the theremin's fonts); `host_tests.zig`.
 - Everything except `main.zig`, `screen.zig`, `gfx.zig` and `sensor.zig`
@@ -46,6 +49,10 @@ this file adds the cart's specifics.
   -Dcart=snouty-trombone` checks the ELF.
 - Left/right comes from the pose's coverage centroid, never the closest
   zone (the theremin's M1.2 lesson).
+- Read each frame by its own `frame.layout` (GRID or STRIPES), never by
+  the ZONES setting: frames measured before a switch are dropped in
+  `main.update`. Anything per zone goes through the pose's cells
+  (`cols` x `rows`), not a hard-wired 3x3.
 - Start and Select act on release; nothing reacts while both are held;
   joystick click is never bound.
 - The sensor's frames come only through `input.sensor_frame`.
