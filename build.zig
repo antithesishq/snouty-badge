@@ -78,6 +78,8 @@ pub fn build(b: *Build) void {
             .root_source_file = b.path("lib/tests.zig"),
             .target = b.graph.host,
             .optimize = opts.test_optimize,
+            // lib/ext_flash.zig and lib/cart_files.zig share it as a module.
+            .imports = &.{.{ .name = "os_mailbox", .module = b.createModule(.{ .root_source_file = b.path("lib/os_mailbox.zig") }) }},
         }),
     });
     opts.test_step.dependOn(&b.addRunArtifact(lib_tests).step);

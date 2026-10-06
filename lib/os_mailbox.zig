@@ -33,7 +33,8 @@
 //! not make such requests.
 //!
 //! Only the `badge` namespace touches hardware; it compiles on every target
-//! but is only called on the cart core.
+//! but is only called on the cart core. Imported as the named module
+//! `os_mailbox` (one module per file: both users share it).
 const std = @import("std");
 const builtin = @import("builtin");
 
@@ -145,8 +146,3 @@ pub const badge = struct {
         }
     }
 };
-
-test "os_mailbox: request word" {
-    try std.testing.expectEqual(@as(u32, 0x2D00D440), word(0x2D, 0x20035100));
-    try std.testing.expectEqual(@as(u32, 0x2B000000), word(0x2B, 0x20000000));
-}

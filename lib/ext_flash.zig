@@ -35,7 +35,9 @@
 //! simulator (no chip, so no 2 MB array in its memory).
 const std = @import("std");
 const builtin = @import("builtin");
-const os_mailbox = @import("os_mailbox.zig");
+/// lib/os_mailbox.zig, as a module (a file may belong to one module only;
+/// lib/cart_files.zig shares it).
+const os_mailbox = @import("os_mailbox");
 
 /// The Cortex-M33 cart core; false for wasm and hosts.
 pub const is_badge = builtin.os.tag == .freestanding and (builtin.cpu.arch.isThumb() or builtin.cpu.arch.isArm());

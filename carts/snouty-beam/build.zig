@@ -38,7 +38,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .optimize = .ReleaseSafe,
         .imports = &.{
             .{ .name = "beam_slot", .module = beam_slot_module(b) },
-            .{ .name = "cart_files", .module = cart_files_module(b) },
+            .{ .name = "cart_files", .module = cart_files_module(b, os_mailbox_module(b)) },
             .{ .name = "link_host", .module = link_host_module(b) },
         },
     });
@@ -58,14 +58,25 @@ fn add_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *B
     cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
     cart.addImport("lockstep", b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig") }));
     cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
-    cart.addImport("ext_flash", b.createModule(.{ .root_source_file = b.path("lib/ext_flash.zig") }));
+    // lib/ext_flash.zig and lib/cart_files.zig share one os_mailbox module.
+    const mailbox = os_mailbox_module(b);
+    const ext_flash = b.createModule(.{ .root_source_file = b.path("lib/ext_flash.zig") });
+    ext_flash.addImport("os_mailbox", mailbox);
+    cart.addImport("ext_flash", ext_flash);
     cart.addImport("beam_slot", beam_slot_module(b));
-    cart.addImport("cart_files", cart_files_module(b));
+    cart.addImport("cart_files", cart_files_module(b, mailbox));
 }
 
-/// lib/cart_files.zig (it imports lib/os_mailbox.zig beside it).
-fn cart_files_module(b: *Build) *Build.Module {
-    return b.createModule(.{ .root_source_file = b.path("lib/cart_files.zig") });
+/// lib/os_mailbox.zig: the fork mailboxes' FIFO plumbing.
+fn os_mailbox_module(b: *Build) *Build.Module {
+    return b.createModule(.{ .root_source_file = b.path("lib/os_mailbox.zig") });
+}
+
+/// lib/cart_files.zig over a shared `os_mailbox` module.
+fn cart_files_module(b: *Build, mailbox: *Build.Module) *Build.Module {
+    const m = b.createModule(.{ .root_source_file = b.path("lib/cart_files.zig") });
+    m.addImport("os_mailbox", mailbox);
+    return m;
 }
 
 pub fn beam_slot_module(b: *Build) *Build.Module {

@@ -38,7 +38,8 @@
 //! badge owns one).
 const std = @import("std");
 const builtin = @import("builtin");
-const os_mailbox = @import("os_mailbox.zig");
+/// lib/os_mailbox.zig, as a module shared with lib/ext_flash.zig.
+const os_mailbox = @import("os_mailbox");
 
 const is_badge = os_mailbox.is_badge;
 
@@ -535,6 +536,11 @@ pub const Fake = struct {
         f.aborts += 1;
     }
 };
+
+test "cart_files: the mailbox word" {
+    try std.testing.expectEqual(@as(u32, 0x2D00D440), os_mailbox.word(abi.msg_type, 0x20035100));
+    try std.testing.expectEqual(@as(u32, 0x2B000000), os_mailbox.word(0x2B, 0x20000000));
+}
 
 test "cart_files: names" {
     try std.testing.expect(valid_name("snouty-pong.uf2"));
