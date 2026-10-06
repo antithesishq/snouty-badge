@@ -139,9 +139,17 @@ pub const Packet = struct {
 };
 
 pub fn Link(comptime Port: type) type {
+    return LinkQueue(Port, 8);
+}
+
+/// `Link` with room for `queue_len` received DATA packets (at most 128).
+/// A cart that streams with the DMA receive ring (`rx_dma`) wants one
+/// `poll` to hold everything the 256-byte ring can: 24 packets of 8 data
+/// bytes (Snouty Beam). Each slot costs 13 bytes of RAM.
+pub fn LinkQueue(comptime Port: type, comptime queue_len: u8) type {
+    if (queue_len == 0 or queue_len > 128) @compileError("queue_len must be 1..128");
     return struct {
         const Self = @This();
-        const queue_len = 8;
         const frame_max = 1 + max_payload + 1;
 
         port: Port,

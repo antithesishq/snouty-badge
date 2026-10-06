@@ -50,6 +50,7 @@ pub const apps = struct {
     pub const pong: u8 = 'P';
     pub const lynx: u8 = 'X';
     pub const genesis: u8 = 'M';
+    pub const beam: u8 = 'T';
 };
 
 /// The cart behind a HELLO app byte, for "WRONG CART: <name>".
@@ -64,6 +65,7 @@ pub fn app_name(id: u8) []const u8 {
         apps.pong => "SNOUTY PONG",
         apps.lynx => "SNOUTY LYNX",
         apps.genesis => "SNOUTY GENESIS",
+        apps.beam => "SNOUTY BEAM",
         else => "ANOTHER CART",
     };
 }
