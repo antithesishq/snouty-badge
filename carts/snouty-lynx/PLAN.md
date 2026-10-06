@@ -756,7 +756,76 @@ unchanged). docs/CABLE.md is the long form.
 4. Tests on lib/link_virtual.zig with the badge's schedule: handshake,
    ring, frame counts through loss, Warbirds.
 
+## M8 Marquee: contract
+
+Written 2026-10-06 (Adrian: "instead of filling the extra display space
+with text cart info at the bottom like now, we put an arcade marquee panel
+for the game at the top?" ... "go ahead"). Branch `lynx/marquee`
+(worktree `/home/exedev/snouty-badge-marquee`), merged to main when done.
+
+Layout: the marquee fills badge rows 0..25 and the Lynx picture moves to
+rows 26..127 (`video.top = 26`, still 1:1). The status strip is gone in
+normal play.
+
+1. Art (`frontend/marquee.zig`, Track A, me). No ROM carries marquee art
+   and real marquees are the publishers' copyright, so the marquee is
+   drawn from the title: the header's cart name, else the file name with
+   the extension, `(USA, Europe)`/`[!]` tags and `_` cleaned off, upper
+   case. Backlit look: black trim rows, a per-row background (gradient and
+   bands, one column template), the title in big lettering (the 8x8 OS
+   font scaled up: 2x height, as wide as fits, two lines when long) with
+   an outline, a drop shadow and a two-tone fill, plus a glint sweeping
+   across the letters every few seconds. The colour scheme is picked from
+   the title (each game gets its own, the same every boot). Title masks
+   are one u32 per column (640 B), built at boot; the picture is drawn
+   every frame (the buffers swap without a copy).
+2. Your own art: `NAME.BMP` beside `NAME.LNX` on the same drive
+   (case-insensitive base name), uncompressed 24- or 32-bit BMP, 160x26,
+   either row order, contiguous on the drive (a fresh copy always is).
+   Drawn from flash each frame, no RAM copy. A missing or unusable BMP
+   falls back to the drawn marquee; About says which ("Marquee: drawn",
+   "Marquee: from BMP", "BMP: not 160x26").
+3. Interface (frozen for Track B): `marquee.h` (26), `marquee.load()`
+   (after every boot: start, picker, Reset; reads `romsrc`), `marquee.draw()`
+   (paints rows 0..25 completely, marks no dirty rect: the game runs
+   `.no_copy_full_frame`), `marquee.about_line(buf)`.
+4. Everything that sat in the strip (Track B, an Opus agent): the debug
+   overlay's three lines draw over the marquee while it is on; a boot
+   error is a red line over the marquee's bottom 10 rows; the play hints
+   and cable notes (`hint.draw_strip`) sit on the marquee's bottom 10
+   rows; the `>>2x` indicator is in the marquee's top right corner; the
+   scrub bar (menu scrub view, chorded rewind) moves into the marquee so
+   the restored picture shows whole; `rewind.show` redraws the marquee.
+   ROM origin, CRC and flags were already on the About page.
+5. Gates: `zig build test-lynx` passes (golden hashes unchanged, the core
+   is untouched); badge-bench m2_play, m3_scrub and Hard Drivin' no more
+   than 0.15 ms worse at the worst frame; scrub arena loses under 1 KB;
+   other carts' UF2s byte-identical; a GIF of raycast and Hard Drivin'
+   (docs/m8_marquee.gif) and a still with a sidecar BMP.
+
 ## Status
+
+- 2026-10-06: M8 Marquee done on `lynx/marquee` (tag `snouty-lynx/m8`).
+  Track A (marquee.zig, marquee_art.zig, tests/marquee_unit.zig,
+  `zig build marquee-lynx`) and Track B (layout move, cb374a65: picture at
+  rows 26..127, overlays on the band, the menu's Reset now through
+  `main.boot`, About 10 lines with "Drive CRC" and the marquee line).
+  docs/m8_marquee.gif: raycast and Hard Drivin'. The drive BMP was checked
+  on badge-bench (a 24-bit bottom-up RAYCAST.BMP shows within RGB565
+  rounding). Bench (RAM ELF, calibrated busy ms, mean / worst; origin/main
+  -> M8): m3_scrub 6.18 / 10.78 -> 6.25 / 10.89; m2_play 6.76 / 10.28 ->
+  6.87 / 10.39; Hard Drivin' hd_drive 8.86 / 15.55 -> 8.98 / 15.68, 0 of
+  1800 over; raycast with a drive BMP 7.40 / 10.38 -> 7.60 / 10.60 (the
+  BMP is converted from flash every frame). The drawn marquee is ~15.8k
+  cycles a frame (strip.draw; the old text strip 2.9k): word stores of the
+  background, then only the set pixels of fill, outline and shadow.
+  Gate missed: RAM. `.text` 128,044 -> 139,276 B, `.bss` 93,596 ->
+  94,780 B, so the scrub arena shrinks by 12.7 KB (~49.0 -> ~36.3 KB, about
+  a quarter less history in the RAM cart; the XIP cart keeps its arena).
+  The one-off set-up (layout, colours, conversions) is kept out of line
+  and loops over slices so ReleaseFast does not unroll it; the BMP path
+  is ~2.7 KB of it. Open for Adrian: keep the BMP override or drop it for
+  that memory.
 
 - 2026-10-05: M7 hardware check passed: Adrian played the link cable on
   two badges, "works great" (docs/CABLE.md section 5), the DMA receive

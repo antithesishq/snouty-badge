@@ -55,6 +55,12 @@ pub fn init() void {
     ready = true;
 }
 
+/// The captured glyphs, `[ch - 32][column]` (frontend/marquee.zig's
+/// lettering; call `init` first).
+pub fn glyphs() *const [glyph_count][8]u8 {
+    return &cols;
+}
+
 /// `cart.text(.{ .str = str, .x = x, .y = y, .text_color = fg, .background_color = bg })`,
 /// same pixels and dirty rectangle.
 pub fn draw(str: []const u8, x: i32, y: i32, fg: cart.DisplayColor, bg: cart.DisplayColor) void {

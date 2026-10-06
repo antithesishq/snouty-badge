@@ -7,6 +7,8 @@ test {
     _ = @import("audio_feed.zig");
     _ = @import("tone_stream.zig");
     _ = @import("link.zig");
+    _ = @import("beam_slot.zig");
+    _ = @import("ext_flash.zig");
     _ = @import("i2c_rp2350.zig");
     _ = @import("tof.zig");
     _ = @import("tof_pose.zig");

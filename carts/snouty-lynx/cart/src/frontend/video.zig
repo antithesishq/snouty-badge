@@ -1,9 +1,10 @@
 //! Lynx frame -> badge framebuffer (SPEC.md section 6). The 160x102
-//! picture goes 1:1 to badge rows 0..101 (`top`); rows 102..127 are the
-//! status strip main.zig draws. Each Lynx byte is two pixels, the left one
-//! in the high nibble; the nibble is a palette index into a 16-entry
-//! `Pixel` cache of the 12-bit palette (GREEN, BLUERED), rebuilt when the
-//! palette registers change.
+//! picture goes 1:1 to badge rows 26..127 (`top`), down to the bottom
+//! edge; rows 0..25 above it are the arcade marquee (frontend/marquee.zig,
+//! PLAN.md "M8 Marquee") with what frontend/strip.zig draws over it. Each
+//! Lynx byte is two pixels, the left one in the high nibble; the nibble is
+//! a palette index into a 16-entry `Pixel` cache of the 12-bit palette
+//! (GREEN, BLUERED), rebuilt when the palette registers change.
 //!
 //! A 256-entry byte -> pixel pair table (SPEC.md 6; 1 KB) gives both pixels
 //! of a byte in one load. The framebuffer is column-major
@@ -17,15 +18,13 @@ const fb_w = cart.screen_width;
 const lynx_w = core.screen_w;
 const lynx_h = core.screen_h;
 
-/// First badge row of the picture (SPEC.md 6: 0, or 13 when centred).
-pub const top = 0;
-/// First row of the status strip, and its height (26 rows).
-pub const strip_y = top + lynx_h;
-pub const strip_h = fb_h - strip_y;
+/// First badge row of the picture (SPEC.md 6): the marquee band, rows
+/// 0..top-1 (`marquee.h`, 26 rows), sits above it.
+pub const top = 26;
 
 comptime {
     if (lynx_w != fb_w) @compileError("horizontal mapping is 1:1");
-    if (strip_y + strip_h != fb_h) @compileError("strip below the picture");
+    if (top + lynx_h != fb_h) @compileError("the picture ends at the bottom edge");
 }
 
 var green_seen: [16]u8 = @splat(0xFF);
@@ -52,9 +51,10 @@ fn palette_changed(f: core.Frame) bool {
 /// palette cache (SPEC.md 6's byte -> pixel pair table).
 var pairs: [256]u32 = @splat(0);
 
-/// Draw one Lynx frame into rows `top`..`top + 101`. The framebuffer is
-/// column-major, so two Lynx rows are converted together: the pixels of
-/// rows y and y + 1 in one column are adjacent, one 32-bit store.
+/// Draw one Lynx frame into rows `top`..`top + 101` (26..127). The
+/// framebuffer is column-major, so two Lynx rows are converted together:
+/// the pixels of rows y and y + 1 in one column are adjacent, one 32-bit
+/// store.
 pub fn show(f: core.Frame) void {
     if (palette_changed(f)) {
         for (&pixels, f.green, f.bluered) |*px, g, br| px.* = .from_color(lynx_color(g, br));

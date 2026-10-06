@@ -15,7 +15,8 @@ of strength: the Lynx's sprite-scaling "Suzy" graphics chip is what its
 filled-polygon 3D games (Hard Drivin', S.T.U.N. Runner, Battlezone 2000,
 Checkered Flag) draw with, so emulating it well puts real 1990s 3D on the
 badge. The Lynx screen is 160x102, exactly the badge's width, so it is shown
-1:1 with no scaling and 26 rows to spare for a status and scrub bar. The
+1:1 with no scaling and 26 rows to spare (since M8 the game's arcade
+marquee above the picture, with the scrub bar in it, section 6). The
 game is a `.lnx` file the user copies onto the badge's USB drive, read in
 place from flash by an ordinary RAM cart (shared design in
 `docs/ROM_DRIVE.md`); a licensed homebrew ROM is embedded for the web
@@ -172,9 +173,19 @@ screen, which is disabled here), so it lives in the menu. Section 18 item 4.
 
 ## 6. Screen mapping
 
-- 160x102 shown 1:1 at badge rows 0..101 (default) or centred at 13..114.
-  Rows 102..127 (26 rows) hold a thin status strip: game title, FPS in
-  debug builds, and the scrub bar while the menu is open.
+- 160x102 shown 1:1 at badge rows 26..127, down to the bottom edge (M8;
+  rows 0..101 with a status strip under it before, PLAN.md "M8 Marquee").
+  Rows 0..25 above it hold the game's arcade marquee
+  (`frontend/marquee.zig`: the title in big backlit lettering in a colour
+  scheme picked from the title, or the drive's `NAME.BMP` beside
+  `NAME.LNX`). Over the marquee: the debug overlay's three lines (rows
+  1..24, title and ROM name, fps and step times, instructions and Suzy
+  pixels) while it is on; a boot error as a red line on its bottom 10
+  rows; the in-play hints and the link cable's notes on the same bottom
+  10 rows; the fast-forward speed (`>>2x`) in its top right corner; and
+  the scrub bar (the menu's scrub view, the chorded rewind) centred in it,
+  so a restored picture shows whole. The ROM origin, CRC and flags are on
+  the menu's About page.
 - Conversion: each framebuffer byte is two pixels; a 256-entry table maps a
   byte to two palette indices, and a 16-entry `Pixel` cache (12-bit
   palette to RGB565, rebuilt on palette writes) gives the colors. Written
@@ -328,8 +339,8 @@ only the cart port's block number and counter.
 ## 12. Boot splash and presentation
 
 Snouty splash and chime, then the game. Menu title "SNOUTY LYNX", ROM name,
-"verified by deterministic replay". The status strip under the picture
-shows the ROM title. The
+"verified by deterministic replay". The marquee above the picture
+shows the ROM title (section 6). The
 neopixels are off: the cart never writes non-zero values (root
 `docs/NEOPIXELS.md`; a coworker's badge shows the LEDs are unusably bright
 even at 1%, 2026-09-29).
@@ -504,6 +515,8 @@ track in worktrees with disjoint files.
    Select tap = Option 1, Select hold = menu, Option 2 lives in the menu;
    the menu has the A/B swap row that Snouty Boy and Snouty Gear have.
 5. Screen: picture at the top with the 26-row strip below (rows 102..127).
+   M8 (2026-10-06, Adrian) moved the picture to the bottom with an arcade
+   marquee above it (section 6).
 6. Several `.lnx` files on the drive: list them in the menu and restart
    into the chosen one.
 

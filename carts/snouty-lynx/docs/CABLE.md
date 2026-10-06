@@ -30,8 +30,8 @@ and 10): those files are not on main.
 
 4. When both are ready, both games restart linked (the guest 7 frames
    after the host: two Lynxes switched on the same tick mirror each other
-   and never elect a master) and play. The strip says "Link cable:
-   linked".
+   and never elect a master) and play. The marquee's bottom rows say
+   "Link cable: linked".
 5. While linked: no fast forward, no chorded rewind, no menu scrubbing
    (the menu's bottom line reads "Linked: no rewind"); the game runs on
    behind the menu; the sound plays as usual. The menu's row reads
@@ -175,13 +175,13 @@ section 8), the probe kit's JST-SH 3-pin cable between the UART headers.
 1. Start Snouty Lynx on both; on each, menu -> Link cable. Expected within
    a second: the pair screen (YOU / PARTNER), the cable kind in the top
    right (CROSSED or STRAIGHT). A badge alone shows SEARCHING.
-2. A on both: both games restart and the strip says "Link cable: linked".
+2. A on both: both games restart and the marquee says "Link cable: linked".
 3. Warbirds: the title shows **2 PLAYERS** on both; A, then A on the
    options board on both: both reach the cockpit and see each other's
    plane.
 4. Hold Select on one badge: its game keeps running under the menu; the
    other badge's game goes on.
-5. Pull the cable: within ~30 ms both strips say "Link cable out" and play
+5. Pull the cable: within ~30 ms both marquees say "Link cable out" and play
    on alone. Leave link from the menu: the other says "Partner left link".
 
 If it stays on SEARCHING: check the cable and docs/LINK.md's search notes

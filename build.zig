@@ -26,6 +26,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-link", .binary = "snouty-link", .add = &@import("carts/snouty-link/build.zig").add },
     .{ .dir = "snouty-cycles", .binary = "snouty-cycles", .add = &@import("carts/snouty-cycles/build.zig").add },
     .{ .dir = "snouty-pong", .binary = "snouty-pong", .add = &@import("carts/snouty-pong/build.zig").add },
+    .{ .dir = "snouty-beam", .binary = "snouty-beam", .add = &@import("carts/snouty-beam/build.zig").add },
     .{ .dir = "paperclips", .binary = "paperclips", .add = &@import("carts/paperclips/build.zig").add },
     .{ .dir = "raspberry-trail", .binary = "raspberry-trail", .add = &@import("carts/raspberry-trail/build.zig").add },
     .{ .dir = "snouty-sense", .binary = "snouty-sense", .add = &@import("carts/snouty-sense/build.zig").add },
@@ -79,6 +80,10 @@ pub fn build(b: *Build) void {
         }),
     });
     opts.test_step.dependOn(&b.addRunArtifact(lib_tests).step);
+
+    // Snouty Beam's slot writer (carts/snouty-beam/tools/beam_slot_cli.zig):
+    // `zig build beam-slot -- in.uf2 out.bin`, a host program.
+    @import("carts/snouty-beam/build.zig").add_beam_slot_step(b);
 
     // The party lockstep over the real `badge lobby` (tools/party_e2e.sh,
     // docs/LOCKSTEP_N.md): a host program, never part of a cart build or

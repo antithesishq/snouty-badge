@@ -130,6 +130,19 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .{ .name = "core", .module = core_host },
         },
     });
+    // The marquee's art (frontend/marquee_art.zig, M8) and the OS font it
+    // letters with, which the cart captures at start-up and the host reads
+    // from the SDK's source.
+    const marquee_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/marquee_art.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
+    const os_font = b.createModule(.{
+        .root_source_file = sycl_badge_dep.path("src/font.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
     const tests = b.addTest(.{
         .name = "snouty-lynx-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -146,6 +159,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "input", .module = input_host },
                 .{ .name = "cablenet", .module = cablenet_host },
                 .{ .name = "link_host", .module = link_host_module(b) },
+                .{ .name = "marquee_art", .module = marquee_host },
+                .{ .name = "os_font", .module = os_font },
             },
         }),
     });
@@ -187,6 +202,25 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     run_rom_run.addPassthruArgs();
     run_rom_run.has_side_effects = true;
     b.step("run-lynx", "Run a Lynx ROM headless (snouty-lynx tools/run_rom.zig)").dependOn(&run_rom_run.step);
+
+    // `zig build marquee-lynx -- <out.ppm> [--frame N] <title>...`: the
+    // drawn marquee for each title, stacked (tools/marquee_preview.zig).
+    const marquee_preview = b.addExecutable(.{
+        .name = "marquee-lynx",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tools/marquee_preview.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+            .imports = &.{
+                .{ .name = "marquee_art", .module = marquee_host },
+                .{ .name = "os_font", .module = os_font },
+            },
+        }),
+    });
+    const marquee_run = b.addRunArtifact(marquee_preview);
+    marquee_run.addPassthruArgs();
+    marquee_run.has_side_effects = true;
+    b.step("marquee-lynx", "Render drawn marquees for titles (snouty-lynx tools/marquee_preview.zig)").dependOn(&marquee_run.step);
 
     const run_link = b.addExecutable(.{
         .name = "run-lynx-link",

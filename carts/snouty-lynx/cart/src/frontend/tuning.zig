@@ -48,7 +48,7 @@ pub const ff_periods = 2;
 /// is stepped only while the time so far plus twice the dearest frame of
 /// this update (the next unrendered one and the final rendered one) stays
 /// within it: Gear's rule, with its 3.7 ms of headroom for the picture,
-/// the strip, the present and a dearer frame.
+/// the marquee band, the present and a dearer frame.
 pub const ff_budget_us = ff_periods * 16_667 - 3_700;
 
 // ---- Link cable (frontend/cable.zig, docs/CABLE.md) ----

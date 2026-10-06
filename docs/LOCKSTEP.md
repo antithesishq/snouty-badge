@@ -365,6 +365,7 @@ The app-id registry (`lockstep.apps`, `lockstep.app_name`):
 | `'S'` | Snoutenstein | `SNOUTENSTEIN` |
 | `'P'` | Snouty Pong (the example game, `carts/snouty-pong`) | `SNOUTY PONG` |
 | `'M'` | Snouty Genesis (two players, `carts/snouty-genesis/docs/LINK_PLAY.md`) | `SNOUTY GENESIS` |
+| `'T'` | Snouty Beam (sends carts badge to badge; not a lockstep game, `carts/snouty-beam`) | `SNOUTY BEAM` |
 
 Anything else is `ANOTHER CART`. A new cart takes a free letter and adds
 it to both tables.
