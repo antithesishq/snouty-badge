@@ -44,6 +44,7 @@ const undo = @import("undo.zig");
 const tunables = @import("tunables.zig");
 const sound = @import("sound.zig");
 const probe = @import("probe.zig");
+const s1dac = @import("s1dac.zig");
 const vdp = @import("vdp.zig");
 
 /// 68000 address of the first work RAM byte reachable through the window
@@ -78,7 +79,12 @@ pub const Z80Bus = struct {
 
     pub inline fn write(self: *Z80Bus, addr: u16, v: u8) void {
         if (addr < 0x4000) {
-            if (!tunables.z80_enabled) return;
+            if (!tunables.z80_enabled) {
+                // The Sonic 1 DAC fake keeps Z80 RAM in `sram` and takes
+                // the driver's commands from it (core/s1dac.zig).
+                if (comptime s1dac.enabled) s1dac.ram_write(self.md, addr, v);
+                return;
+            }
             undo.touch_zr(@truncate(addr));
             self.md.z80_ram[addr & 0x1FFF] = v;
         } else if (addr >= 0x8000) {
@@ -203,7 +209,9 @@ pub const Cpu = if (tunables.z80_enabled) z80.Z80(Z80Bus) else Stub;
 /// engine: three slots at 1FF4/1FE8/1FDC and a busy byte at 1FC0) go on;
 /// a driver that must set a flag before the game proceeds would hang
 /// either way. The PC is kept for the overlay and the `debug_z80_pc`
-/// export.
+/// export. With `-Dgenesis_s1dac=true` and Sonic 1 loaded, Z80 RAM is
+/// kept in `Md.sram` and a fake of that game's driver answers
+/// (core/s1dac.zig).
 pub const Stub = struct {
     pc: u16 = 0,
 };

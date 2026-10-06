@@ -31,6 +31,7 @@ pub const undo = @import("undo.zig");
 pub const sound = @import("sound.zig");
 pub const ports = @import("ports.zig");
 pub const probe = @import("probe.zig");
+pub const s1dac = @import("s1dac.zig");
 
 pub const RomSource = rom.RomSource;
 pub const LineSink = vdp.LineSink;
@@ -175,6 +176,11 @@ pub const Md = struct {
     /// A00000-A01FFF / Z80 0000-1FFF. Empty without the Z80
     /// (`z80_ram_size`).
     z80_ram: [z80_ram_size]u8 = @splat(0),
+    /// The ROM is Sonic 1 and the Sonic 1 DAC fake drives the Z80 side
+    /// (core/s1dac.zig; `-Dgenesis_s1dac` builds only): Z80 RAM in `sram`.
+    /// Derived from `rom` by `reset`, not console state. Last, so the
+    /// fields before it keep their offsets (the hot loops' layout).
+    s1dac_on: if (s1dac.enabled) bool else void = if (s1dac.enabled) false else {},
 
     /// Build the console around `src` in place, reset to power-on. The
     /// console is ~153 KB: always a static, never a stack temporary (32 KB
@@ -211,6 +217,8 @@ pub const Md = struct {
             md.sram_active = md.sram_map;
             ports.jcart_refresh(md);
         }
+        // Sonic 1 has no SRAM: its buffer holds the fake's Z80 RAM.
+        if (comptime s1dac.enabled) md.s1dac_on = s1dac.detect(&md.rom) and !md.sram_map.present();
         md.dma_stall = 0;
         md.not_wait_loop = 0xFFFF_FFFF;
         md.m68k_share = 0;

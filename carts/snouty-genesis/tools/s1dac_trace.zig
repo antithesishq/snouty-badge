@@ -2,13 +2,15 @@
 //! runs Sonic 1 for a fixed script and writes `<out>/<name>.log` (every
 //! trace point of core/probe.zig, one line each: event, frame, master
 //! clock in the frame, address, value) and `<name>.wav` (the streamed
-//! sound, u8 mono 44.1 kHz, core/sound.zig). Built by
-//! `zig build s1dac-trace -Dcart=snouty-genesis`, which runs it:
+//! sound, u8 mono 44.1 kHz, core/sound.zig). Built twice by
+//! `zig build s1dac-trace -Dcart=snouty-genesis`, which runs both:
 //!
 //! - `s1dac-oracle`: the full core (the real Z80 runs the game's driver)
-//!   with the RAM cart's synthesis, Z80 writes placed at the Z80's time.
+//!   with the RAM cart's synthesis, Z80 writes placed at the Z80's time;
+//! - `s1dac-fake`: the RAM cart's core (no Z80) with the fake
+//!   (`build_options.s1dac`, core/s1dac.zig).
 //!
-//! The script: the
+//! `tools/s1dac_compare.py <out>` lines the two logs up. The script: the
 //! SEGA screen and the title (the chant, then the title music), Start at
 //! frame 800 into Green Hill Zone, Sonic left standing; from frame 1700
 //! every music id $81-$93 is queued in turn through the sound driver's
