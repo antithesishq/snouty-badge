@@ -5,7 +5,7 @@ Antithesis. On the badge it plays a `.lnx` (or headerless `.lyx`) ROM copied
 onto the badge's USB drive; the badge cart carries no ROM of its own (the
 web simulator embeds one). The Lynx's 160x102 picture sits 1:1 at the
 bottom of the badge's 160x128 screen with a 26-row arcade marquee for the
-game above it (its title in backlit lettering, or your own 160x26 BMP).
+game above it (its title in backlit lettering).
 The core
 emulates the 65C02, Suzy's sprite engine and math unit, and Mikey's
 timers and palette; the menu has a time scrubber (SPEC.md). On the badges'
@@ -128,19 +128,11 @@ default build (`-Dlynx-rom-source=drive`):
    NoVolume`, or a refused file such as `drive: ROT.LNX: rotated`), and
    stays there; leave through the OS menu.
 
-### Your own marquee art
+### The marquee
 
-The drawn marquee letters the game's title in one of six colour schemes
-the title picks. To show your own art instead, put a BMP with the ROM's
-name next to it on the same drive: `HARDDRIV.BMP` beside `HARDDRIV.LNX`
-(case does not matter). It must be 160x26 pixels, uncompressed 24- or
-32-bit colour (what MS Paint, GIMP or `convert in.png -resize 160x26!
-BMP3:out.bmp` write), and copied in one piece (a fresh copy onto the
-drive always is). About says which marquee shows: `Marquee: drawn`,
-`Marquee: from BMP`, or why the BMP was not used (`BMP: not
-160x26`, `BMP: compressed`, `BMP: fragmented`). `zig build marquee-lynx
--- out.ppm "Some Title"` (repository root) renders the drawn marquee for
-any title.
+The marquee letters the game's title in one of six colour schemes the
+title picks. `zig build marquee-lynx -- out.ppm "Some Title"` (repository
+root) renders it for any title.
 
 The ROM file also shows in the OS cart menu and fails to load if picked
 there; that is cosmetic. Commercial ROMs never enter the repository

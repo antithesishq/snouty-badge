@@ -65,8 +65,8 @@ CLAUDE.md and docs have the longer explanations.
   docs/CABLE.md), `rewind` (the time
   scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
   (stack guard, wasm arena, the fast-forward knobs), `marquee` (M8: the
-  arcade marquee in rows 0..25 above the picture, drawn from the title or
-  the drive's `NAME.BMP`; `load` after every boot, `draw` every frame),
+  arcade marquee in rows 0..25 above the picture, drawn from the title;
+  `load` after every boot, `draw` every frame),
   `strip` (the band of rows 0..25: the marquee, with the debug overlay's
   three lines and a boot error over it; the status strip under the
   picture before M8), `audio` (M5:

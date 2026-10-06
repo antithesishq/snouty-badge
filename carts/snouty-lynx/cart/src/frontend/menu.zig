@@ -487,8 +487,8 @@ pub fn boot_error_text(l: *const core.Lynx) ?[]const u8 {
 /// manufacturer (headered ROMs; "No header (raw)" otherwise), size and
 /// block size, the source ("Source: embedded", or "Drive CRC 1A2B3C4D"
 /// with the drive file's CRC32), then the core's boot error, "fragmented",
-/// the EEPROM warning and the marquee's line (`marquee.about_line`). Ten
-/// lines at most (two for the header, one each for the rest), all of
+/// and the EEPROM warning. Nine lines at most (two for the header, one
+/// each for the rest), all of
 /// `about_lines`; the `n < about_lines` guards only keep a later line
 /// from overflowing.
 fn draw_about(l: *const core.Lynx) void {
@@ -550,11 +550,6 @@ fn draw_about(l: *const core.Lynx) void {
     }
     if (lay.warn_eeprom() and n < about_lines) {
         lines[n] = "EEPROM: not saved";
-        n += 1;
-    }
-    if (n < about_lines) {
-        var m: [24]u8 = undefined;
-        lines[n] = fit(&bufs[n], marquee.about_line(&m), panel_cols);
         n += 1;
     }
 
@@ -633,8 +628,8 @@ comptime {
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
     check_width("Scrub: -99 / 99s", panel_cols);
-    // About's ten lines end above the footer that holds "B: back".
-    if (about_lines < 10) @compileError("About's worst case is ten lines");
+    // About's nine lines end above the footer that holds "B: back".
+    if (about_lines < 9) @compileError("About's worst case is nine lines");
     if (first_row_y + about_lines * row_h > footer_y) @compileError("About lines over the footer");
     // The scrub bar stays off the picture (rows video.top..127) and inside
     // the title band, which hides it when the full menu comes back.

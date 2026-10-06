@@ -182,7 +182,7 @@ fn live_edge() input.Edge {
 
 /// (Re)start the core on `c` (start, the picker and the menu's Reset, the
 /// only boots) and forget the scrub history: the boot writes RAM past the
-/// undo hooks. Then the marquee for that ROM (title, colours, drive BMP).
+/// undo hooks. Then the marquee for that ROM (title, colours).
 /// The boot is one out-of-line call for every site so the boot code
 /// (core/boot.zig, ~2 KB once inlined) is not copied into each.
 pub fn boot(c: core.Cart) void {
