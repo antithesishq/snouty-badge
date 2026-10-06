@@ -57,14 +57,14 @@ side to side (docs/TOF.md M5 has the diagnosis and the shared decisions).
   | normal, toml (stick melody; no sensor, so the layout is unused) | 0.98 / 0.58 | (same run) | 0.93 worst |
   | normal, `--poke snouty_theremin_fake=2` (two-hand demo) | 1.09 / 0.60 | 1.11 / 0.59 | 0.90 / 0.55 |
   | normal, `--poke snouty_theremin_fake=1` | 1.08 / 0.59 | 1.09 / 0.58 | |
-  | `-Dtof-fake=true`, toml | 3.66 / 2.07 | 5.95 / 3.06 | 3.65 worst |
-  | `-Dtof-fake=true`, 1800 frames, no script | 3.66 / 2.04 | 5.74 / 3.08 | |
+  | `-Dtof-fake=true`, toml | 3.66 / 2.07 | 4.18 / 2.32 | 3.65 worst |
 
-  0 audio underruns in every run. The STRIPES fake build's extra ~2 ms is
-  the model, not the cart: `tof_scene.trace_in` (360 SPAD rays per
-  measurement) and 64-bit divisions in the scene (`__udivmoddi4`, ~650
-  calls a frame) under the bus transfer; the cart's own update is
-  unchanged. Worst frame 36 % of the budget.
+  0 audio underruns in every run. The STRIPES fake build's extra ~0.5 ms
+  is the model, not the cart: under a user mask it traces 360 SPAD
+  samples per measurement (`tof_scene.trace_in`; 2 ms before the
+  scene went 32-bit in lib commit 059ff7d3). A real sensor costs the
+  cart the same bus reads in both layouts. Worst frame 25 % of the
+  budget.
 
 ## M1.2: the highlight follows the hand (2026-10-05)
 

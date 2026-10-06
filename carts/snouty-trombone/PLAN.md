@@ -77,14 +77,14 @@ badge-bench, calibrated, busy ms (mean / p95 / worst):
 |---|---|---|---|
 | stick script (no sensor) | 1.37 / 1.73 / 2.79 | 1.37 / 1.73 / 2.83 | (same build) |
 | demo hand (`--no-config --frames 900 --poke snouty_trombone_fake=1`) | 1.96 / 3.18 / 3.31 | 2.10 / 3.52 / 3.61 | 2.07 / 3.43 / 3.57 |
-| `-Dtof-fake=true` (`--no-config --frames 900`) | 2.84 / 4.43 / 4.69 | 2.84 / 4.44 / 4.69 | 3.83 / 6.73 / 6.93 |
-| `-Dtof-fake=true` (stick script) | | 2.87 / 4.58 / 4.77 | 3.85 / 6.86 / 7.08 |
+| `-Dtof-fake=true` (`--no-config --frames 900`) | 2.84 / 4.43 / 4.69 | 2.84 / 4.44 / 4.69 | 3.10 / 4.96 / 5.16 |
 
 0 frames over budget and 0 audio underruns in every run. The STRIPES
-fake runs' extra ~2.3 ms worst is the model, not the cart: under a user
+fake run's extra ~0.5 ms worst is the model, not the cart: under a user
 mask the virtual TMF8820 traces 360 SPAD samples per measurement
-(`tof_scene.trace_in`, 67 k cycles per frame on average); the real
-sensor costs the cart the same bus reads in both layouts. Size: `.text`
+(`tof_scene.trace_in`; ~2.3 ms before lib commit 059ff7d3 made the
+scene 32-bit); the real sensor costs the cart the same bus reads in
+both layouts. Size: `.text`
 75 KB, `.data` 6 KB, `.bss` 11 KB; UF2 183 KB.
 
 Badge check (docs/TOF.md section 5): ZONES STRIPES, sweep the hand left

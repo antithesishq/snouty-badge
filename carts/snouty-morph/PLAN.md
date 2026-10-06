@@ -135,10 +135,10 @@ polish. First full bench: worst 12.57 ms (25 % of cycles in software
 - badge-bench (calibrated, `bench_m0.json`, 3840 frames), busy ms worst /
   mean: normal build GRID 6.83 / 4.23, STRIPES poke 6.83 / 4.23 (no
   sensor: unchanged from M1.2's 6.83 / 4.22); `-Dtof-fake=true` GRID
-  10.12 / 5.73 (M1.2: 10.10 / 5.72), STRIPES 11.75 / 6.56. The STRIPES
-  extra is the model tracing its hand SPAD by SPAD (360 samples per
-  measurement), which a real sensor does not cost; still under the 12 ms
-  rule, 0 frames over 16.7 ms.
+  10.12 / 5.73 (M1.2: 10.10 / 5.72), STRIPES 10.01 / 5.76 (11.75 / 6.56
+  before lib commit 059ff7d3 made the model's SPAD-by-SPAD hand trace
+  32-bit; a real sensor costs neither). Under the 12 ms rule, 0 frames
+  over 16.7 ms.
 - Not done: no hardware run. Hardware check: docs/TOF.md section 5, M5.
 
 ## Deferred questions (defaults taken)

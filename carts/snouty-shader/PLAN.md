@@ -130,15 +130,13 @@ cart adds a ZONES setting.
   | Build | GRID | STRIPES |
   |---|---|---|
   | normal (no sensor, stick) | 8.95 / 5.08 | 8.44 / 4.83 |
-  | `-Dtof-fake=true` | 11.39 / 6.13 | 12.05 / 6.86 |
+  | `-Dtof-fake=true` | 11.39 / 6.13 | 10.30 / 6.06 |
 
-  M1 for comparison: 8.76 / 5.03 and 11.20 / 6.12. The fake STRIPES
-  extra is the model, not the cart: lib/tof_scene.zig traces the hand
-  scene SPAD by SPAD with 64-bit divisions and square roots (about 130 k
-  cycles a frame on average, `tof_scene.trace_in` + `__udivmoddi4`); a
-  real sensor reads the same result record in both layouts. Its worst
-  frame (INK with B + stick and a measurement) is 0.05 ms over this
-  cart's 12 ms per-program goal, 72 % of the 16.7 ms budget.
+  M1 for comparison: 8.76 / 5.03 and 11.20 / 6.12. Every run is under
+  this cart's 12 ms per-program goal (worst 68 % of the 16.7 ms
+  budget). The fake STRIPES build cost 12.05 / 6.86 until lib commit
+  059ff7d3 made the model's SPAD-by-SPAD hand trace 32-bit; a real
+  sensor reads the same result record in both layouts.
 - Not run on hardware.
 
 ## Deferred decisions (defaults taken; Adrian may flip any)
