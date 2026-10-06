@@ -30,6 +30,7 @@ pub const tunables = @import("tunables.zig");
 pub const undo = @import("undo.zig");
 pub const sound = @import("sound.zig");
 pub const ports = @import("ports.zig");
+pub const probe = @import("probe.zig");
 
 pub const RomSource = rom.RomSource;
 pub const LineSink = vdp.LineSink;
@@ -246,6 +247,7 @@ pub const Md = struct {
     /// frontend renders).
     pub noinline fn step_frame_pads(md: *Md, pads: *const Pads, render: bool) void {
         md.ports.pads = pads.*;
+        if (comptime probe.enabled) probe.cur_frame = md.frame_count;
         if (md.setup.cfg.kind == .jcart) ports.jcart_refresh(md);
         const sink: ?LineSink = if (render) md.line_sink else null;
         var b = md.bus_for();

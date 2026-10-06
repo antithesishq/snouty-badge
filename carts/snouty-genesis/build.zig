@@ -51,6 +51,9 @@ const Variant = struct {
     /// The party lobby and lockstep over the fork firmware's cart serial
     /// port (docs/MULTIPLAYER.md, root docs/LOCKSTEP_N.md).
     party: bool = false,
+    /// core/probe.zig's trace points: the host trace tool only
+    /// (tools/s1dac_trace.zig), never a cart.
+    probe: bool = false,
 };
 const full: Variant = .{ .z80 = true, .scrub = true, .synth = false };
 const ram_cart: Variant = .{ .z80 = false, .scrub = false, .synth = true };
@@ -67,6 +70,7 @@ fn variant_options(b: *Build, sound: bool, debug_overlay: bool, v: Variant) *Bui
     options.addOption(bool, "scrub", v.scrub);
     options.addOption(bool, "synth", v.synth);
     options.addOption(bool, "party", v.party);
+    options.addOption(bool, "probe", v.probe);
     return options;
 }
 
@@ -248,6 +252,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     test_genesis.dependOn(&run.step);
     test_genesis.dependOn(&ram_run.step);
 
+    add_s1dac_trace(b, z80_host);
+
     // Strict 68000 oracle gate (not part of `test`): SingleStepTests with
     // SNOUTY_FIXTURES=required, so absent fixtures fail instead of
     // skipping. No fetch here: tools/fetch_test_roms.sh first.
@@ -265,6 +271,45 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     strict_run.setEnvironmentVariable("SNOUTY_FIXTURES", "required");
     strict_run.has_side_effects = true;
     b.step("test-m68k-strict", "Run the snouty-genesis 68000 oracle tests; fail if fixtures are absent").dependOn(&strict_run.step);
+}
+
+/// `zig build s1dac-trace -Dcart=snouty-genesis -- <sonic1.bin> <out-dir>`
+/// (PLAN.md "Sonic 1 DAC fake", tools/s1dac_trace.zig): the trace tool
+/// over the full core with the real Z80 (`s1dac-oracle`), with the RAM
+/// cart's synthesis and the probe. Not part of `test`.
+fn add_s1dac_trace(b: *Build, z80_host: *Build.Module) void {
+    const step = b.step("s1dac-trace", "Run the Sonic 1 DAC oracle (args: <sonic1.bin> <out-dir>)");
+    const Tool = struct { name: []const u8, v: Variant };
+    for ([_]Tool{
+        .{ .name = "s1dac-oracle", .v = .{ .z80 = true, .scrub = false, .synth = true, .probe = true } },
+    }) |t| {
+        const core = b.createModule(.{
+            .root_source_file = b.path(dir ++ "core/md.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "z80", .module = z80_host },
+                .{ .name = "build_options", .module = variant_options(b, false, false, t.v).createModule() },
+            },
+        });
+        const names = b.addOptions();
+        names.addOption([]const u8, "name", t.name);
+        const exe = b.addExecutable(.{
+            .name = t.name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(dir ++ "tools/s1dac_trace.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseFast,
+                .imports = &.{
+                    .{ .name = "core", .module = core },
+                    .{ .name = "trace_options", .module = names.createModule() },
+                },
+            }),
+        });
+        const run = b.addRunArtifact(exe);
+        run.addPassthruArgs();
+        step.dependOn(&run.step);
+    }
 }
 
 /// lib/link.zig and its virtual cable copied under one root, as

@@ -40,6 +40,7 @@ const z80bus = @import("z80bus.zig");
 const undo = @import("undo.zig");
 const sound = @import("sound.zig");
 const ports = @import("ports.zig");
+const probe = @import("probe.zig");
 const Md = md_mod.Md;
 
 /// A10001 version register: bit 7 overseas (1), bit 6 PAL (0: NTSC), bit 5
@@ -263,17 +264,22 @@ fn z80_read(md: *Md, addr: u24) u8 {
 
 fn z80_write(md: *Md, addr: u24, v: u8) void {
     if (!z80_side_open(md) or addr & 0x8000 != 0) return;
+    if (comptime probe.enabled) {
+        if (addr & 0x4000 == 0) probe.note(.m68k_z80_write, md.frame_count, sound.now(md), addr & 0x1FFF, v);
+    }
     var zb = md.z80bus_for();
     zb.write(@truncate(addr & 0x7FFF), v);
 }
 
 fn set_busreq(md: *Md, on: bool) void {
+    if (comptime probe.enabled) probe.note(.busreq, md.frame_count, sound.now(md), 0, @intFromBool(on));
     md.arbiter.busreq = on;
 }
 
 /// A11200: 0 asserts RESET (the Z80 and the YM2612 are reset and held),
 /// 1 releases it (the Z80 starts at 0000 from its reset state).
 fn set_z80_reset(md: *Md, assert: bool) void {
+    if (comptime probe.enabled) probe.note(.reset, md.frame_count, sound.now(md), 0, @intFromBool(assert));
     if (assert) {
         z80bus.reset_line(md);
         md.z80_carry = 0;

@@ -28,6 +28,7 @@ const ym2612 = @import("ym2612.zig");
 const psg = @import("psg.zig");
 const vdp = @import("vdp.zig");
 const tunables = @import("tunables.zig");
+const probe = @import("probe.zig");
 
 pub const enabled: bool = ym2612.synth_enabled;
 
@@ -191,8 +192,12 @@ pub const Sound = struct {
 };
 
 /// Console time now, master clocks into the frame: the 68000's line and
-/// its cycle in the line (the only CPU that writes the chips here).
-inline fn now(md: *const Md) u32 {
+/// its cycle in the line (the only CPU that writes the chips here; the
+/// trace tool's full-core build has the Z80 too and sets `probe.z80_t`).
+pub inline fn now(md: *const Md) u32 {
+    if (comptime probe.enabled) {
+        if (probe.z80_t) |t| return t;
+    }
     const c: u32 = @min(md.vdp.line_cycles, vdp.m68k_cycles_per_line);
     return @as(u32, md.vdp.line) * line_clocks + c * 7;
 }
